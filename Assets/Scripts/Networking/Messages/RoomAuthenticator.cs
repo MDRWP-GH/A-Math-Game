@@ -1,0 +1,176 @@
+using System.Collections;
+using AMath.Core.StateMachines;
+using AMath.Gameplay.Players;
+using AMath.Managers;
+using AMath.Networking.Room;
+using AMath.Utilities;
+using Mirror;
+using UnityEngine;
+
+namespace AMath.Networking.Messages
+{
+    /// <summary>
+    /// Gatekeeper for every incoming connection. Runs *before* any object is
+    /// spawned for the client, so untrusted peers are rejected without ever
+    /// touching game state.
+    ///
+    /// The host rejects when:
+    ///  - the game version differs (protocol/rules compatibility),
+    ///  - the room code does not match this room,
+    ///  - the room is full,
+    ///  - a match is running and the GUID does not belong to a seated player
+    ///    (only reconnections are allowed mid-match),
+    ///  - the GUID is already connected (duplicate / impersonation attempt).
+    /// </summary>
+    public sealed class RoomAuthenticator : NetworkAuthenticator
+    {
+        #region Dependencies (injected by the composition root)
+
+        private RoomSession _session;
+        private PlayerManager _playerManager;
+        private GameManager _gameManager;
+
+        /// <summary>Injects domain dependencies. Must be called before hosting.</summary>
+        public void Configure(RoomSession session, PlayerManager playerManager, GameManager gameManager)
+        {
+            _session = session;
+            _playerManager = playerManager;
+            _gameManager = gameManager;
+        }
+
+        #endregion
+
+        #region Server side
+
+        public override void OnStartServer()
+        {
+            NetworkServer.RegisterHandler<AuthRequestMessage>(OnAuthRequest, false);
+        }
+
+        public override void OnStopServer()
+        {
+            NetworkServer.UnregisterHandler<AuthRequestMessage>();
+        }
+
+        public override void OnServerAuthenticate(NetworkConnectionToClient conn)
+        {
+            // Passive: wait for the client's AuthRequestMessage.
+        }
+
+        private void OnAuthRequest(NetworkConnectionToClient conn, AuthRequestMessage message)
+        {
+            string rejection = Evaluate(message, out AuthenticatedIdentity identity);
+            if (rejection == null)
+            {
+                conn.authenticationData = identity;
+                conn.Send(new AuthResponseMessage { Approved = true });
+                ServerAccept(conn);
+            }
+            else
+            {
+                conn.Send(new AuthResponseMessage { Approved = false, Reason = rejection });
+                // Give the transport a moment to flush the reason before closing.
+                StartCoroutine(DelayedReject(conn));
+            }
+        }
+
+        /// <summary>Returns null when accepted, otherwise the rejection reason.</summary>
+        private string Evaluate(AuthRequestMessage message, out AuthenticatedIdentity identity)
+        {
+            identity = null;
+
+            if (message.GameVersion != Application.version)
+                return $"Version mismatch (host {Application.version}, you {message.GameVersion}).";
+
+            if (string.IsNullOrEmpty(message.PersistentGuid) || string.IsNullOrEmpty(message.DisplayName))
+                return "Invalid identity.";
+
+            if (!string.Equals(message.RoomCode, _session.RoomCode, System.StringComparison.OrdinalIgnoreCase))
+                return "Wrong room code.";
+
+            // Duplicate GUID = already connected from another (or the same) machine.
+            foreach (NetworkConnectionToClient existing in NetworkServer.connections.Values)
+            {
+                if (existing.authenticationData is AuthenticatedIdentity other
+                    && other.PersistentGuid == message.PersistentGuid)
+                    return "This player is already connected.";
+            }
+
+            bool matchRunning = _gameManager.Config != null && _gameManager.Phase != MatchPhase.Lobby;
+            if (matchRunning)
+            {
+                // Mid-match, only players who already own a seat may (re)join.
+                PlayerState seat = _playerManager.FindByGuid(message.PersistentGuid);
+                if (seat == null)
+                    return "Match already in progress.";
+
+                identity = new AuthenticatedIdentity
+                {
+                    PersistentGuid = message.PersistentGuid,
+                    DisplayName = message.DisplayName,
+                    IsReconnection = true,
+                    ExistingPlayerId = seat.PlayerId
+                };
+                return null;
+            }
+
+            // The pending connection is already counted in NetworkServer.connections,
+            // so "full" means the count would EXCEED the seat limit.
+            if (NetworkServer.connections.Count > _session.MaxPlayers)
+                return "Room is full.";
+
+            identity = new AuthenticatedIdentity
+            {
+                PersistentGuid = message.PersistentGuid,
+                DisplayName = message.DisplayName
+            };
+            return null;
+        }
+
+        private IEnumerator DelayedReject(NetworkConnectionToClient conn)
+        {
+            yield return new WaitForSeconds(0.5f);
+            ServerReject(conn);
+        }
+
+        #endregion
+
+        #region Client side
+
+        public override void OnStartClient()
+        {
+            NetworkClient.RegisterHandler<AuthResponseMessage>(OnAuthResponse, false);
+        }
+
+        public override void OnStopClient()
+        {
+            NetworkClient.UnregisterHandler<AuthResponseMessage>();
+        }
+
+        public override void OnClientAuthenticate()
+        {
+            NetworkClient.Send(new AuthRequestMessage
+            {
+                GameVersion = Application.version,
+                RoomCode = _session.RoomCode,
+                PersistentGuid = LocalIdentity.PersistentGuid,
+                DisplayName = LocalIdentity.DisplayName
+            });
+        }
+
+        private void OnAuthResponse(AuthResponseMessage message)
+        {
+            if (message.Approved)
+            {
+                ClientAccept();
+            }
+            else
+            {
+                Debug.LogWarning($"[Auth] Rejected by host: {message.Reason}");
+                ClientReject();
+            }
+        }
+
+        #endregion
+    }
+}

@@ -1,0 +1,16 @@
+{
+    "name": "AMath.Tutorial",
+    "rootNamespace": "AMath.Tutorial",
+    "references": [
+        "AMath.Core"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

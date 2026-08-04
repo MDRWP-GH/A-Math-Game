@@ -1,0 +1,253 @@
+using System.Collections.Generic;
+using AMath.Core;
+using AMath.Core.Events;
+using AMath.Gameplay.Players;
+using AMath.Networking.Discovery;
+using AMath.Networking.Room;
+using AMath.Replay;
+using AMath.Save;
+using UnityEngine;
+
+namespace AMath.Networking.HostMigration
+{
+    /// <summary>
+    /// Client-side host-succession engine. Uses only local data (the cached
+    /// succession table, the local autosave and LAN discovery), because when
+    /// it runs, the network session is already gone.
+    ///
+    /// Timeline after the host vanishes:
+    ///  1. Grace window — scan for the original host rebroadcasting the same
+    ///     room code (a router hiccup must not trigger a false migration).
+    ///  2. Election — my rank in the cached table decides my role:
+    ///     rank 0 promotes immediately; rank N waits N * stagger seconds and
+    ///     only promotes if no better candidate has appeared (fault-tolerant
+    ///     chain: if #1 also died, #2 takes over, and so on).
+    ///  3. Promotion loads the latest autosave and re-hosts under the SAME
+    ///     room code; everyone else rediscovers that code and reconnects.
+    /// There is no negotiation traffic at all — every survivor reaches the
+    /// same conclusion from identical replicated data.
+    /// </summary>
+    public sealed class HostMigrationManager : ITickable
+    {
+        #region Constants
+
+        /// <summary>Seconds to wait for the original host before electing a new one.</summary>
+        public const float GraceSeconds = 8f;
+
+        /// <summary>Extra wait per succession rank before self-promoting.</summary>
+        public const float PromotionStaggerSeconds = 10f;
+
+        #endregion
+
+        #region Fields
+
+        private readonly IEventBus _eventBus;
+        private readonly DiscoveryManager _discovery;
+        private readonly RoomManager _roomManager;
+        private readonly SaveManager _saveManager;
+        private readonly ReplayManager _replayManager;
+        private readonly PlayerManager _playerManager;
+        private readonly RoomSession _session;
+
+        private readonly List<MigrationCandidate> _cachedTable = new();
+
+        private RecoveryPhase _phase = RecoveryPhase.Idle;
+        private float _elapsed;
+        private float _promotionDeadline;
+        private float _nextHeartbeat;
+        private string _targetRoomCode;
+
+        #endregion
+
+        #region Properties
+
+        /// <summary>Current recovery phase (UI state).</summary>
+        public RecoveryPhase Phase => _phase;
+
+        #endregion
+
+        #region Construction
+
+        public HostMigrationManager(
+            IEventBus eventBus,
+            DiscoveryManager discovery,
+            RoomManager roomManager,
+            SaveManager saveManager,
+            ReplayManager replayManager,
+            PlayerManager playerManager,
+            RoomSession session)
+        {
+            _eventBus = eventBus;
+            _discovery = discovery;
+            _roomManager = roomManager;
+            _saveManager = saveManager;
+            _replayManager = replayManager;
+            _playerManager = playerManager;
+            _session = session;
+
+            _eventBus.Subscribe<ClientConnectedEvent>(OnClientConnected);
+            _eventBus.Subscribe<HostStartedEvent>(OnHostStarted);
+        }
+
+        #endregion
+
+        #region Table cache (fed by MigrationTableSync while connected)
+
+        /// <summary>Replaces the cached succession table with the latest replicated copy.</summary>
+        public void UpdateCachedTable(List<MigrationCandidate> table)
+        {
+            _cachedTable.Clear();
+            _cachedTable.AddRange(table);
+            MigrationRanking.Sort(_cachedTable);
+        }
+
+        #endregion
+
+        #region Control
+
+        /// <summary>Starts the recovery pipeline (called by ReconnectionManager on host loss).</summary>
+        public void BeginRecovery()
+        {
+            if (_phase != RecoveryPhase.Idle && _phase != RecoveryPhase.Recovered) return;
+
+            _targetRoomCode = _session.RoomCode;
+            _elapsed = 0f;
+            _nextHeartbeat = 0f;
+            SetPhase(RecoveryPhase.GraceWait);
+            _discovery.StartSearching();
+        }
+
+        /// <summary>Aborts recovery (player chose to end the match from the local save).</summary>
+        public void CancelRecovery()
+        {
+            if (_phase == RecoveryPhase.Idle) return;
+            _discovery.StopSearching();
+            SetPhase(RecoveryPhase.Idle);
+        }
+
+        #endregion
+
+        #region ITickable
+
+        /// <inheritdoc />
+        public void Tick(float deltaTime)
+        {
+            if (_phase != RecoveryPhase.GraceWait && _phase != RecoveryPhase.Searching)
+                return;
+
+            _elapsed += deltaTime;
+
+            // Any broadcast with our room code — original host or an earlier
+            // candidate that already took over — is a reconnect target.
+            if (_discovery.TryResolveRoomCode(_targetRoomCode, out RoomInfo room))
+            {
+                Reconnect(room);
+                return;
+            }
+
+            if (_phase == RecoveryPhase.GraceWait && _elapsed >= GraceSeconds)
+            {
+                int rank = MigrationRanking.RankOf(_cachedTable, _playerManager.LocalPlayerId);
+                if (rank == 0)
+                {
+                    Promote();
+                }
+                else
+                {
+                    // rank < 0 (unknown): wait behind every known candidate.
+                    int effectiveRank = rank < 0 ? _cachedTable.Count : rank;
+                    _promotionDeadline = GraceSeconds + effectiveRank * PromotionStaggerSeconds;
+                    SetPhase(RecoveryPhase.Searching);
+                }
+            }
+            else if (_phase == RecoveryPhase.Searching && _elapsed >= _promotionDeadline)
+            {
+                // Better-ranked candidates never appeared; it is my turn.
+                Promote();
+            }
+
+            // 1 Hz UI heartbeat (elapsed time display).
+            if (_elapsed >= _nextHeartbeat)
+            {
+                _nextHeartbeat = _elapsed + 1f;
+                _eventBus.Publish(new RecoveryStateChangedEvent { Phase = _phase, ElapsedSeconds = _elapsed });
+            }
+        }
+
+        #endregion
+
+        #region Transitions
+
+        private void Reconnect(RoomInfo room)
+        {
+            SetPhase(RecoveryPhase.Reconnecting);
+            _discovery.StopSearching();
+            Debug.Log($"[Migration] Room {_targetRoomCode} rediscovered at {room.HostAddress}; reconnecting.");
+
+            // A synchronous failure produces no disconnect event, so fall back
+            // to scanning immediately instead of waiting forever.
+            if (!_roomManager.JoinRoom(room))
+                OnReconnectFailed();
+        }
+
+        private void Promote()
+        {
+            SetPhase(RecoveryPhase.Promoting);
+            _discovery.StopSearching();
+
+            if (!_saveManager.TryLoadForRoom(_targetRoomCode, out SaveFile save, out string error))
+            {
+                Debug.LogError($"[Migration] Cannot promote — autosave unavailable: {error}");
+                // Keep waiting for someone else; the player can still end the match.
+                SetPhase(RecoveryPhase.Searching);
+                _promotionDeadline = float.MaxValue;
+                _discovery.StartSearching();
+                return;
+            }
+
+            _eventBus.Publish(new HostMigrationStartedEvent
+            {
+                IAmNewHost = true,
+                NewHostPlayerId = _playerManager.LocalPlayerId
+            });
+
+            _roomManager.RehostFromSnapshot(save.State, save.RoomCode, save.RoomName, save.MaxPlayers);
+            // Restore the replay AFTER the snapshot: RestoreSnapshot publishes
+            // MatchStartedEvent, which resets the live replay log.
+            _replayManager.Restore(save.Replay);
+            // HostStartedEvent completes the flow.
+        }
+
+        private void OnHostStarted(HostStartedEvent _)
+        {
+            if (_phase != RecoveryPhase.Promoting) return;
+            SetPhase(RecoveryPhase.Recovered);
+            _eventBus.Publish(new HostMigrationCompletedEvent { Success = true });
+        }
+
+        private void OnClientConnected(ClientConnectedEvent _)
+        {
+            if (_phase != RecoveryPhase.Reconnecting) return;
+            SetPhase(RecoveryPhase.Recovered);
+            _eventBus.Publish(new HostMigrationCompletedEvent { Success = true });
+        }
+
+        /// <summary>Reconnect attempt failed; fall back to scanning for the next candidate.</summary>
+        public void OnReconnectFailed()
+        {
+            if (_phase != RecoveryPhase.Reconnecting) return;
+            _discovery.StartSearching();
+            _promotionDeadline = _elapsed + PromotionStaggerSeconds;
+            SetPhase(RecoveryPhase.Searching);
+        }
+
+        private void SetPhase(RecoveryPhase phase)
+        {
+            if (_phase == phase) return;
+            _phase = phase;
+            _eventBus.Publish(new RecoveryStateChangedEvent { Phase = phase, ElapsedSeconds = _elapsed });
+        }
+
+        #endregion
+    }
+}

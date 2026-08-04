@@ -1,0 +1,20 @@
+{
+    "name": "AMath.Networking",
+    "rootNamespace": "AMath.Networking",
+    "references": [
+        "AMath.Core",
+        "Mirror",
+        "Mirror.Components",
+        "Mirror.Transports",
+        "kcp2k"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
