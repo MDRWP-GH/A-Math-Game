@@ -4,6 +4,7 @@
     "references": [
         "AMath.Core",
         "AMath.Networking",
+        "AMath.Tutorial",
         "UnityEngine.TestRunner",
         "UnityEditor.TestRunner"
     ],

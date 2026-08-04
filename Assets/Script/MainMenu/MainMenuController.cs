@@ -1,7 +1,9 @@
+using AMath.UI.Tutorial;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.UI;
+using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
 namespace AMath.UI
@@ -23,6 +25,7 @@ namespace AMath.UI
         private GameObject _helpOverlay;
         private Text _statusLabel;
         private Button _startButton;
+        private Button _tutorialButton;
         private Button _helpButton;
         private Button _settingsButton;
         private Button _quitButton;
@@ -55,7 +58,7 @@ namespace AMath.UI
             CreateDecorativeSymbol(canvas.transform, "=", new Vector2(0.87f, 0.17f), 110f, -10f);
 
             var menuPanel = UiFactory.CreateImage("Menu Panel", canvas.transform, UiPalette.Panel);
-            UiFactory.SetCenteredRect(menuPanel.rectTransform, Vector2.zero, new Vector2(720f, 770f));
+            UiFactory.SetCenteredRect(menuPanel.rectTransform, Vector2.zero, new Vector2(720f, 860f));
             UiFactory.AddShadow(menuPanel.gameObject, new Color(0f, 0f, 0f, 0.32f), new Vector2(0f, -14f));
 
             var accentLine = UiFactory.CreateImage("Accent Line", menuPanel.transform, UiPalette.Primary);
@@ -74,17 +77,20 @@ namespace AMath.UI
             _startButton = _ui.CreateButton(menuPanel.transform, "Start Button", "เริ่มเกม", UiPalette.Primary, UiPalette.PrimaryHighlight, StartGame);
             UiFactory.SetCenteredRect(_startButton.GetComponent<RectTransform>(), new Vector2(0f, 16f), new Vector2(520f, 88f));
 
+            _tutorialButton = _ui.CreateButton(menuPanel.transform, "Tutorial Button", "ฝึกหัด", UiPalette.Secondary, UiPalette.SecondaryHighlight, OpenTutorial);
+            UiFactory.SetCenteredRect(_tutorialButton.GetComponent<RectTransform>(), new Vector2(0f, -82f), new Vector2(520f, 78f));
+
             _helpButton = _ui.CreateButton(menuPanel.transform, "How To Play Button", "วิธีเล่น", UiPalette.Secondary, UiPalette.SecondaryHighlight, OpenHelp);
-            UiFactory.SetCenteredRect(_helpButton.GetComponent<RectTransform>(), new Vector2(0f, -82f), new Vector2(520f, 78f));
+            UiFactory.SetCenteredRect(_helpButton.GetComponent<RectTransform>(), new Vector2(0f, -174f), new Vector2(520f, 78f));
 
             _settingsButton = _ui.CreateButton(menuPanel.transform, "Settings Button", "ตั้งค่า", UiPalette.Secondary, UiPalette.SecondaryHighlight, OpenSettings);
-            UiFactory.SetCenteredRect(_settingsButton.GetComponent<RectTransform>(), new Vector2(0f, -174f), new Vector2(520f, 78f));
+            UiFactory.SetCenteredRect(_settingsButton.GetComponent<RectTransform>(), new Vector2(0f, -266f), new Vector2(520f, 78f));
 
             _quitButton = _ui.CreateButton(menuPanel.transform, "Quit Button", "ออกจากเกม", UiPalette.Quit, UiPalette.QuitHighlight, QuitGame);
-            UiFactory.SetCenteredRect(_quitButton.GetComponent<RectTransform>(), new Vector2(0f, -262f), new Vector2(520f, 68f));
+            UiFactory.SetCenteredRect(_quitButton.GetComponent<RectTransform>(), new Vector2(0f, -354f), new Vector2(520f, 68f));
 
             _statusLabel = _ui.CreateText("Status", menuPanel.transform, "เลือกเมนูเพื่อเริ่มต้น", 20, FontStyle.Normal, UiPalette.MutedText, TextAnchor.MiddleCenter);
-            UiFactory.SetCenteredRect(_statusLabel.rectTransform, new Vector2(0f, -335f), new Vector2(610f, 50f));
+            UiFactory.SetCenteredRect(_statusLabel.rectTransform, new Vector2(0f, -427f), new Vector2(610f, 50f));
 
             var footer = _ui.CreateText("Footer", canvas.transform, "A-MATH  •  LEARN  •  PLAY  •  GROW", 18, FontStyle.Bold, new Color(0.66f, 0.75f, 0.93f, 0.75f), TextAnchor.MiddleCenter);
             UiFactory.SetAnchoredRect(footer.rectTransform, new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0.5f, 0.5f), new Vector2(720f, 42f), new Vector2(0f, 35f));
@@ -96,9 +102,21 @@ namespace AMath.UI
 
         private void StartGame()
         {
-            // There is no gameplay scene in the starter project yet. Keep the menu honest
-            // instead of loading a guessed scene name or index.
-            _statusLabel.text = "ด่านแรกกำลังอยู่ระหว่างเตรียม...";
+            // Gameplay scene is not ready yet — route players to the intro tutorial for now.
+            OpenTutorial();
+        }
+
+        private void OpenTutorial()
+        {
+            if (!Application.CanStreamedLevelBeLoaded(TutorialSceneBootstrap.SceneName))
+            {
+                _statusLabel.text = "ไม่พบฉากฝึกหัด — ตรวจสอบ Build Settings";
+                Debug.LogError(
+                    $"A-Math: scene '{TutorialSceneBootstrap.SceneName}' is missing from Build Settings.");
+                return;
+            }
+
+            SceneManager.LoadScene(TutorialSceneBootstrap.SceneName);
         }
 
         private void OpenHelp()
@@ -157,7 +175,7 @@ namespace AMath.UI
             var body = _ui.CreateText(
                 "Body",
                 card.transform,
-                "เมนูนี้รองรับเมาส์ สัมผัส คีย์บอร์ด และจอย\n\nกด “เริ่มเกม” เพื่อเข้าสู่ด่านเมื่อฉากเกมพร้อม\n\nระหว่างนี้ คุณสามารถกลับมาที่เมนูนี้ได้ทุกเมื่อ",
+                "เมนูนี้รองรับเมาส์ สัมผัส คีย์บอร์ด และจอย\n\nกด “ฝึกหัด” เพื่อเริ่มบทนำ\n\nกด “เริ่มเกม” เพื่อเข้าสู่บทฝึกหัดชั่วคราวจนกว่าฉากเกมจะพร้อม",
                 25,
                 FontStyle.Normal,
                 UiPalette.MutedText,
@@ -174,8 +192,9 @@ namespace AMath.UI
 
         private void ConfigureMenuNavigation()
         {
-            UiFactory.SetVerticalNavigation(_startButton, _quitButton, _helpButton);
-            UiFactory.SetVerticalNavigation(_helpButton, _startButton, _settingsButton);
+            UiFactory.SetVerticalNavigation(_startButton, _quitButton, _tutorialButton);
+            UiFactory.SetVerticalNavigation(_tutorialButton, _startButton, _helpButton);
+            UiFactory.SetVerticalNavigation(_helpButton, _tutorialButton, _settingsButton);
             UiFactory.SetVerticalNavigation(_settingsButton, _helpButton, _quitButton);
             UiFactory.SetVerticalNavigation(_quitButton, _settingsButton, _startButton);
         }
