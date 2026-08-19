@@ -25,6 +25,12 @@ namespace AMath.Core
         /// Human peers never send commands for these seats.
         /// </summary>
         public bool IsAi;
+
+        /// <summary>
+        /// Team index when <see cref="MatchConfig.Format"/> is <see cref="MatchFormat.Team"/>.
+        /// Unused (-1) in individual matches.
+        /// </summary>
+        public int TeamId = -1;
     }
 
     /// <summary>
@@ -46,5 +52,8 @@ namespace AMath.Core
 
         /// <summary>Game version that produced this match (rules compatibility check).</summary>
         public string GameVersion;
+
+        /// <summary>Individual free-for-all or two-team scoring.</summary>
+        public MatchFormat Format = MatchFormat.Individual;
     }
 }

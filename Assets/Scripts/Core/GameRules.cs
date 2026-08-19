@@ -39,5 +39,11 @@ namespace AMath.Core
 
         /// <summary>Supported player range for a room.</summary>
         public const int MaxPlayers = 8;
+
+        /// <summary>Minimum seats required to start a team match (two teams of two).</summary>
+        public const int MinTeamMatchPlayers = 4;
+
+        /// <summary>Number of teams in team mode.</summary>
+        public const int TeamCount = 2;
     }
 }

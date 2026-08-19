@@ -94,7 +94,7 @@ namespace AMath.Networking.Room
         /// added automatically so a solo host can play. Extra AI opponents can
         /// be requested via <paramref name="extraAiPlayers"/>.
         /// </summary>
-        public bool StartMatch(int extraAiPlayers = 0)
+        public bool StartMatch(MatchFormat format = MatchFormat.Individual, int extraAiPlayers = 0)
         {
             if (!NetworkServer.active)
             {
@@ -119,11 +119,22 @@ namespace AMath.Networking.Room
                 return false;
             }
 
+            int totalSeats = members.Count + aiCount;
+            if (format == MatchFormat.Team)
+            {
+                if (totalSeats < GameRules.MinTeamMatchPlayers || totalSeats % GameRules.TeamCount != 0)
+                {
+                    Debug.LogWarning("[Room] Team matches need an even number of at least four players.");
+                    return false;
+                }
+            }
+
             var config = new MatchConfig
             {
                 RandomSeed = Guid.NewGuid().GetHashCode(),
                 TurnSeconds = GameRules.DefaultTurnSeconds,
-                GameVersion = Application.version
+                GameVersion = Application.version,
+                Format = format
             };
 
             for (int seat = 0; seat < members.Count; seat++)
@@ -134,7 +145,8 @@ namespace AMath.Networking.Room
                     PlayerId = seat,
                     PersistentGuid = members[seat].PersistentGuid,
                     DisplayName = members[seat].DisplayName,
-                    IsAi = false
+                    IsAi = false,
+                    TeamId = format == MatchFormat.Team ? seat % GameRules.TeamCount : -1
                 });
             }
 
@@ -146,7 +158,8 @@ namespace AMath.Networking.Room
                     PlayerId = seat,
                     PersistentGuid = $"ai:{config.RandomSeed}:{seat}",
                     DisplayName = aiCount == 1 ? "AI" : $"AI {i + 1}",
-                    IsAi = true
+                    IsAi = true,
+                    TeamId = format == MatchFormat.Team ? seat % GameRules.TeamCount : -1
                 });
             }
 

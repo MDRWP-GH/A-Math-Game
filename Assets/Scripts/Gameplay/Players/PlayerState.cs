@@ -32,12 +32,16 @@ namespace AMath.Gameplay.Players
         /// <summary>True when the host's scripted AI plays this seat.</summary>
         public bool IsAi { get; }
 
-        public PlayerState(int playerId, string persistentGuid, string displayName, bool isAi = false)
+        /// <summary>Team index in team matches; otherwise -1.</summary>
+        public int TeamId { get; }
+
+        public PlayerState(int playerId, string persistentGuid, string displayName, bool isAi = false, int teamId = -1)
         {
             PlayerId = playerId;
             PersistentGuid = persistentGuid;
             DisplayName = displayName;
             IsAi = isAi;
+            TeamId = teamId;
         }
     }
 }

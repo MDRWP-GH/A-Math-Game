@@ -5,6 +5,7 @@ using AMath.Art;
 using AMath.AI.UI;
 using AMath.Bootstrap;
 using AMath.Core;
+using AMath.Core.Accounts;
 using AMath.Core.Assistance;
 using AMath.Core.Events;
 using AMath.Core.StateMachines;
@@ -72,6 +73,8 @@ namespace AMath.UI
         private Text _lobbyStatus;
         private Text _lobbyCode;
         private Transform _lobbyMembersRoot;
+        private Button _formatIndividualButton;
+        private Button _formatTeamButton;
         private Transform _roomListRoot;
         private InputField _roomNameField;
         private InputField _joinCodeField;
@@ -94,6 +97,7 @@ namespace AMath.UI
         private Transform _declareRoot;
 
         private Text _resultWinner;
+        private Text _resultMeta;
         private Text _resultBody;
         private Text _recoveryStatus;
 
@@ -129,7 +133,16 @@ namespace AMath.UI
             if (_mainMenu != null)
                 _mainMenu.gameObject.SetActive(false);
 
-            LocalIdentity.DisplayName = GameSettings.PlayerName;
+            if (UserAccountStore.TryGetSessionAccount(out var account))
+            {
+                GameSettings.PlayerName = account.DisplayName;
+                LocalIdentity.DisplayName = account.DisplayName;
+            }
+            else
+            {
+                LocalIdentity.DisplayName = GameSettings.PlayerName;
+            }
+
             NetworkedGameContext.EnsureExists();
             EnsureBuilt();
             ShowBrowser();
@@ -464,16 +477,28 @@ namespace AMath.UI
             LocalizedText.Bind(membersTitle, "ui.play.members");
 
             _lobbyMembersRoot = UiFactory.CreateRect("Members", panel).transform;
-            UiFactory.SetCenteredRect((RectTransform)_lobbyMembersRoot, new Vector2(0f, 20f), new Vector2(560f, 280f));
+            UiFactory.SetCenteredRect((RectTransform)_lobbyMembersRoot, new Vector2(0f, -10f), new Vector2(560f, 220f));
+
+            var formatTitle = _ui.CreateText("FormatTitle", panel, string.Empty, 22, FontStyle.Bold, UiPalette.MutedText, TextAnchor.MiddleCenter);
+            UiFactory.SetCenteredRect(formatTitle.rectTransform, new Vector2(0f, -150f), new Vector2(560f, 36f));
+            LocalizedText.Bind(formatTitle, "ui.play.format");
+
+            _formatIndividualButton = _ui.CreateButton(panel, "FormatIndividual", string.Empty, UiPalette.Secondary, UiPalette.SecondaryHighlight, () => SetMatchFormat(MatchFormat.Individual));
+            UiFactory.SetCenteredRect(_formatIndividualButton.GetComponent<RectTransform>(), new Vector2(-140f, -210f), new Vector2(260f, 56f));
+            LocalizedText.Bind(_formatIndividualButton.GetComponentInChildren<Text>(), "ui.play.format_individual");
+
+            _formatTeamButton = _ui.CreateButton(panel, "FormatTeam", string.Empty, UiPalette.Secondary, UiPalette.SecondaryHighlight, () => SetMatchFormat(MatchFormat.Team));
+            UiFactory.SetCenteredRect(_formatTeamButton.GetComponent<RectTransform>(), new Vector2(140f, -210f), new Vector2(260f, 56f));
+            LocalizedText.Bind(_formatTeamButton.GetComponentInChildren<Text>(), "ui.play.format_team");
 
             _lobbyStatus = _ui.CreateText("Status", panel, string.Empty, 22, FontStyle.Normal, UiPalette.MutedText, TextAnchor.MiddleCenter);
-            UiFactory.SetCenteredRect(_lobbyStatus.rectTransform, new Vector2(0f, -200f), new Vector2(560f, 40f));
+            UiFactory.SetCenteredRect(_lobbyStatus.rectTransform, new Vector2(0f, -280f), new Vector2(560f, 40f));
 
             var startButton = _ui.CreateButton(panel, "StartMatch", string.Empty, UiPalette.Primary, UiPalette.PrimaryHighlight, () =>
             {
                 _lobbyPresenter.StartMatch();
             });
-            UiFactory.SetCenteredRect(startButton.GetComponent<RectTransform>(), new Vector2(0f, -270f), new Vector2(420f, 70f));
+            UiFactory.SetCenteredRect(startButton.GetComponent<RectTransform>(), new Vector2(0f, -350f), new Vector2(420f, 70f));
             LocalizedText.Bind(startButton.GetComponentInChildren<Text>(), "ui.play.start_match");
 
             var leaveButton = _ui.CreateButton(panel, "Leave", string.Empty, UiPalette.Quit, UiPalette.QuitHighlight, () =>
@@ -481,8 +506,17 @@ namespace AMath.UI
                 _lobbyPresenter.LeaveRoom();
                 ReturnToMenu();
             });
-            UiFactory.SetCenteredRect(leaveButton.GetComponent<RectTransform>(), new Vector2(0f, -360f), new Vector2(320f, 60f));
+            UiFactory.SetCenteredRect(leaveButton.GetComponent<RectTransform>(), new Vector2(0f, -440f), new Vector2(320f, 60f));
             LocalizedText.Bind(leaveButton.GetComponentInChildren<Text>(), "ui.play.leave");
+        }
+
+        private void SetMatchFormat(MatchFormat format)
+        {
+            if (_lobbyPresenter == null || !_lobbyPresenter.CanStartMatch)
+                return;
+
+            _lobbyPresenter.SelectedFormat = format;
+            RefreshLobby();
         }
 
         private void RefreshLobby()
@@ -493,9 +527,14 @@ namespace AMath.UI
             for (int i = _lobbyMembersRoot.childCount - 1; i >= 0; i--)
                 Destroy(_lobbyMembersRoot.GetChild(i).gameObject);
 
-            float y = 110f;
-            foreach (var player in FindObjectsByType<NetworkPlayer>(FindObjectsSortMode.None))
+            float y = 90f;
+            var members = FindObjectsByType<NetworkPlayer>(FindObjectsSortMode.None)
+                .OrderBy(p => p.PlayerId)
+                .ToList();
+            MatchFormat format = _lobbyPresenter.SelectedFormat;
+            for (int index = 0; index < members.Count; index++)
             {
+                NetworkPlayer player = members[index];
                 var card = UiFactory.CreateImage("MemberCard", _lobbyMembersRoot, UiPalette.Card);
                 UiFactory.SetCenteredRect(card.rectTransform, new Vector2(0f, y), new Vector2(540f, 56f));
 
@@ -506,6 +545,8 @@ namespace AMath.UI
                     badges += $"   <color=#FA9E29>[{_text.GetText("ui.play.host_badge")}]</color>";
                 if (isYou)
                     badges += $"   <color=#69C4EA>({_text.GetText("ui.play.you_badge")})</color>";
+                if (format == MatchFormat.Team)
+                    badges += $"   <color=#8FD694>[{_text.GetText("ui.play.team_badge")} {index % GameRules.TeamCount + 1}]</color>";
 
                 var label = _ui.CreateText("Name", card.transform, player.DisplayName + badges, 26, FontStyle.Bold, UiPalette.LightText, TextAnchor.MiddleLeft);
                 UiFactory.SetStretchRect(label.rectTransform, 24f, 0f, 24f, 0f);
@@ -513,8 +554,19 @@ namespace AMath.UI
                 y -= 64f;
             }
 
+            bool hostControlsFormat = _lobbyPresenter.CanStartMatch;
+            if (_formatIndividualButton != null)
+                _formatIndividualButton.interactable = hostControlsFormat;
+            if (_formatTeamButton != null)
+                _formatTeamButton.interactable = hostControlsFormat;
+
+            HighlightFormatButton(_formatIndividualButton, format == MatchFormat.Individual);
+            HighlightFormatButton(_formatTeamButton, format == MatchFormat.Team);
+
             _lobbyStatus.text = _lobbyPresenter.CanStartMatch
-                ? string.Empty
+                ? (format == MatchFormat.Team
+                    ? _text.GetText("ui.play.team_hint")
+                    : string.Empty)
                 : _text.GetText("ui.play.waiting_host");
             var start = _lobbyRoot.transform.Find("Panel/StartMatch")?.GetComponent<Button>();
             if (start != null)
@@ -522,6 +574,17 @@ namespace AMath.UI
                 start.interactable = _lobbyPresenter.CanStartMatch;
                 start.gameObject.SetActive(_lobbyPresenter.CanStartMatch || !NetworkClient.active || NetworkServer.active);
             }
+        }
+
+        private static void HighlightFormatButton(Button button, bool selected)
+        {
+            if (button == null)
+                return;
+
+            var colors = button.colors;
+            colors.normalColor = selected ? UiPalette.Primary : UiPalette.Secondary;
+            colors.highlightedColor = selected ? UiPalette.PrimaryHighlight : UiPalette.SecondaryHighlight;
+            button.colors = colors;
         }
 
         #endregion
@@ -928,6 +991,9 @@ namespace AMath.UI
             _resultWinner = _ui.CreateText("Winner", panel, string.Empty, 40, FontStyle.Bold, UiPalette.Primary, TextAnchor.MiddleCenter);
             UiFactory.SetCenteredRect(_resultWinner.rectTransform, new Vector2(0f, 250f), new Vector2(640f, 60f));
 
+            _resultMeta = _ui.CreateText("Meta", panel, string.Empty, 24, FontStyle.Normal, UiPalette.MutedText, TextAnchor.MiddleCenter);
+            UiFactory.SetCenteredRect(_resultMeta.rectTransform, new Vector2(0f, 190f), new Vector2(640f, 50f));
+
             _resultBody = _ui.CreateText("Body", panel, string.Empty, 28, FontStyle.Normal, UiPalette.LightText, TextAnchor.UpperCenter);
             _resultBody.horizontalOverflow = HorizontalWrapMode.Wrap;
             _resultBody.verticalOverflow = VerticalWrapMode.Overflow;
@@ -956,6 +1022,7 @@ namespace AMath.UI
             if (result == null)
             {
                 _resultWinner.text = string.Empty;
+                _resultMeta.text = string.Empty;
                 _resultBody.text = string.Empty;
                 return;
             }
@@ -970,16 +1037,51 @@ namespace AMath.UI
                 }
             }
 
-            string winnerName = winner != null ? winner.DisplayName : $"#{result.WinnerPlayerId}";
-            _resultWinner.text = $"{_text.GetText("ui.result.winner")}: {winnerName}";
+            if (result.Format == MatchFormat.Team && result.WinnerTeamId >= 0)
+            {
+                _resultWinner.text = string.Format(
+                    _text.GetText("ui.result.team_winner"),
+                    result.WinnerTeamId + 1);
+            }
+            else
+            {
+                string winnerName = winner != null ? winner.DisplayName : $"#{result.WinnerPlayerId}";
+                _resultWinner.text = $"{_text.GetText("ui.result.winner")}: {winnerName}";
+            }
+
+            string formatLabel = result.Format == MatchFormat.Team
+                ? _text.GetText("ui.play.format_team")
+                : _text.GetText("ui.play.format_individual");
+            int minutes = result.DurationSeconds / 60;
+            int seconds = result.DurationSeconds % 60;
+            string duration = minutes > 0
+                ? string.Format(_text.GetText("ui.result.duration_min"), minutes, seconds)
+                : string.Format(_text.GetText("ui.result.duration_sec"), seconds);
+            _resultMeta.text = $"{formatLabel}  •  {duration}";
 
             var sb = new System.Text.StringBuilder();
+            if (result.Format == MatchFormat.Team && result.TeamStandings.Count > 0)
+            {
+                sb.AppendLine(_text.GetText("ui.result.team_standings"));
+                sb.AppendLine();
+                foreach (TeamResult team in result.TeamStandings)
+                {
+                    string line = $"{_text.GetText("ui.play.team_badge")} {team.TeamId + 1}: {team.TotalScore}";
+                    if (team.TeamId == result.WinnerTeamId)
+                        line = $"<color=#FDA733><b>{line}</b></color>";
+                    sb.AppendLine(line);
+                }
+
+                sb.AppendLine();
+            }
+
             sb.AppendLine(_text.GetText("ui.result.standings"));
             sb.AppendLine();
             int rank = 1;
             foreach (PlayerResult row in result.Standings.OrderByDescending(r => r.FinalScore))
             {
-                string line = $"{rank}.  {row.DisplayName}   {row.FinalScore}";
+                string teamSuffix = row.TeamId >= 0 ? $" ({_text.GetText("ui.play.team_badge")} {row.TeamId + 1})" : string.Empty;
+                string line = $"{rank}.  {row.DisplayName}{teamSuffix}   {row.FinalScore}";
                 if (row.PlayerId == result.WinnerPlayerId)
                     line = $"<color=#FDA733><b>{line}</b></color>";
                 sb.AppendLine(line);

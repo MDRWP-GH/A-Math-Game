@@ -26,6 +26,7 @@ namespace AMath.Save
         private readonly GameManager _gameManager;
         private readonly ReplayManager _replayManager;
         private readonly SaveMigrator _migrator;
+        private readonly MatchHistoryStore _historyStore;
         private readonly string _saveDirectory;
 
         #endregion
@@ -54,6 +55,7 @@ namespace AMath.Save
             _gameManager = gameManager;
             _replayManager = replayManager;
             _migrator = new SaveMigrator();
+            _historyStore = new MatchHistoryStore();
             // Register future ISaveMigrationStep implementations here as the schema evolves.
 
             _saveDirectory = Path.Combine(Application.persistentDataPath, "Saves");
@@ -69,7 +71,33 @@ namespace AMath.Save
 
         private void OnTurnResolved(TurnResolvedEvent evt) => SaveNow();
 
-        private void OnMatchFinished(MatchFinishedEvent evt) => SaveNow();
+        private void OnMatchFinished(MatchFinishedEvent evt)
+        {
+            SaveNow();
+            ArchiveHistoryIfFinished();
+        }
+
+        private void ArchiveHistoryIfFinished()
+        {
+            if (_gameManager.Result == null || _gameManager.Config == null)
+                return;
+
+            var file = new SaveFile
+            {
+                GameVersion = Application.version,
+                TimestampUtcTicks = DateTime.UtcNow.Ticks,
+                RoomName = RoomName,
+                RoomCode = RoomCode,
+                MaxPlayers = MaxPlayers,
+                Port = Port,
+                State = _gameManager.CaptureSnapshot(),
+                Replay = _replayManager.Log
+            };
+
+            string account = Core.Accounts.UserAccountStore.SessionUsername;
+            if (!_historyStore.TryArchiveFinishedMatch(file, account, out _, out string error))
+                Debug.LogWarning($"[History] Archive failed: {error}");
+        }
 
         #endregion
 
@@ -184,6 +212,9 @@ namespace AMath.Save
 
             return bestPath != null && TryLoad(bestPath, out file, out error);
         }
+
+        /// <summary>Exposes archived match history for the history browser UI.</summary>
+        public MatchHistoryStore History => _historyStore;
 
         private string PathForRoom(string roomCode) =>
             Path.Combine(_saveDirectory, $"match_{(string.IsNullOrEmpty(roomCode) ? "local" : roomCode)}.json");

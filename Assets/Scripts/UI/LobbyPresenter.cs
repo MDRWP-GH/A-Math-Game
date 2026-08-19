@@ -46,6 +46,17 @@ namespace AMath.UI
         /// </summary>
         public bool CanStartMatch => _session is { IsHost: true } && _members.Count >= 1;
 
+        /// <summary>Match format selected by the host in the lobby.</summary>
+        public MatchFormat SelectedFormat
+        {
+            get => _session?.SelectedFormat ?? MatchFormat.Individual;
+            set
+            {
+                if (_session != null)
+                    _session.SelectedFormat = value;
+            }
+        }
+
         #endregion
 
         #region Lifecycle
@@ -83,7 +94,8 @@ namespace AMath.UI
         /// <paramref name="extraAiPlayers"/> adds AI opponents beyond the
         /// automatic fill-to-minimum.
         /// </summary>
-        public void StartMatch(int extraAiPlayers = 0) => _roomManager.StartMatch(extraAiPlayers);
+        public void StartMatch(int extraAiPlayers = 0) =>
+            _roomManager.StartMatch(SelectedFormat, extraAiPlayers);
 
         /// <summary>Leaves the room (both roles).</summary>
         public void LeaveRoom() => _roomManager.LeaveRoom();

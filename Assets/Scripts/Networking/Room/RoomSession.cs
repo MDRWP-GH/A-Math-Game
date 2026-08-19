@@ -1,3 +1,5 @@
+using AMath.Core;
+
 namespace AMath.Networking.Room
 {
     /// <summary>
@@ -33,6 +35,9 @@ namespace AMath.Networking.Room
         /// </summary>
         public string ReconnectToken { get; set; }
 
+        /// <summary>Match format the host selected in the lobby before start.</summary>
+        public MatchFormat SelectedFormat { get; set; } = MatchFormat.Individual;
+
         /// <summary>Resets to the "not in a room" state.</summary>
         public void Reset()
         {
@@ -43,6 +48,7 @@ namespace AMath.Networking.Room
             Port = 0;
             IsActive = false;
             ReconnectToken = null;
+            SelectedFormat = MatchFormat.Individual;
         }
     }
 }

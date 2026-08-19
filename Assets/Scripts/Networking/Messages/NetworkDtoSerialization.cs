@@ -49,6 +49,7 @@ namespace AMath.Networking.Messages
             writer.WriteInt(config.RandomSeed);
             writer.WriteInt(config.TurnSeconds);
             writer.WriteString(config.GameVersion);
+            writer.WriteByte((byte)config.Format);
             writer.WriteInt(config.Players.Count);
             foreach (PlayerIdentity player in config.Players)
             {
@@ -56,6 +57,7 @@ namespace AMath.Networking.Messages
                 writer.WriteString(player.PersistentGuid);
                 writer.WriteString(player.DisplayName);
                 writer.WriteBool(player.IsAi);
+                writer.WriteInt(player.TeamId);
             }
         }
 
@@ -65,7 +67,8 @@ namespace AMath.Networking.Messages
             {
                 RandomSeed = reader.ReadInt(),
                 TurnSeconds = reader.ReadInt(),
-                GameVersion = reader.ReadString()
+                GameVersion = reader.ReadString(),
+                Format = (MatchFormat)reader.ReadByte()
             };
 
             int count = reader.ReadInt();
@@ -76,7 +79,8 @@ namespace AMath.Networking.Messages
                     PlayerId = reader.ReadInt(),
                     PersistentGuid = reader.ReadString(),
                     DisplayName = reader.ReadString(),
-                    IsAi = reader.ReadBool()
+                    IsAi = reader.ReadBool(),
+                    TeamId = reader.ReadInt()
                 });
             }
 

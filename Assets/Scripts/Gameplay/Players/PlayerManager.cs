@@ -51,7 +51,8 @@ namespace AMath.Gameplay.Players
                     identity.PlayerId,
                     identity.PersistentGuid,
                     identity.DisplayName,
-                    identity.IsAi));
+                    identity.IsAi,
+                    identity.TeamId));
             }
 
             _eventBus.Publish(new PlayerRosterChangedEvent());

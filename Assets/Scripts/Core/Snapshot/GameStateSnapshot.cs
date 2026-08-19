@@ -58,5 +58,8 @@ namespace AMath.Core.Snapshot
 
         /// <summary>Final result when the snapshot was taken after match end; null otherwise.</summary>
         public MatchResult Result;
+
+        /// <summary>UTC ticks when the match began (for duration tracking across restore).</summary>
+        public long MatchStartedUtcTicks;
     }
 }

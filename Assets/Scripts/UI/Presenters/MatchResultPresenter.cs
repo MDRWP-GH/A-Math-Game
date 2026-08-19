@@ -40,7 +40,15 @@ namespace AMath.UI
             ResultChanged?.Invoke(_result);
         }
 
-        public void Rematch(int extraAiPlayers = 0) => _roomManager?.StartMatch(extraAiPlayers);
+        public void Rematch(int extraAiPlayers = 0)
+        {
+            if (_roomManager == null)
+                return;
+
+            MatchFormat format = NetworkContext.Services?.Resolve<RoomSession>()?.SelectedFormat
+                                 ?? MatchFormat.Individual;
+            _roomManager.StartMatch(format, extraAiPlayers);
+        }
 
         public void Leave() => _roomManager?.LeaveRoom();
     }

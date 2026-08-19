@@ -79,6 +79,28 @@ namespace AMath.Tests
             Assert.AreEqual(record.EndReason, restored.EndReason);
         }
 
+        [Test]
+        public void MatchConfig_RoundTrip_PreservesFormatAndTeams()
+        {
+            var config = new MatchConfig
+            {
+                RandomSeed = 99,
+                TurnSeconds = 60,
+                GameVersion = "2.0.0",
+                Format = MatchFormat.Team,
+                Players =
+                {
+                    new PlayerIdentity { PlayerId = 0, PersistentGuid = "a", DisplayName = "A", TeamId = 0 },
+                    new PlayerIdentity { PlayerId = 1, PersistentGuid = "b", DisplayName = "B", TeamId = 1 }
+                }
+            };
+
+            MatchConfig restored = RoundTrip(config);
+            Assert.AreEqual(MatchFormat.Team, restored.Format);
+            Assert.AreEqual(0, restored.Players[0].TeamId);
+            Assert.AreEqual(1, restored.Players[1].TeamId);
+        }
+
         private static MatchConfig RoundTrip(MatchConfig config)
         {
             var writer = new NetworkWriter();

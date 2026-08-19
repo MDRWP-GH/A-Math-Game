@@ -1,4 +1,6 @@
 using AMath.Art;
+using AMath.Core.Accounts;
+using AMath.UI.Localization;
 using AMath.UI.Tutorial;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -26,11 +28,16 @@ namespace AMath.UI
         private GameObject _menuCanvas;
         private HowToPlayOverlay _helpOverlay;
         private Button _startButton;
+        private Button _historyButton;
         private Button _tutorialButton;
         private Button _helpButton;
+        private Button _accountButton;
         private Button _settingsButton;
         private Button _quitButton;
+        private Text _sessionLabel;
         private SettingsMenuController _settingsMenu;
+        private AccountOverlay _accountOverlay;
+        private MatchHistoryOverlay _historyOverlay;
         private InputAction _cancelAction;
 
         private void Awake()
@@ -43,13 +50,13 @@ namespace AMath.UI
 
         private void Start()
         {
+            RefreshSessionLabel();
             UiFactory.Select(_startButton);
         }
 
         private void OnEnable()
         {
-            // The play session hides this object and re-activates it on return;
-            // restore keyboard/gamepad focus.
+            RefreshSessionLabel();
             if (_startButton != null)
             {
                 UiFactory.Select(_startButton);
@@ -59,9 +66,11 @@ namespace AMath.UI
         private void Update()
         {
             if (_helpOverlay != null && _helpOverlay.IsOpen && WasCancelPressed())
-            {
                 _helpOverlay.Close();
-            }
+            if (_accountOverlay != null && _accountOverlay.IsOpen && WasCancelPressed())
+                _accountOverlay.Close();
+            if (_historyOverlay != null && _historyOverlay.IsOpen && WasCancelPressed())
+                _historyOverlay.Close();
         }
 
         private void BuildMenu()
@@ -93,9 +102,25 @@ namespace AMath.UI
             UiFactory.AddDoubleOutline(title.gameObject, new Vector2(4f, -4f), new Vector2(2f, -2f));
             LocalizedText.Bind(title, "ui.menu.title");
 
+            _sessionLabel = _ui.CreateText(
+                "Session",
+                canvas.transform,
+                string.Empty,
+                24,
+                FontStyle.Italic,
+                UiPalette.MutedText,
+                TextAnchor.MiddleCenter);
+            UiFactory.SetAnchoredRect(
+                _sessionLabel.rectTransform,
+                new Vector2(0.5f, 1f),
+                new Vector2(0.5f, 1f),
+                new Vector2(0.5f, 1f),
+                new Vector2(980f, 40f),
+                new Vector2(0f, -150f));
+
             const float buttonWidth = 520f;
-            const float buttonHeight = 88f;
-            const int buttonFontSize = 52;
+            const float buttonHeight = 72f;
+            const int buttonFontSize = 46;
 
             _startButton = _ui.CreateTextMenuButton(
                 canvas.transform,
@@ -105,9 +130,21 @@ namespace AMath.UI
                 StartGame);
             UiFactory.SetCenteredRect(
                 _startButton.GetComponent<RectTransform>(),
-                new Vector2(0f, 158f),
+                new Vector2(0f, 170f),
                 new Vector2(buttonWidth, buttonHeight));
             LocalizedText.Bind(_startButton.GetComponentInChildren<Text>(), "ui.menu.start");
+
+            _historyButton = _ui.CreateTextMenuButton(
+                canvas.transform,
+                "History Button",
+                string.Empty,
+                buttonFontSize,
+                OpenHistory);
+            UiFactory.SetCenteredRect(
+                _historyButton.GetComponent<RectTransform>(),
+                new Vector2(0f, 94f),
+                new Vector2(buttonWidth, buttonHeight));
+            LocalizedText.Bind(_historyButton.GetComponentInChildren<Text>(), "ui.menu.history");
 
             _tutorialButton = _ui.CreateTextMenuButton(
                 canvas.transform,
@@ -117,7 +154,7 @@ namespace AMath.UI
                 OpenTutorial);
             UiFactory.SetCenteredRect(
                 _tutorialButton.GetComponent<RectTransform>(),
-                new Vector2(0f, 62f),
+                new Vector2(0f, 18f),
                 new Vector2(buttonWidth, buttonHeight));
             ConfigureTutorialButton();
 
@@ -129,9 +166,21 @@ namespace AMath.UI
                 OpenHelp);
             UiFactory.SetCenteredRect(
                 _helpButton.GetComponent<RectTransform>(),
-                new Vector2(0f, -34f),
+                new Vector2(0f, -58f),
                 new Vector2(buttonWidth, buttonHeight));
             LocalizedText.Bind(_helpButton.GetComponentInChildren<Text>(), "ui.menu.help");
+
+            _accountButton = _ui.CreateTextMenuButton(
+                canvas.transform,
+                "Account Button",
+                string.Empty,
+                buttonFontSize,
+                OpenAccount);
+            UiFactory.SetCenteredRect(
+                _accountButton.GetComponent<RectTransform>(),
+                new Vector2(0f, -134f),
+                new Vector2(buttonWidth, buttonHeight));
+            LocalizedText.Bind(_accountButton.GetComponentInChildren<Text>(), "ui.menu.account");
 
             _settingsButton = _ui.CreateTextMenuButton(
                 canvas.transform,
@@ -141,7 +190,7 @@ namespace AMath.UI
                 OpenSettings);
             UiFactory.SetCenteredRect(
                 _settingsButton.GetComponent<RectTransform>(),
-                new Vector2(0f, -130f),
+                new Vector2(0f, -210f),
                 new Vector2(buttonWidth, buttonHeight));
             LocalizedText.Bind(_settingsButton.GetComponentInChildren<Text>(), "ui.menu.settings");
 
@@ -153,13 +202,28 @@ namespace AMath.UI
                 QuitGame);
             UiFactory.SetCenteredRect(
                 _quitButton.GetComponent<RectTransform>(),
-                new Vector2(0f, -226f),
+                new Vector2(0f, -286f),
                 new Vector2(buttonWidth, buttonHeight));
             LocalizedText.Bind(_quitButton.GetComponentInChildren<Text>(), "ui.menu.quit");
 
             ConfigureMenuNavigation();
             BuildHelpOverlay(canvas.transform);
+            BuildAccountOverlay(canvas.transform);
+            BuildHistoryOverlay(canvas.transform);
             BuildSettingsMenu();
+            RefreshSessionLabel();
+        }
+
+        private void RefreshSessionLabel()
+        {
+            if (_sessionLabel == null)
+                return;
+
+            _sessionLabel.text = UserAccountStore.IsSignedIn
+                ? string.Format(
+                    UiLocalizationProvider.Shared.GetText("ui.menu.signed_in"),
+                    UserAccountStore.SessionDisplayName)
+                : UiLocalizationProvider.Shared.GetText("ui.menu.signed_out");
         }
 
         private void StartGame()
@@ -195,6 +259,16 @@ namespace AMath.UI
         private void OpenHelp()
         {
             _helpOverlay.Open();
+        }
+
+        private void OpenAccount()
+        {
+            _accountOverlay.Open();
+        }
+
+        private void OpenHistory()
+        {
+            _historyOverlay.Open();
         }
 
         private void CloseHelp()
@@ -237,12 +311,27 @@ namespace AMath.UI
             _helpOverlay.Closed += CloseHelp;
         }
 
+        private void BuildAccountOverlay(Transform canvasTransform)
+        {
+            _accountOverlay = new AccountOverlay(_ui, canvasTransform, UiLocalizationProvider.Shared);
+            _accountOverlay.SignedIn += RefreshSessionLabel;
+            _accountOverlay.Closed += () => UiFactory.Select(_accountButton);
+        }
+
+        private void BuildHistoryOverlay(Transform canvasTransform)
+        {
+            _historyOverlay = new MatchHistoryOverlay(_ui, canvasTransform, UiLocalizationProvider.Shared);
+            _historyOverlay.Closed += () => UiFactory.Select(_historyButton);
+        }
+
         private void ConfigureMenuNavigation()
         {
-            UiFactory.SetVerticalNavigation(_startButton, _quitButton, _tutorialButton);
-            UiFactory.SetVerticalNavigation(_tutorialButton, _startButton, _helpButton);
-            UiFactory.SetVerticalNavigation(_helpButton, _tutorialButton, _settingsButton);
-            UiFactory.SetVerticalNavigation(_settingsButton, _helpButton, _quitButton);
+            UiFactory.SetVerticalNavigation(_startButton, _quitButton, _historyButton);
+            UiFactory.SetVerticalNavigation(_historyButton, _startButton, _tutorialButton);
+            UiFactory.SetVerticalNavigation(_tutorialButton, _historyButton, _helpButton);
+            UiFactory.SetVerticalNavigation(_helpButton, _tutorialButton, _accountButton);
+            UiFactory.SetVerticalNavigation(_accountButton, _helpButton, _settingsButton);
+            UiFactory.SetVerticalNavigation(_settingsButton, _accountButton, _quitButton);
             UiFactory.SetVerticalNavigation(_quitButton, _settingsButton, _startButton);
         }
 

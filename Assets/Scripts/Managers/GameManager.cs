@@ -38,6 +38,7 @@ namespace AMath.Managers
 
         private CommandProcessor _processor;
         private DeterministicRandom _rng;
+        private long _matchStartedUtcTicks;
 
         #endregion
 
@@ -89,6 +90,7 @@ namespace AMath.Managers
         {
             Config = config ?? throw new ArgumentNullException(nameof(config));
             Result = null;
+            _matchStartedUtcTicks = DateTime.UtcNow.Ticks;
 
             // Rematch path: the machine only allows Finished -> Lobby -> Loading.
             if (Phase == MatchPhase.Finished)
@@ -275,29 +277,112 @@ namespace AMath.Managers
             if (finisher != null)
                 finisher.Score += forfeited;
 
-            var result = new MatchResult { Reason = reason };
+            var result = new MatchResult
+            {
+                Reason = reason,
+                Format = Config?.Format ?? MatchFormat.Individual,
+                StartedUtcTicks = _matchStartedUtcTicks,
+                EndedUtcTicks = DateTime.UtcNow.Ticks
+            };
+            result.DurationSeconds = result.StartedUtcTicks > 0
+                ? (int)((result.EndedUtcTicks - result.StartedUtcTicks) / TimeSpan.TicksPerSecond)
+                : 0;
+
             int bestScore = int.MinValue;
             foreach (PlayerState player in _playerManager.Players)
             {
+                int teamId = GetTeamId(player.PlayerId);
                 result.Standings.Add(new PlayerResult
                 {
                     PlayerId = player.PlayerId,
                     DisplayName = player.DisplayName,
-                    FinalScore = player.Score
+                    FinalScore = player.Score,
+                    TeamId = teamId
                 });
 
-                if (player.Score > bestScore)
+                if (result.Format != MatchFormat.Team && player.Score > bestScore)
                 {
                     bestScore = player.Score;
                     result.WinnerPlayerId = player.PlayerId;
                 }
             }
 
-            result.Standings.Sort((a, b) => b.FinalScore.CompareTo(a.FinalScore));
+            if (result.Format == MatchFormat.Team)
+                ResolveTeamWinner(result);
+            else
+                result.Standings.Sort((a, b) => b.FinalScore.CompareTo(a.FinalScore));
+
             Result = result;
 
             _stateMachine.TransitionTo(MatchPhase.Finished);
             _eventBus.Publish(new MatchFinishedEvent { Result = result });
+        }
+
+        private int GetTeamId(int playerId)
+        {
+            if (Config?.Players == null)
+                return -1;
+
+            foreach (PlayerIdentity identity in Config.Players)
+            {
+                if (identity.PlayerId == playerId)
+                    return identity.TeamId;
+            }
+
+            return -1;
+        }
+
+        private static void ResolveTeamWinner(MatchResult result)
+        {
+            var teamScores = new Dictionary<int, int>();
+            var teamMembers = new Dictionary<int, List<PlayerResult>>();
+
+            foreach (PlayerResult row in result.Standings)
+            {
+                if (row.TeamId < 0)
+                    continue;
+
+                teamScores.TryGetValue(row.TeamId, out int total);
+                teamScores[row.TeamId] = total + row.FinalScore;
+
+                if (!teamMembers.TryGetValue(row.TeamId, out List<PlayerResult> members))
+                {
+                    members = new List<PlayerResult>();
+                    teamMembers[row.TeamId] = members;
+                }
+
+                members.Add(row);
+            }
+
+            int bestTeamScore = int.MinValue;
+            int winningTeamId = -1;
+            foreach (KeyValuePair<int, int> pair in teamScores)
+            {
+                result.TeamStandings.Add(new TeamResult { TeamId = pair.Key, TotalScore = pair.Value });
+                if (pair.Value > bestTeamScore)
+                {
+                    bestTeamScore = pair.Value;
+                    winningTeamId = pair.Key;
+                }
+            }
+
+            result.TeamStandings.Sort((a, b) => b.TotalScore.CompareTo(a.TotalScore));
+            result.WinnerTeamId = winningTeamId;
+
+            if (winningTeamId >= 0
+                && teamMembers.TryGetValue(winningTeamId, out List<PlayerResult> winners))
+            {
+                PlayerResult captain = winners[0];
+                foreach (PlayerResult candidate in winners)
+                {
+                    if (candidate.FinalScore > captain.FinalScore)
+                        captain = candidate;
+                }
+
+                result.WinnerPlayerId = captain.PlayerId;
+            }
+
+            result.Standings.Sort((a, b) => b.FinalScore.CompareTo(a.FinalScore));
         }
 
         #endregion
@@ -332,7 +417,8 @@ namespace AMath.Managers
                 CurrentPlayerId = _turnManager.CurrentPlayerId,
                 ConsecutivePasses = _turnManager.ConsecutivePasses,
                 BagTiles = _tileBag.ExportContents(),
-                Result = Result
+                Result = Result,
+                MatchStartedUtcTicks = _matchStartedUtcTicks
             };
 
             _boardManager.ExportTo(snapshot);
@@ -350,6 +436,7 @@ namespace AMath.Managers
         {
             Config = snapshot.Config;
             Result = snapshot.Result;
+            _matchStartedUtcTicks = snapshot.MatchStartedUtcTicks;
             _rng = DeterministicRandom.FromState(snapshot.RandomState);
 
             _boardManager.RestoreFrom(snapshot);

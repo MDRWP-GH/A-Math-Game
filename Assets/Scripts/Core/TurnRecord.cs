@@ -59,6 +59,17 @@ namespace AMath.Core
         public int PlayerId;
         public string DisplayName;
         public int FinalScore;
+
+        /// <summary>Team index in team matches; -1 in individual matches.</summary>
+        public int TeamId = -1;
+    }
+
+    /// <summary>Combined score for one team in a team match.</summary>
+    [Serializable]
+    public sealed class TeamResult
+    {
+        public int TeamId;
+        public int TotalScore;
     }
 
     /// <summary>Final outcome of a match.</summary>
@@ -67,6 +78,22 @@ namespace AMath.Core
     {
         public MatchEndReason Reason;
         public int WinnerPlayerId;
+
+        /// <summary>Winning team when <see cref="Format"/> is team; otherwise -1.</summary>
+        public int WinnerTeamId = -1;
+
+        public MatchFormat Format = MatchFormat.Individual;
+
+        /// <summary>UTC ticks when the match started (host clock).</summary>
+        public long StartedUtcTicks;
+
+        /// <summary>UTC ticks when the match ended.</summary>
+        public long EndedUtcTicks;
+
+        /// <summary>Elapsed match time in whole seconds.</summary>
+        public int DurationSeconds;
+
         public List<PlayerResult> Standings = new();
+        public List<TeamResult> TeamStandings = new();
     }
 }
