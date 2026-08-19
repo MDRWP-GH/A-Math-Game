@@ -24,6 +24,13 @@ namespace AMath.Networking.RPC
         /// <summary>Interval between client connection-quality reports (host migration ranking).</summary>
         private const float QualityReportInterval = 5f;
 
+        /// <summary>
+        /// Ceiling for a serialized command. The largest legal command places a
+        /// full rack, so anything beyond this is malformed or hostile and is
+        /// dropped before it reaches the deserializer.
+        /// </summary>
+        private const int MaxCommandPayloadBytes = 256;
+
         #endregion
 
         #region SyncVars
@@ -164,6 +171,12 @@ namespace AMath.Networking.RPC
             if (seat == null || seat.IsAi)
             {
                 TargetCommandRejected(connectionToClient, "This seat cannot submit commands.");
+                return;
+            }
+
+            if (payload != null && payload.Length > MaxCommandPayloadBytes)
+            {
+                TargetCommandRejected(connectionToClient, "Command payload is too large.");
                 return;
             }
 

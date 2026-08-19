@@ -34,6 +34,13 @@ namespace AMath.Networking.Discovery
 
         #region Fields
 
+        /// <summary>
+        /// Cap on how long Stop() waits for the reader. Closing the socket
+        /// unblocks it immediately in practice; the bound only exists so a
+        /// wedged socket cannot freeze the main thread.
+        /// </summary>
+        private const int ThreadJoinTimeoutMs = 500;
+
         private readonly int _discoveryPort;
         private readonly ConcurrentQueue<RawPacket> _pending = new();
 
@@ -94,7 +101,15 @@ namespace AMath.Networking.Discovery
             _running = false;
             _udp?.Close(); // unblocks the Receive call
             _udp = null;
+
+            // Wait for the thread to actually exit before returning: Start()
+            // calls Stop() first, and rebinding the port while the previous
+            // reader is still alive fails intermittently.
+            Thread thread = _receiveThread;
             _receiveThread = null;
+            if (thread != null && thread.IsAlive)
+                thread.Join(ThreadJoinTimeoutMs);
+
             while (_pending.TryDequeue(out _)) { }
         }
 

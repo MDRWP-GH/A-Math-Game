@@ -49,6 +49,7 @@ namespace AMath.Tutorial.Localization
                 ["tutorial.ui.replay"] = "เล่นขั้นนี้ใหม่",
                 ["tutorial.ui.skip"] = "ข้ามบทฝึก",
                 ["tutorial.ui.back_menu"] = "กลับเมนูหลัก",
+                ["tutorial.ui.ask_ai"] = "ถาม AI",
                 ["tutorial.ui.finished"] = "จบบทฝึกแล้ว — กด \"กลับเมนูหลัก\" เพื่อออก",
             };
         }
@@ -72,6 +73,7 @@ namespace AMath.Tutorial.Localization
                 ["tutorial.ui.replay"] = "Replay Step",
                 ["tutorial.ui.skip"] = "Skip Tutorial",
                 ["tutorial.ui.back_menu"] = "Back to Menu",
+                ["tutorial.ui.ask_ai"] = "Ask AI",
                 ["tutorial.ui.finished"] = "Tutorial complete — press \"Back to Menu\" to leave.",
             };
         }

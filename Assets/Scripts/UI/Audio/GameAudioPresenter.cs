@@ -1,5 +1,7 @@
+using System.Collections.Generic;
 using AMath.Core.Events;
 using AMath.Networking;
+using AMath.Settings;
 using UnityEngine;
 
 namespace AMath.UI.Audio
@@ -10,7 +12,7 @@ namespace AMath.UI.Audio
     /// </summary>
     public sealed class GameAudioPresenter : MonoBehaviour
     {
-        private const string SoundEffectsKey = "amath.audio.soundEffects";
+        private readonly Dictionary<(float frequency, float duration), AudioClip> _clips = new();
 
         private IEventBus _eventBus;
         private AudioSource _source;
@@ -52,10 +54,27 @@ namespace AMath.UI.Audio
 
         private void Beep(float frequency, float duration, float volumeScale)
         {
-            float volume = Mathf.Clamp01(PlayerPrefs.GetFloat(SoundEffectsKey, 0.8f)) * volumeScale;
+            // Read the live preference rather than PlayerPrefs: the settings
+            // screen only flushes to disk when it closes, so the stored value
+            // lags behind the slider the player just moved.
+            float volume = GameSettings.SoundEffectsVolume * volumeScale;
             if (volume <= 0.001f || _source == null) return;
 
-            int sampleRate = 44100;
+            _source.PlayOneShot(GetClip(frequency, duration), volume);
+        }
+
+        /// <summary>
+        /// There are only a handful of distinct beeps, so each waveform is
+        /// generated once instead of allocating a clip and a sample buffer on
+        /// every tile tap.
+        /// </summary>
+        private AudioClip GetClip(float frequency, float duration)
+        {
+            var key = (frequency, duration);
+            if (_clips.TryGetValue(key, out AudioClip cached) && cached != null)
+                return cached;
+
+            const int sampleRate = 44100;
             int samples = Mathf.CeilToInt(sampleRate * duration);
             var clip = AudioClip.Create("sfx", samples, 1, sampleRate, false);
             var data = new float[samples];
@@ -67,7 +86,8 @@ namespace AMath.UI.Audio
             }
 
             clip.SetData(data, 0);
-            _source.PlayOneShot(clip, volume);
+            _clips[key] = clip;
+            return clip;
         }
     }
 }

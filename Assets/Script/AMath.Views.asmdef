@@ -1,0 +1,25 @@
+{
+    "name": "AMath.Views",
+    "rootNamespace": "AMath",
+    "references": [
+        "AMath.Core",
+        "AMath.Networking",
+        "AMath.UI",
+        "AMath.AI",
+        "AMath.Tutorial",
+        "AMath.Bootstrap",
+        "AMath.Settings",
+        "Mirror",
+        "Unity.InputSystem",
+        "UnityEngine.UI"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

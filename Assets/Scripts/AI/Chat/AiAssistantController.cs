@@ -59,6 +59,10 @@ namespace AMath.AI.Chat
         /// <summary>Id of the mode that will answer the next question.</summary>
         public string SelectedModeId => _selectedMode?.ModeId;
 
+        /// <summary>Whether a mode id was registered; the view hides affordances for the rest.</summary>
+        public bool HasMode(string modeId) =>
+            !string.IsNullOrWhiteSpace(modeId) && _modes.ContainsKey(modeId);
+
         /// <summary>Enables/disables AI availability without affecting Tutorial operation.</summary>
         public void SetAvailable(bool available)
         {

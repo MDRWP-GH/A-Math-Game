@@ -30,7 +30,6 @@ namespace AMath.Networking.Room
         private readonly RoomSession _session;
         private readonly DiscoveryManager _discovery;
         private readonly GameManager _gameManager;
-        private readonly GameStateMachine _stateMachine;
         private readonly AMathNetworkManager _networkManager;
 
         #endregion
@@ -42,14 +41,12 @@ namespace AMath.Networking.Room
             RoomSession session,
             DiscoveryManager discovery,
             GameManager gameManager,
-            GameStateMachine stateMachine,
             AMathNetworkManager networkManager)
         {
             _eventBus = eventBus;
             _session = session;
             _discovery = discovery;
             _gameManager = gameManager;
-            _stateMachine = stateMachine;
             _networkManager = networkManager;
 
             // Keep the advertised payload current without polling.
@@ -164,7 +161,12 @@ namespace AMath.Networking.Room
         /// snapshot, become the host and re-advertise the room under the SAME
         /// room code so waiting clients can rediscover and rejoin it.
         /// </summary>
-        public bool RehostFromSnapshot(GameStateSnapshot snapshot, string roomCode, string roomName, int maxPlayers)
+        public bool RehostFromSnapshot(
+            GameStateSnapshot snapshot,
+            string roomCode,
+            string roomName,
+            int maxPlayers,
+            ushort port = TransportConfigurator.DefaultPort)
         {
             if (NetworkServer.active || NetworkClient.active)
             {
@@ -175,14 +177,15 @@ namespace AMath.Networking.Room
             _session.RoomName = roomName;
             _session.RoomCode = roomCode;
             _session.MaxPlayers = maxPlayers;
-            _session.Port = TransportConfigurator.DefaultPort;
+            _session.Port = port;
             _session.IsHost = true;
             _session.IsActive = true;
 
             // Restore state BEFORE hosting so the authenticator immediately
             // treats returning players (and our own local client) as reconnections.
-            _gameManager.RestoreSnapshot(snapshot);
-            _stateMachine.TransitionTo(MatchPhase.Paused);
+            // Paused rather than the snapshot's phase: the room has no players
+            // in it yet.
+            _gameManager.RestoreSnapshot(snapshot, MatchPhase.Paused);
 
             ConfigureTransport(_session.Port);
             _networkManager.maxConnections = maxPlayers;

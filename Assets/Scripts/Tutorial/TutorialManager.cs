@@ -163,7 +163,7 @@ namespace AMath.Tutorial
             string objectiveText = _textProvider.GetText(_currentStep.ObjectiveTextKey);
             _runtimeContext.Ui.SetObjective(objectiveText);
             _runtimeContext.Ui.SetProgress(_stepIndex + 1, _sequence.Steps.Count);
-            PublishProgress(isActive: true, objectiveText);
+            PublishProgress(isActive: true, objectiveText, _currentStep.StepId);
             PersistProgress(isCompleted: false);
             _currentStep.Begin(_runtimeContext, AdvanceStep, BeginHintsForCurrentStep);
         }
@@ -240,11 +240,12 @@ namespace AMath.Tutorial
             });
         }
 
-        private void PublishProgress(bool isActive, string objectiveText)
+        private void PublishProgress(bool isActive, string objectiveText, string stepId = null)
         {
             _eventBus.Publish(new TutorialStepChangedEvent
             {
                 TutorialId = isActive ? _sequence.TutorialId : null,
+                StepId = isActive ? stepId : null,
                 StepIndex = isActive ? _stepIndex : -1,
                 TotalSteps = isActive ? _sequence.Steps.Count : 0,
                 ObjectiveText = objectiveText,

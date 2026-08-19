@@ -55,6 +55,7 @@ namespace AMath.Networking.Messages
                 writer.WriteInt(player.PlayerId);
                 writer.WriteString(player.PersistentGuid);
                 writer.WriteString(player.DisplayName);
+                writer.WriteBool(player.IsAi);
             }
         }
 
@@ -74,7 +75,8 @@ namespace AMath.Networking.Messages
                 {
                     PlayerId = reader.ReadInt(),
                     PersistentGuid = reader.ReadString(),
-                    DisplayName = reader.ReadString()
+                    DisplayName = reader.ReadString(),
+                    IsAi = reader.ReadBool()
                 });
             }
 

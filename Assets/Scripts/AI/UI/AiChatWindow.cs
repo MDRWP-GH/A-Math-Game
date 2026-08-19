@@ -1,6 +1,8 @@
 using System;
+using System.Text;
 using AMath.AI.Chat;
 using AMath.AI.Interfaces;
+using AMath.Core.Assistance;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -16,6 +18,13 @@ namespace AMath.AI.UI
         private static readonly Color ModeNormalColor = new(0.20f, 0.55f, 0.82f, 1f);
         private static readonly Color ModeSelectedColor = new(0.12f, 0.75f, 0.45f, 1f);
 
+        /// <summary>
+        /// Characters of conversation kept on screen. A long session would
+        /// otherwise grow one Text component without bound, which costs both
+        /// memory and a full text re-layout on every message.
+        /// </summary>
+        private const int MaxTranscriptLength = 8_000;
+
         [SerializeField] private GameObject _root;
         [SerializeField] private Text _transcriptText;
         [SerializeField] private InputField _questionInput;
@@ -29,12 +38,16 @@ namespace AMath.AI.UI
         [Tooltip("Stable mode ids matching Dropdown options by index.")]
         [SerializeField] private string[] _modeIds = Array.Empty<string>();
 
+        private readonly StringBuilder _transcript = new();
         private AiAssistantController _controller;
         private bool _controlsBound;
 
         /// <summary>Builds the minimal chat UI used by the code-driven play flow.</summary>
-        public static AiChatWindow CreateRuntime(Transform parent)
+        public static AiChatWindow CreateRuntime(Transform parent, ILocalizedTextProvider text = null)
         {
+            string Localized(string key, string fallback) =>
+                text == null ? fallback : text.GetText(key);
+
             var root = new GameObject("AiChatWindow", typeof(RectTransform));
             root.transform.SetParent(parent, false);
             Stretch((RectTransform)root.transform);
@@ -49,7 +62,12 @@ namespace AMath.AI.UI
             Image panel = CreateImage("Panel", root.transform, new Color(0.10f, 0.16f, 0.29f, 1f));
             SetCentered(panel.rectTransform, new Vector2(0f, 0f), new Vector2(760f, 600f));
 
-            Text title = CreateText("Title", panel.transform, "AI Assistant", 36, TextAnchor.MiddleCenter);
+            Text title = CreateText(
+                "Title",
+                panel.transform,
+                Localized(AiLocalizationKeys.WindowTitle, "AI Assistant"),
+                36,
+                TextAnchor.MiddleCenter);
             SetCentered(title.rectTransform, new Vector2(0f, 250f), new Vector2(640f, 52f));
 
             window._transcriptText = CreateText("Transcript", panel.transform, string.Empty, 21, TextAnchor.UpperLeft);
@@ -58,22 +76,32 @@ namespace AMath.AI.UI
             SetCentered(window._transcriptText.rectTransform, new Vector2(0f, 35f), new Vector2(660f, 260f));
 
             window._modeIds = new[] { "rule_assistant", "strategy_coach" };
-            window._ruleModeButton = CreateButton("Rules Mode", panel.transform, "Rules");
+            window._ruleModeButton = CreateButton(
+                "Rules Mode", panel.transform, Localized(AiLocalizationKeys.ModeRules, "Rules"));
             SetCentered(window._ruleModeButton.GetComponent<RectTransform>(), new Vector2(-115f, 198f), new Vector2(200f, 38f));
 
-            window._strategyModeButton = CreateButton("Strategy Mode", panel.transform, "Strategy");
+            window._strategyModeButton = CreateButton(
+                "Strategy Mode", panel.transform, Localized(AiLocalizationKeys.ModeStrategy, "Strategy"));
             SetCentered(window._strategyModeButton.GetComponent<RectTransform>(), new Vector2(115f, 198f), new Vector2(200f, 38f));
 
-            window._questionInput = CreateInputField(panel.transform);
+            window._questionInput = CreateInputField(
+                panel.transform, Localized(AiLocalizationKeys.QuestionPlaceholder, "Ask about the rules..."));
             SetCentered(window._questionInput.GetComponent<RectTransform>(), new Vector2(-70f, -195f), new Vector2(510f, 60f));
 
-            window._sendButton = CreateButton("Send", panel.transform, "Ask");
+            window._sendButton = CreateButton(
+                "Send", panel.transform, Localized(AiLocalizationKeys.Send, "Ask"));
             SetCentered(window._sendButton.GetComponent<RectTransform>(), new Vector2(250f, -195f), new Vector2(120f, 60f));
 
-            window._closeButton = CreateButton("Close", panel.transform, "Close");
+            window._closeButton = CreateButton(
+                "Close", panel.transform, Localized(AiLocalizationKeys.Close, "Close"));
             SetCentered(window._closeButton.GetComponent<RectTransform>(), new Vector2(0f, -265f), new Vector2(180f, 48f));
 
-            window._busyIndicator = CreateText("Busy", panel.transform, "Thinking...", 18, TextAnchor.MiddleCenter).gameObject;
+            window._busyIndicator = CreateText(
+                "Busy",
+                panel.transform,
+                Localized(AiLocalizationKeys.Busy, "Thinking..."),
+                18,
+                TextAnchor.MiddleCenter).gameObject;
             SetCentered(window._busyIndicator.GetComponent<RectTransform>(), new Vector2(0f, -135f), new Vector2(300f, 32f));
             window.Initialize();
             root.SetActive(false);
@@ -84,7 +112,39 @@ namespace AMath.AI.UI
         public void Configure(AiAssistantController controller)
         {
             _controller = controller ?? throw new ArgumentNullException(nameof(controller));
-            SelectMode(_modeDropdown != null ? _modeDropdown.value : 0);
+            ApplyModeAvailability();
+            SelectMode(FirstAvailableModeIndex(_modeDropdown != null ? _modeDropdown.value : 0));
+        }
+
+        /// <summary>
+        /// Hides affordances for modes the controller was not given, so the
+        /// player never presses a button that cannot answer.
+        /// </summary>
+        private void ApplyModeAvailability()
+        {
+            SetModeButtonAvailable(_ruleModeButton, 0);
+            SetModeButtonAvailable(_strategyModeButton, 1);
+        }
+
+        private void SetModeButtonAvailable(Button button, int modeIndex)
+        {
+            if (button == null) return;
+            bool available = modeIndex < _modeIds.Length && _controller.HasMode(_modeIds[modeIndex]);
+            button.gameObject.SetActive(available);
+        }
+
+        private int FirstAvailableModeIndex(int preferred)
+        {
+            if (preferred >= 0 && preferred < _modeIds.Length && _controller.HasMode(_modeIds[preferred]))
+                return preferred;
+
+            for (int i = 0; i < _modeIds.Length; i++)
+            {
+                if (_controller.HasMode(_modeIds[i]))
+                    return i;
+            }
+
+            return preferred;
         }
 
         private void Awake()
@@ -212,9 +272,14 @@ namespace AMath.AI.UI
             if (_transcriptText == null || string.IsNullOrWhiteSpace(text))
                 return;
 
-            if (_transcriptText.text.Length > 0)
-                _transcriptText.text += Environment.NewLine + Environment.NewLine;
-            _transcriptText.text += text;
+            if (_transcript.Length > 0)
+                _transcript.Append(Environment.NewLine).Append(Environment.NewLine);
+            _transcript.Append(text);
+
+            if (_transcript.Length > MaxTranscriptLength)
+                _transcript.Remove(0, _transcript.Length - MaxTranscriptLength);
+
+            _transcriptText.text = _transcript.ToString();
         }
 
         private static Image CreateImage(string name, Transform parent, Color color)
@@ -240,13 +305,13 @@ namespace AMath.AI.UI
             return text;
         }
 
-        private static InputField CreateInputField(Transform parent)
+        private static InputField CreateInputField(Transform parent, string placeholderText)
         {
             Image background = CreateImage("Question", parent, Color.white);
             Text text = CreateText("Text", background.transform, string.Empty, 20, TextAnchor.MiddleLeft);
             text.color = Color.black;
             Stretch(text.rectTransform, 12f);
-            Text placeholder = CreateText("Placeholder", background.transform, "Ask about the rules...", 20, TextAnchor.MiddleLeft);
+            Text placeholder = CreateText("Placeholder", background.transform, placeholderText, 20, TextAnchor.MiddleLeft);
             placeholder.color = new Color(0.35f, 0.35f, 0.35f);
             Stretch(placeholder.rectTransform, 12f);
 

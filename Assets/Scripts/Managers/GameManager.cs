@@ -171,6 +171,22 @@ namespace AMath.Managers
         /// </summary>
         public bool ApplyRecord(TurnRecord record)
         {
+            // Turn numbers are the only ordering guarantee we have. A record we
+            // already executed must never run twice (it would double the score
+            // and the tile draw), and a record from the future means we dropped
+            // one in between and can only recover with a full resync.
+            if (record.TurnNumber < _turnManager.TurnNumber)
+                return false;
+
+            if (record.TurnNumber > _turnManager.TurnNumber)
+            {
+                _eventBus.Publish(new DesyncDetectedEvent
+                {
+                    Reason = $"Missing turns (local {_turnManager.TurnNumber}, host {record.TurnNumber})."
+                });
+                return false;
+            }
+
             IGameCommand command;
             try
             {
@@ -210,6 +226,14 @@ namespace AMath.Managers
         private void FinishTurn(TurnRecord record, CommandOutcome outcome)
         {
             PlayerState actor = _playerManager.GetById(record.PlayerId);
+            if (actor == null)
+            {
+                _eventBus.Publish(new DesyncDetectedEvent
+                {
+                    Reason = $"Record names unknown player {record.PlayerId}."
+                });
+                return;
+            }
 
             // End condition 1: the actor emptied their rack with an empty bag.
             if (actor.Rack.Count == 0 && _tileBag.Count == 0)
@@ -247,8 +271,9 @@ namespace AMath.Managers
                     forfeited += leftover;
             }
 
-            if (finisherPlayerId >= 0)
-                _playerManager.GetById(finisherPlayerId).Score += forfeited;
+            PlayerState finisher = finisherPlayerId >= 0 ? _playerManager.GetById(finisherPlayerId) : null;
+            if (finisher != null)
+                finisher.Score += forfeited;
 
             var result = new MatchResult { Reason = reason };
             int bestScore = int.MinValue;
@@ -317,10 +342,11 @@ namespace AMath.Managers
 
         /// <summary>
         /// Restores the complete match state from a snapshot (load, host
-        /// migration, reconnection resync). The caller decides the phase to
-        /// enter afterwards (normally Paused until players are back).
+        /// migration, reconnection resync). The phase comes from the snapshot
+        /// unless <paramref name="enterPhase"/> overrides it — a migrated host
+        /// passes Paused because it waits for players before resuming.
         /// </summary>
-        public void RestoreSnapshot(GameStateSnapshot snapshot)
+        public void RestoreSnapshot(GameStateSnapshot snapshot, MatchPhase? enterPhase = null)
         {
             Config = snapshot.Config;
             Result = snapshot.Result;
@@ -337,6 +363,7 @@ namespace AMath.Managers
                 snapshot.ConsecutivePasses);
 
             _eventBus.Publish(new MatchStartedEvent { Config = Config });
+            _stateMachine.RestoreTo(enterPhase ?? (MatchPhase)snapshot.Phase);
         }
 
         #endregion

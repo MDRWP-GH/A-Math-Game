@@ -51,6 +51,17 @@ namespace AMath.Core
         public TService RegisterOrReplace<TService>(TService instance) where TService : class
         {
             if (instance == null) throw new ArgumentNullException(nameof(instance));
+
+            // Drop the outgoing instance from the tick list, otherwise a
+            // superseded service keeps receiving Update for the rest of the
+            // session alongside its replacement.
+            if (_services.TryGetValue(typeof(TService), out object previous)
+                && previous is ITickable previousTickable
+                && !ReferenceEquals(previous, instance))
+            {
+                _tickables.Remove(previousTickable);
+            }
+
             _services[typeof(TService)] = instance;
             if (instance is ITickable tickable && !_tickables.Contains(tickable))
                 _tickables.Add(tickable);

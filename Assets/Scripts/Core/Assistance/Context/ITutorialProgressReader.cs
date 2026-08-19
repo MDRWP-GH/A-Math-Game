@@ -15,6 +15,9 @@ namespace AMath.Core.Assistance.Context
         /// <summary>Id of the active tutorial sequence, or null when none is active.</summary>
         string ActiveTutorialId { get; }
 
+        /// <summary>Authored id of the current step, or null when none is active.</summary>
+        string CurrentStepId { get; }
+
         /// <summary>0-based index of the current step within the active tutorial.</summary>
         int CurrentStepIndex { get; }
 

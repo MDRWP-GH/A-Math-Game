@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+using System.Text;
 using AMath.Core;
 using AMath.Core.Events;
 using AMath.Core.Snapshot;
@@ -36,6 +38,28 @@ namespace AMath.Networking.RPC
             public int Score;
         }
 
+        /// <summary>Which half of a full-state transfer a chunk belongs to.</summary>
+        private enum FullStatePart : byte
+        {
+            Snapshot = 0,
+            Replay = 1
+        }
+
+        #endregion
+
+        #region Constants
+
+        /// <summary>
+        /// Characters per full-state chunk. A mid-game snapshot plus its replay
+        /// log runs to tens of kilobytes, which a single RPC cannot carry
+        /// reliably across transports, so the transfer is split into pieces that
+        /// comfortably fit one message.
+        /// </summary>
+        private const int FullStateChunkSize = 8_000;
+
+        /// <summary>Minimum seconds between resync requests honoured per connection.</summary>
+        private const double ResyncCooldownSeconds = 2d;
+
         #endregion
 
         #region SyncVars
@@ -61,6 +85,11 @@ namespace AMath.Networking.RPC
         private PlayerManager _playerManager;
         private ReplayManager _replayManager;
         private TurnManager _turnManager;
+
+        private readonly Dictionary<int, double> _lastResyncPerConnection = new();
+        private readonly StringBuilder _incomingSnapshot = new();
+        private readonly StringBuilder _incomingReplay = new();
+        private double _nextResyncRequestAt;
 
         #endregion
 
@@ -112,6 +141,9 @@ namespace AMath.Networking.RPC
 
         public override void OnStopServer()
         {
+            _lastResyncPerConnection.Clear();
+            if (_eventBus == null) return;
+
             _eventBus.Unsubscribe<MatchStartedEvent>(OnServerMatchStarted);
             _eventBus.Unsubscribe<TurnStartedEvent>(OnServerTurnStarted);
             _eventBus.Unsubscribe<TurnResolvedEvent>(OnServerTurnResolved);
@@ -236,9 +268,30 @@ namespace AMath.Networking.RPC
         [Server]
         public void ServerSendFullStateTo(NetworkConnectionToClient conn)
         {
-            ServerSeedFromGameState();
             GameStateSnapshot snapshot = _gameManager.CaptureSnapshot();
-            TargetFullState(conn, JsonUtility.ToJson(snapshot), _replayManager.ExportJson());
+            ServerSeedFromGameState(snapshot);
+            SendFullStatePart(conn, FullStatePart.Snapshot, JsonUtility.ToJson(snapshot));
+            SendFullStatePart(conn, FullStatePart.Replay, _replayManager.ExportJson());
+            TargetFullStateComplete(conn);
+        }
+
+        [Server]
+        private void SendFullStatePart(NetworkConnectionToClient conn, FullStatePart part, string payload)
+        {
+            payload ??= string.Empty;
+
+            // Always send at least one (possibly empty) chunk so the receiver
+            // resets its buffer for this part even when there is nothing to send.
+            int sequence = 0;
+            int offset = 0;
+            do
+            {
+                int length = Mathf.Min(FullStateChunkSize, payload.Length - offset);
+                TargetFullStateChunk(conn, (byte)part, sequence, payload.Substring(offset, length));
+                offset += length;
+                sequence++;
+            }
+            while (offset < payload.Length);
         }
 
         /// <summary>
@@ -246,12 +299,11 @@ namespace AMath.Networking.RPC
         /// clients receive consistent lobby/match headers alongside the snapshot.
         /// </summary>
         [Server]
-        private void ServerSeedFromGameState()
+        private void ServerSeedFromGameState(GameStateSnapshot snapshot)
         {
             if (_gameManager.Config == null)
                 return;
 
-            GameStateSnapshot snapshot = _gameManager.CaptureSnapshot();
             _phase = snapshot.Phase;
             _turnNumber = snapshot.TurnNumber;
             _currentPlayerId = snapshot.CurrentPlayerId;
@@ -267,20 +319,52 @@ namespace AMath.Networking.RPC
         }
 
         [TargetRpc]
-        private void TargetFullState(NetworkConnectionToClient _, string snapshotJson, string replayJson)
+        private void TargetFullStateChunk(NetworkConnectionToClient _, byte part, int sequence, string chunk)
         {
             if (isServer) return;
 
-            var snapshot = JsonUtility.FromJson<GameStateSnapshot>(snapshotJson);
+            StringBuilder buffer = (FullStatePart)part == FullStatePart.Snapshot
+                ? _incomingSnapshot
+                : _incomingReplay;
+
+            // Sequence 0 starts a part, so an abandoned transfer cannot leave
+            // fragments glued to the front of the next one.
+            if (sequence == 0)
+                buffer.Clear();
+
+            buffer.Append(chunk);
+        }
+
+        [TargetRpc]
+        private void TargetFullStateComplete(NetworkConnectionToClient _)
+        {
+            if (isServer) return;
+
+            var snapshot = JsonUtility.FromJson<GameStateSnapshot>(_incomingSnapshot.ToString());
+            string replayJson = _incomingReplay.ToString();
+            _incomingSnapshot.Clear();
+            _incomingReplay.Clear();
+
+            if (snapshot?.Config == null)
+            {
+                Debug.LogError("[Sync] Full state transfer was incomplete or corrupt.");
+                return;
+            }
+
             _gameManager.RestoreSnapshot(snapshot);
             _replayManager.ImportJson(replayJson);
-            _stateMachine.TransitionTo((MatchPhase)snapshot.Phase);
             Debug.Log($"[Sync] Full state restored at turn {snapshot.TurnNumber}.");
         }
 
         /// <summary>A desynced client asks the host for a fresh snapshot.</summary>
         private void OnClientDesync(DesyncDetectedEvent evt)
         {
+            // A persistent desync fires this on every incoming turn; one
+            // in-flight snapshot request at a time is enough.
+            if (NetworkTime.time < _nextResyncRequestAt)
+                return;
+
+            _nextResyncRequestAt = NetworkTime.time + ResyncCooldownSeconds;
             Debug.LogWarning($"[Sync] Desync detected: {evt.Reason} — requesting resync.");
             CmdRequestResync();
         }
@@ -288,8 +372,16 @@ namespace AMath.Networking.RPC
         [Command(requiresAuthority = false)]
         private void CmdRequestResync(NetworkConnectionToClient sender = null)
         {
-            if (sender != null)
-                ServerSendFullStateTo(sender);
+            if (sender == null) return;
+
+            // Full state is the most expensive thing the host can be asked for
+            // and any client may ask, so it is rate limited per connection.
+            if (_lastResyncPerConnection.TryGetValue(sender.connectionId, out double last)
+                && NetworkTime.time - last < ResyncCooldownSeconds)
+                return;
+
+            _lastResyncPerConnection[sender.connectionId] = NetworkTime.time;
+            ServerSendFullStateTo(sender);
         }
 
         #endregion

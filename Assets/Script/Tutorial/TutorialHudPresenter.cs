@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using AMath.Core.Assistance;
 using AMath.Core.Events;
 using AMath.Tutorial;
 using AMath.Tutorial.Definitions;
@@ -29,9 +30,11 @@ namespace AMath.UI.Tutorial
         private readonly Button _continueButton;
         private readonly Button _skipButton;
         private readonly Button _replayStepButton;
+        private readonly Button _askAiButton;
 
         private TutorialManager _manager;
         private IEventBus _eventBus;
+        private IAiEntryPoint _aiEntryPoint;
         private Action _dialogueFinished;
 
         public TutorialHudPresenter(
@@ -43,7 +46,8 @@ namespace AMath.UI.Tutorial
             Text dialogueText,
             Button continueButton,
             Button skipButton,
-            Button replayStepButton)
+            Button replayStepButton,
+            Button askAiButton = null)
         {
             _root = root;
             _objectiveText = objectiveText;
@@ -54,6 +58,10 @@ namespace AMath.UI.Tutorial
             _continueButton = continueButton;
             _skipButton = skipButton;
             _replayStepButton = replayStepButton;
+            _askAiButton = askAiButton;
+
+            if (_askAiButton != null)
+                _askAiButton.gameObject.SetActive(false);
         }
 
         /// <summary>Registers a highlight overlay for a stable target id.</summary>
@@ -67,14 +75,17 @@ namespace AMath.UI.Tutorial
         }
 
         /// <summary>Wires runtime collaborators after the manager is created.</summary>
-        public void Configure(TutorialManager manager, IEventBus eventBus)
+        public void Configure(TutorialManager manager, IEventBus eventBus, IAiEntryPoint aiEntryPoint = null)
         {
             _manager = manager ?? throw new ArgumentNullException(nameof(manager));
             _eventBus = eventBus ?? throw new ArgumentNullException(nameof(eventBus));
+            _aiEntryPoint = aiEntryPoint;
 
             _continueButton.onClick.AddListener(OnContinuePressed);
             _skipButton.onClick.AddListener(OnSkipPressed);
             _replayStepButton.onClick.AddListener(OnReplayStepPressed);
+            if (_askAiButton != null)
+                _askAiButton.onClick.AddListener(OnAskAiPressed);
         }
 
         /// <summary>Call from the scene controller each frame.</summary>
@@ -94,6 +105,8 @@ namespace AMath.UI.Tutorial
                 _skipButton.onClick.RemoveListener(OnSkipPressed);
             if (_replayStepButton != null)
                 _replayStepButton.onClick.RemoveListener(OnReplayStepPressed);
+            if (_askAiButton != null)
+                _askAiButton.onClick.RemoveListener(OnAskAiPressed);
         }
 
         /// <inheritdoc />
@@ -129,7 +142,12 @@ namespace AMath.UI.Tutorial
         /// <inheritdoc />
         public void SetAiButtonAvailable(bool available)
         {
-            // The bootstrap scene does not expose Ask AI yet.
+            if (_askAiButton == null)
+                return;
+
+            // Offering the affordance without something behind it would give
+            // the player a button that does nothing.
+            _askAiButton.gameObject.SetActive(available && _aiEntryPoint != null);
         }
 
         /// <inheritdoc />
@@ -192,6 +210,12 @@ namespace AMath.UI.Tutorial
         {
             PublishButtonPress(TutorialButtonIds.ReplayStep);
             _manager?.ReplayCurrentStep();
+        }
+
+        private void OnAskAiPressed()
+        {
+            PublishButtonPress(TutorialButtonIds.AskAi);
+            _aiEntryPoint?.OpenChat();
         }
 
         private void PublishButtonPress(string buttonId)

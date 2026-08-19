@@ -1,4 +1,5 @@
 using AMath.Art;
+using AMath.Bootstrap;
 using AMath.Core;
 using AMath.Core.Assistance;
 using AMath.Core.Events;
@@ -84,7 +85,13 @@ namespace AMath.UI.Tutorial
             _tutorialManager = _services.Register(
                 new TutorialManager(_eventBus, runtimeContext, textProvider, saveStore));
 
-            presenter.Configure(_tutorialManager, _eventBus);
+            // The tutorial scene has its own registry, so the AI assistant is
+            // only reachable when the main composition root happens to be
+            // alive (the player came here from a play session). When it is not,
+            // the presenter keeps the Ask AI button hidden.
+            IAiEntryPoint aiEntryPoint = null;
+            NetworkedGameContext.Instance?.Services?.TryResolve(out aiEntryPoint);
+            presenter.Configure(_tutorialManager, _eventBus, aiEntryPoint);
             _eventBus.Subscribe<TutorialStepChangedEvent>(OnTutorialStepChanged);
         }
 
@@ -293,6 +300,16 @@ namespace AMath.UI.Tutorial
                 () => { });
             UiFactory.SetCenteredRect(skipButton.GetComponent<RectTransform>(), new Vector2(350f, -112f), new Vector2(220f, 68f));
 
+            // Hidden until the hint schedule unlocks it (see TutorialManager).
+            var askAiButton = _ui.CreateButton(
+                hudPanel.transform,
+                "Ask AI Button",
+                _textProvider.GetText("tutorial.ui.ask_ai"),
+                UiPalette.Secondary,
+                UiPalette.SecondaryHighlight,
+                () => { });
+            UiFactory.SetCenteredRect(askAiButton.GetComponent<RectTransform>(), new Vector2(-380f, -112f), new Vector2(180f, 68f));
+
             var presenter = new TutorialHudPresenter(
                 hudPanel.gameObject,
                 objectiveText,
@@ -302,7 +319,8 @@ namespace AMath.UI.Tutorial
                 dialogueText,
                 continueButton,
                 skipButton,
-                replayButton);
+                replayButton,
+                askAiButton);
 
             presenter.RegisterHighlight(IntroTutorialSequence.DemoBoardTargetId, boardHighlight.gameObject);
             hudPanel.gameObject.SetActive(false);

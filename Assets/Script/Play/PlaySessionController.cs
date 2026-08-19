@@ -45,10 +45,9 @@ namespace AMath.UI
 
         private const float TurnWarningSeconds = 10f;
 
-        private static readonly Color CellPlain = new(0.16f, 0.22f, 0.40f, 1f);
-        private static readonly Color CellOccupied = new(0.20f, 0.45f, 0.55f, 1f);
-        private static readonly Color CellDraftValid = new(0.20f, 0.55f, 0.30f, 1f);
-        private static readonly Color CellDraftInvalid = new(0.65f, 0.30f, 0.25f, 1f);
+        /// <summary>Horizontal distance between rack tiles.</summary>
+        private const float RackPitch = 70f;
+
         private static readonly Color TimerWarning = new(0.95f, 0.35f, 0.30f, 1f);
 
         private UiFactory _ui;
@@ -87,9 +86,10 @@ namespace AMath.UI
         private Button _clearButton;
         private Button _passButton;
         private Button _exchangeButton;
-        private readonly Button[,] _cells = new Button[GameRules.BoardSize, GameRules.BoardSize];
-        private readonly Text[,] _cellLabels = new Text[GameRules.BoardSize, GameRules.BoardSize];
+        private MatchBoardView _boardView;
         private readonly List<int> _exchangeSelection = new();
+        private readonly List<Button> _rackButtons = new(GameRules.RackSize);
+        private readonly List<Text> _rackLabels = new(GameRules.RackSize);
         private bool _exchangeMode;
         private Transform _declareRoot;
 
@@ -144,7 +144,8 @@ namespace AMath.UI
             _text = UiLocalizationProvider.Shared;
             _canvas = _ui.CreateCanvas(transform, "PlayCanvas", 120);
             _cancelAction = InputSystem.actions?.FindAction("UI/Cancel", false);
-            AiChatWindow chatWindow = AiChatWindow.CreateRuntime(_canvas.transform);
+            AiChatWindow chatWindow = AiChatWindow.CreateRuntime(
+                _canvas.transform, UiLocalizationProvider.Shared);
             NetworkedGameContext.Instance?.AttachAiChatWindow(chatWindow);
 
             // Score previews and rejection reasons come from the gameplay layer;
@@ -561,20 +562,7 @@ namespace AMath.UI
 
             var boardRoot = UiFactory.CreateRect("Board", _matchRoot.transform);
             UiFactory.SetCenteredRect(boardRoot, new Vector2(0f, 40f), new Vector2(720f, 720f));
-            float cell = 46f;
-            float origin = -((GameRules.BoardSize - 1) * cell) * 0.5f;
-            for (int y = 0; y < GameRules.BoardSize; y++)
-            {
-                for (int x = 0; x < GameRules.BoardSize; x++)
-                {
-                    int cx = x;
-                    int cy = y;
-                    var button = _ui.CreateButton(boardRoot, $"C{x}_{y}", string.Empty, CellPlain, new Color(0.25f, 0.35f, 0.55f, 1f), () => OnCellClicked(cx, cy), 16);
-                    UiFactory.SetCenteredRect(button.GetComponent<RectTransform>(), new Vector2(origin + x * cell, -origin - y * cell), new Vector2(cell - 2f, cell - 2f));
-                    _cells[x, y] = button;
-                    _cellLabels[x, y] = button.GetComponentInChildren<Text>();
-                }
-            }
+            _boardView = new MatchBoardView(_ui, boardRoot, OnCellClicked);
 
             _rackRoot = UiFactory.CreateRect("Rack", _matchRoot.transform).transform;
             UiFactory.SetAnchoredRect((RectTransform)_rackRoot, new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(900f, 90f), new Vector2(0f, 120f));
@@ -598,7 +586,7 @@ namespace AMath.UI
                 _matchPresenter.LeaveRoom();
                 ReturnToMenu();
             }, ref bx);
-            CreateMatchAction("AskAi", "Ask AI", UiPalette.Secondary, OpenAiChat, ref bx);
+            CreateMatchAction("AskAi", "ui.match.ask_ai", UiPalette.Secondary, OpenAiChat, ref bx);
 
             _matchRoot.SetActive(false);
         }
@@ -652,15 +640,6 @@ namespace AMath.UI
             _matchPresenter.PlaceCell(x, y);
         }
 
-        private static Color PremiumColor(PremiumType premium) => premium switch
-        {
-            PremiumType.TileX2 => new Color(0.82f, 0.49f, 0.18f, 1f),      // orange — ×2 tile
-            PremiumType.TileX3 => new Color(0.18f, 0.42f, 0.76f, 1f),      // blue — ×3 tile
-            PremiumType.EquationX2 => new Color(0.76f, 0.63f, 0.16f, 1f),  // yellow — ×2 equation
-            PremiumType.EquationX3 => new Color(0.72f, 0.22f, 0.22f, 1f),  // red — ×3 equation
-            _ => CellPlain
-        };
-
         private void RefreshMatch()
         {
             if (_matchRoot == null || !_matchRoot.activeSelf || _matchPresenter == null) return;
@@ -699,56 +678,11 @@ namespace AMath.UI
 
             _scoreboard.text = scores.ToString();
 
-            // Board cells
             BoardManager boardManager = null;
             NetworkContext.Services?.TryResolve(out boardManager);
-            BoardGrid grid = boardManager?.Grid;
 
             TurnInputSession input = _matchPresenter.TurnInput;
-            for (int y = 0; y < GameRules.BoardSize; y++)
-            {
-                for (int x = 0; x < GameRules.BoardSize; x++)
-                {
-                    string symbol = string.Empty;
-                    Color color = CellPlain;
-                    if (grid != null && grid.IsOccupied(x, y))
-                    {
-                        PlacedTile tile = grid.CellAt(x, y);
-                        symbol = SymbolOf(tile.EffectiveTileId);
-                        color = CellOccupied;
-                    }
-                    else
-                    {
-                        PremiumType premium = BoardGrid.PremiumAt(x, y);
-                        if (premium != PremiumType.None)
-                        {
-                            symbol = PlacementPreviewFormatter.PremiumHint(premium);
-                            color = PremiumColor(premium);
-                        }
-
-                        if (x == GameRules.CenterX && y == GameRules.CenterY)
-                            symbol = "★";
-                    }
-
-                    if (input != null)
-                    {
-                        for (int i = 0; i < input.PendingPlacements.Count; i++)
-                        {
-                            TilePlacement p = input.PendingPlacements[i];
-                            if (p.X == x && p.Y == y)
-                            {
-                                symbol = SymbolOf(p.EffectiveTileId);
-                                color = input.PreviewValidation != null && input.PreviewValidation.IsValid
-                                    ? CellDraftValid
-                                    : CellDraftInvalid;
-                            }
-                        }
-                    }
-
-                    _cellLabels[x, y].text = symbol;
-                    _cells[x, y].targetGraphic.color = color;
-                }
-            }
+            _boardView?.Refresh(boardManager?.Grid, input);
 
             // Preview text — equation validity + per-tile A-Math points
             if (input != null && input.PendingPlacements.Count > 0)
@@ -766,35 +700,74 @@ namespace AMath.UI
             RefreshDeclareBar();
         }
 
+        /// <summary>
+        /// Updates the rack in place. The rack refreshes on every selection,
+        /// draft edit and turn change, so rebuilding the buttons each time was
+        /// a steady source of GC churn during play.
+        /// </summary>
         private void RefreshRack()
         {
-            for (int i = _rackRoot.childCount - 1; i >= 0; i--)
-                Destroy(_rackRoot.GetChild(i).gameObject);
-
             PlayerState local = _matchPresenter.Players?.GetById(_matchPresenter.LocalPlayerId);
-            if (local == null) return;
+            int tileCount = local?.Rack.Count ?? 0;
+            EnsureRackButtons(tileCount);
 
             bool myTurn = _matchPresenter.IsMyTurnReady;
-            float start = -((local.Rack.Count - 1) * 70f) * 0.5f;
-            for (int i = 0; i < local.Rack.Count; i++)
+            float start = -((tileCount - 1) * RackPitch) * 0.5f;
+            for (int i = 0; i < _rackButtons.Count; i++)
             {
-                int index = i;
-                byte tileId = local.Rack[i];
-                bool selected = _matchPresenter.TurnInput?.SelectedRackIndex == index
-                               || _exchangeSelection.Contains(index);
-                Color color = selected ? UiPalette.Primary : UiPalette.Secondary;
-                string label = $"{SymbolOf(tileId)}\n{PointsOf(tileId)}";
-                var button = _ui.CreateButton(_rackRoot, $"R{i}", label, color, UiPalette.PrimaryHighlight, () => OnRackClicked(index), 20);
-                UiFactory.SetCenteredRect(button.GetComponent<RectTransform>(), new Vector2(start + i * 70f, 0f), new Vector2(64f, 72f));
-                button.interactable = myTurn;
-                Text labelText = button.GetComponentInChildren<Text>();
-                if (labelText != null)
+                Button button = _rackButtons[i];
+                if (i >= tileCount)
                 {
-                    labelText.horizontalOverflow = HorizontalWrapMode.Wrap;
-                    labelText.verticalOverflow = VerticalWrapMode.Overflow;
-                    labelText.alignment = TextAnchor.MiddleCenter;
+                    button.gameObject.SetActive(false);
+                    continue;
                 }
+
+                byte tileId = local.Rack[i];
+                bool selected = _matchPresenter.TurnInput?.SelectedRackIndex == i
+                               || _exchangeSelection.Contains(i);
+
+                button.gameObject.SetActive(true);
+                button.interactable = myTurn;
+                SetRackButtonColor(button, selected ? UiPalette.Primary : UiPalette.Secondary);
+                _rackLabels[i].text = $"{SymbolOf(tileId)}\n{PointsOf(tileId)}";
+                UiFactory.SetCenteredRect(
+                    button.GetComponent<RectTransform>(),
+                    new Vector2(start + i * RackPitch, 0f),
+                    new Vector2(64f, 72f));
             }
+        }
+
+        private void EnsureRackButtons(int required)
+        {
+            while (_rackButtons.Count < required)
+            {
+                int index = _rackButtons.Count;
+                var button = _ui.CreateButton(
+                    _rackRoot, $"R{index}", string.Empty,
+                    UiPalette.Secondary, UiPalette.PrimaryHighlight,
+                    () => OnRackClicked(index), 20);
+
+                Text label = button.GetComponentInChildren<Text>();
+                if (label != null)
+                {
+                    label.horizontalOverflow = HorizontalWrapMode.Wrap;
+                    label.verticalOverflow = VerticalWrapMode.Overflow;
+                    label.alignment = TextAnchor.MiddleCenter;
+                }
+
+                _rackButtons.Add(button);
+                _rackLabels.Add(label);
+            }
+        }
+
+        private static void SetRackButtonColor(Button button, Color normal)
+        {
+            ColorBlock colors = button.colors;
+            if (colors.normalColor == normal) return;
+
+            colors.normalColor = normal;
+            colors.pressedColor = Color.Lerp(normal, Color.black, 0.16f);
+            button.colors = colors;
         }
 
         private void OnRackClicked(int index)

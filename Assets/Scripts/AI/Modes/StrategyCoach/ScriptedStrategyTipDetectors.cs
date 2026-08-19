@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using AMath.Core.Assistance;
 using AMath.Core.Assistance.Context;
 using AMath.Core.StateMachines;
 using AMath.Gameplay.Board;
@@ -10,37 +12,61 @@ namespace AMath.AI.Modes.StrategyCoach
     public static class ScriptedStrategyTipDetectors
     {
         /// <summary>Default detector set in priority order.</summary>
-        public static IReadOnlyList<IStrategyTipDetector> CreateDefaultSet() => new IStrategyTipDetector[]
+        public static IReadOnlyList<IStrategyTipDetector> CreateDefaultSet(ILocalizedTextProvider text)
         {
-            new RejectionTipDetector(),
-            new FirstMoveCenterDetector(),
-            new MissingEqualsDetector(),
-            new LowBagDetector(),
-            new FewNumbersDetector(),
-            new HasEqualsButStuckDetector()
-        };
+            if (text == null) throw new ArgumentNullException(nameof(text));
 
-        private sealed class RejectionTipDetector : IStrategyTipDetector
+            return new IStrategyTipDetector[]
+            {
+                new RejectionTipDetector(text),
+                new FirstMoveCenterDetector(text),
+                new MissingEqualsDetector(text),
+                new LowBagDetector(text),
+                new FewNumbersDetector(text),
+                new HasEqualsButStuckDetector(text)
+            };
+        }
+
+        private abstract class LocalizedDetector : IStrategyTipDetector
         {
-            public string DetectorId => "rejection";
+            protected LocalizedDetector(ILocalizedTextProvider text)
+            {
+                Text = text;
+            }
 
-            public bool TryDetect(GameContextSnapshot context, out string tip)
+            protected ILocalizedTextProvider Text { get; }
+
+            public abstract string DetectorId { get; }
+
+            public abstract bool TryDetect(GameContextSnapshot context, out string tip);
+        }
+
+        private sealed class RejectionTipDetector : LocalizedDetector
+        {
+            public RejectionTipDetector(ILocalizedTextProvider text) : base(text) { }
+
+            public override string DetectorId => "rejection";
+
+            public override bool TryDetect(GameContextSnapshot context, out string tip)
             {
                 tip = null;
                 if (string.IsNullOrWhiteSpace(context.LastCommandRejectionReason))
                     return false;
 
-                tip = "การวางล่าสุดไม่ผ่าน: " + context.LastCommandRejectionReason
-                      + " ลองจัดสมการใหม่ให้ทั้งสองข้างของ '=' เท่ากัน และต่อกับกระดานที่มีอยู่";
+                tip = string.Format(
+                    Text.GetText(StrategyTipKeys.Rejection),
+                    context.LastCommandRejectionReason);
                 return true;
             }
         }
 
-        private sealed class FirstMoveCenterDetector : IStrategyTipDetector
+        private sealed class FirstMoveCenterDetector : LocalizedDetector
         {
-            public string DetectorId => "first_move_center";
+            public FirstMoveCenterDetector(ILocalizedTextProvider text) : base(text) { }
 
-            public bool TryDetect(GameContextSnapshot context, out string tip)
+            public override string DetectorId => "first_move_center";
+
+            public override bool TryDetect(GameContextSnapshot context, out string tip)
             {
                 tip = null;
                 if (context.BoardCells != null && context.BoardCells.Count > 0)
@@ -48,45 +74,51 @@ namespace AMath.AI.Modes.StrategyCoach
                 if (context.MatchPhase != MatchPhase.Playing)
                     return false;
 
-                tip = "ตาแรกต้องวางสมการให้ครอบช่องกลางกระดาน และมีความยาวอย่างน้อย 3 ชิ้น เช่น 1+2=3";
+                tip = Text.GetText(StrategyTipKeys.FirstMoveCenter);
                 return true;
             }
         }
 
-        private sealed class MissingEqualsDetector : IStrategyTipDetector
+        private sealed class MissingEqualsDetector : LocalizedDetector
         {
-            public string DetectorId => "missing_equals";
+            public MissingEqualsDetector(ILocalizedTextProvider text) : base(text) { }
 
-            public bool TryDetect(GameContextSnapshot context, out string tip)
+            public override string DetectorId => "missing_equals";
+
+            public override bool TryDetect(GameContextSnapshot context, out string tip)
             {
                 tip = null;
                 if (context.LocalPlayerHand == null) return false;
                 if (HandCanMakeEquals(context.LocalPlayerHand)) return false;
 
-                tip = "ในมือยังไม่มี '=' (หรือใบว่างที่จะใช้แทน) — ลองแลกไทล์ หรือรอจังหวะที่มี '=' ก่อนวางสมการยาว";
+                tip = Text.GetText(StrategyTipKeys.MissingEquals);
                 return true;
             }
         }
 
-        private sealed class LowBagDetector : IStrategyTipDetector
+        private sealed class LowBagDetector : LocalizedDetector
         {
-            public string DetectorId => "low_bag";
+            public LowBagDetector(ILocalizedTextProvider text) : base(text) { }
 
-            public bool TryDetect(GameContextSnapshot context, out string tip)
+            public override string DetectorId => "low_bag";
+
+            public override bool TryDetect(GameContextSnapshot context, out string tip)
             {
                 tip = null;
                 if (context.TilesRemainingInBag > 12) return false;
 
-                tip = "ถุงไทล์เหลือน้อยแล้ว — ระวังไทล์ติดมือตอนจบเกม จะถูกหักคะแนน และคนที่หมดมือก่อนจะได้โบนัสจากของคนอื่น";
+                tip = Text.GetText(StrategyTipKeys.LowBag);
                 return true;
             }
         }
 
-        private sealed class FewNumbersDetector : IStrategyTipDetector
+        private sealed class FewNumbersDetector : LocalizedDetector
         {
-            public string DetectorId => "few_numbers";
+            public FewNumbersDetector(ILocalizedTextProvider text) : base(text) { }
 
-            public bool TryDetect(GameContextSnapshot context, out string tip)
+            public override string DetectorId => "few_numbers";
+
+            public override bool TryDetect(GameContextSnapshot context, out string tip)
             {
                 tip = null;
                 if (context.LocalPlayerHand == null) return false;
@@ -99,16 +131,18 @@ namespace AMath.AI.Modes.StrategyCoach
                 }
 
                 if (numbers >= 3) return false;
-                tip = "ตัวเลขในมือน้อย — แลกไทล์บางใบ หรือหาสมการสั้นๆ อย่าง ก=ก ถ้ามีเลขคู่และ '='";
+                tip = Text.GetText(StrategyTipKeys.FewNumbers);
                 return true;
             }
         }
 
-        private sealed class HasEqualsButStuckDetector : IStrategyTipDetector
+        private sealed class HasEqualsButStuckDetector : LocalizedDetector
         {
-            public string DetectorId => "equals_but_stuck";
+            public HasEqualsButStuckDetector(ILocalizedTextProvider text) : base(text) { }
 
-            public bool TryDetect(GameContextSnapshot context, out string tip)
+            public override string DetectorId => "equals_but_stuck";
+
+            public override bool TryDetect(GameContextSnapshot context, out string tip)
             {
                 tip = null;
                 if (context.LocalPlayerHand == null) return false;
@@ -126,7 +160,7 @@ namespace AMath.AI.Modes.StrategyCoach
 
                 if (numbers < 2 || ops < 1) return false;
 
-                tip = "มีวัตถุดิบพอสำหรับสมการแบบ ก+ข=ค — ลองวางต่อจากไทล์บนกระดานในแถวหรือคอลัมน์เดียว ให้ต่อเนื่องไม่มีช่องว่าง";
+                tip = Text.GetText(StrategyTipKeys.EqualsButStuck);
                 return true;
             }
         }

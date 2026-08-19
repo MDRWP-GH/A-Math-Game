@@ -41,6 +41,9 @@ namespace AMath.Save
         /// <summary>Max players of the running session.</summary>
         public int MaxPlayers { get; set; }
 
+        /// <summary>Game port of the running session (so a migrated host re-hosts on the same port).</summary>
+        public int Port { get; set; }
+
         #endregion
 
         #region Construction
@@ -87,6 +90,7 @@ namespace AMath.Save
                 RoomName = RoomName,
                 RoomCode = RoomCode,
                 MaxPlayers = MaxPlayers,
+                Port = Port,
                 State = _gameManager.CaptureSnapshot(),
                 Replay = _replayManager.Log
             };

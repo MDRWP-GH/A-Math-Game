@@ -4,6 +4,7 @@ using AMath.Core.Events;
 using AMath.Gameplay.Players;
 using AMath.Networking.Discovery;
 using AMath.Networking.Room;
+using AMath.Networking.Transport;
 using AMath.Replay;
 using AMath.Save;
 using UnityEngine;
@@ -27,7 +28,7 @@ namespace AMath.Networking.HostMigration
     /// There is no negotiation traffic at all — every survivor reaches the
     /// same conclusion from identical replicated data.
     /// </summary>
-    public sealed class HostMigrationManager : ITickable
+    public sealed class HostMigrationManager : ITickable, System.IDisposable
     {
         #region Constants
 
@@ -63,6 +64,7 @@ namespace AMath.Networking.HostMigration
         private int _promotionRank;
         private bool _promotionRankResolved;
         private int _reconnectAttempts;
+        private float _lastSawTargetRoomAt = float.NegativeInfinity;
 
         #endregion
 
@@ -99,6 +101,13 @@ namespace AMath.Networking.HostMigration
             _eventBus.Subscribe<HostStartedEvent>(OnHostStarted);
         }
 
+        /// <inheritdoc />
+        public void Dispose()
+        {
+            _eventBus.Unsubscribe<ClientConnectedEvent>(OnClientConnected);
+            _eventBus.Unsubscribe<HostStartedEvent>(OnHostStarted);
+        }
+
         #endregion
 
         #region Table cache (fed by MigrationTableSync while connected)
@@ -127,6 +136,7 @@ namespace AMath.Networking.HostMigration
             _promotionRank = 0;
             _promotionRankResolved = false;
             _reconnectAttempts = 0;
+            _lastSawTargetRoomAt = float.NegativeInfinity;
             SetPhase(RecoveryPhase.GraceWait);
             _discovery.StartSearching();
             Debug.Log($"[Migration] Recovery started for room {_targetRoomCode}.");
@@ -154,12 +164,14 @@ namespace AMath.Networking.HostMigration
 
             // Any broadcast with our room code — original host or an earlier
             // candidate that already took over — is a reconnect target.
-            if (_discovery.TryResolveRoomCode(_targetRoomCode, out RoomInfo room)
-                && _reconnectAttempts < MaxReconnectAttempts
-                && _elapsed >= _nextReconnectAttempt)
+            if (_discovery.TryResolveRoomCode(_targetRoomCode, out RoomInfo room))
             {
-                Reconnect(room);
-                return;
+                _lastSawTargetRoomAt = _elapsed;
+                if (_reconnectAttempts < MaxReconnectAttempts && _elapsed >= _nextReconnectAttempt)
+                {
+                    Reconnect(room);
+                    return;
+                }
             }
 
             if (_phase == RecoveryPhase.GraceWait && _elapsed >= GraceSeconds)
@@ -207,6 +219,20 @@ namespace AMath.Networking.HostMigration
 
         private void Promote()
         {
+            // A host that is still broadcasting our room code is alive, even if
+            // we personally cannot reach it. Taking over now would put two
+            // hosts on the LAN under the same code and split the match in two,
+            // so keep waiting instead — the player can still end the match.
+            if (_elapsed - _lastSawTargetRoomAt < GraceSeconds)
+            {
+                Debug.LogWarning(
+                    $"[Migration] Room {_targetRoomCode} is still being advertised; not promoting.");
+                _promotionDeadline = _elapsed + GraceSeconds;
+                SetPhase(RecoveryPhase.Searching);
+                _discovery.StartSearching();
+                return;
+            }
+
             SetPhase(RecoveryPhase.Promoting);
             _discovery.StopSearching();
 
@@ -226,7 +252,9 @@ namespace AMath.Networking.HostMigration
                 NewHostPlayerId = _playerManager.LocalPlayerId
             });
 
-            _roomManager.RehostFromSnapshot(save.State, save.RoomCode, save.RoomName, save.MaxPlayers);
+            // Port 0 means the save predates port persistence.
+            ushort port = save.Port > 0 ? (ushort)save.Port : TransportConfigurator.DefaultPort;
+            _roomManager.RehostFromSnapshot(save.State, save.RoomCode, save.RoomName, save.MaxPlayers, port);
             // Restore the replay AFTER the snapshot: RestoreSnapshot publishes
             // MatchStartedEvent, which resets the live replay log.
             _replayManager.Restore(save.Replay);

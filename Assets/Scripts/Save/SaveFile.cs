@@ -34,6 +34,13 @@ namespace AMath.Save
         public string RoomCode;
         public int MaxPlayers;
 
+        /// <summary>
+        /// Game port the room listened on. Saves written before this field
+        /// existed deserialize to 0, which callers read as "use the default
+        /// port" — so no schema bump is needed.
+        /// </summary>
+        public int Port;
+
         /// <summary>Complete game state (board, racks, bag, scores, turn, RNG state).</summary>
         public GameStateSnapshot State;
 

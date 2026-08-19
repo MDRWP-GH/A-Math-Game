@@ -110,7 +110,17 @@ namespace AMath.Bootstrap
 
             private void Update()
             {
-                if (_spawned || !NetworkServer.active) return;
+                // Re-arm whenever the server goes down so a second CreateRoom in
+                // the same play session spawns a fresh pair. This object is
+                // DontDestroyOnLoad and never disabled, so OnDisable alone would
+                // leave the flag latched for the rest of the process.
+                if (!NetworkServer.active)
+                {
+                    _spawned = false;
+                    return;
+                }
+
+                if (_spawned) return;
                 _spawned = true;
 
                 GameObject gameStateObject = Object.Instantiate(_gameStatePrefab);

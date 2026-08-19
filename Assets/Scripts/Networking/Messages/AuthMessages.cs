@@ -19,6 +19,14 @@ namespace AMath.Networking.Messages
 
         /// <summary>Player display name.</summary>
         public string DisplayName;
+
+        /// <summary>
+        /// Token this client received from the host on its previous accepted
+        /// connection. Empty on a first join. The host requires it to match
+        /// before handing a mid-match seat back, so knowing a victim's GUID is
+        /// no longer enough to take their place while they are disconnected.
+        /// </summary>
+        public string ReconnectToken;
     }
 
     /// <summary>Host's verdict on an <see cref="AuthRequestMessage"/>.</summary>
@@ -26,6 +34,9 @@ namespace AMath.Networking.Messages
     {
         public bool Approved;
         public string Reason;
+
+        /// <summary>Freshly issued token to present when reconnecting to this host.</summary>
+        public string ReconnectToken;
     }
 
     /// <summary>

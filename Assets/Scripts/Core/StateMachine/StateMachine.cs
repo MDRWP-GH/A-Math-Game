@@ -96,6 +96,26 @@ namespace AMath.Core.StateMachines
             return true;
         }
 
+        /// <summary>
+        /// Rehydrates the machine from persisted state, bypassing the
+        /// transition table. Restoring a snapshot is not a transition: the
+        /// phase it names was already reached legally on the machine that
+        /// wrote it, and the path back to it (e.g. Lobby -> Playing on a
+        /// reconnecting client) is deliberately not a legal live transition.
+        /// </summary>
+        public void RestoreTo(TKey state)
+        {
+            if (EqualityComparer<TKey>.Default.Equals(CurrentKey, state))
+                return;
+
+            TKey previous = CurrentKey;
+            _currentState?.Exit();
+            CurrentKey = state;
+            _currentState = _states[state];
+            _currentState.Enter();
+            StateChanged?.Invoke(previous, state);
+        }
+
         /// <summary>Ticks the active state.</summary>
         public void Tick(float deltaTime) => _currentState?.Tick(deltaTime);
 

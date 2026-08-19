@@ -1,8 +1,10 @@
 using AMath.Art;
+using AMath.UI.Tutorial;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.UI;
+using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
 namespace AMath.UI
@@ -24,6 +26,7 @@ namespace AMath.UI
         private GameObject _menuCanvas;
         private HowToPlayOverlay _helpOverlay;
         private Button _startButton;
+        private Button _tutorialButton;
         private Button _helpButton;
         private Button _settingsButton;
         private Button _quitButton;
@@ -102,9 +105,21 @@ namespace AMath.UI
                 StartGame);
             UiFactory.SetCenteredRect(
                 _startButton.GetComponent<RectTransform>(),
-                new Vector2(0f, 110f),
+                new Vector2(0f, 158f),
                 new Vector2(buttonWidth, buttonHeight));
             LocalizedText.Bind(_startButton.GetComponentInChildren<Text>(), "ui.menu.start");
+
+            _tutorialButton = _ui.CreateTextMenuButton(
+                canvas.transform,
+                "Tutorial Button",
+                string.Empty,
+                buttonFontSize,
+                OpenTutorial);
+            UiFactory.SetCenteredRect(
+                _tutorialButton.GetComponent<RectTransform>(),
+                new Vector2(0f, 62f),
+                new Vector2(buttonWidth, buttonHeight));
+            ConfigureTutorialButton();
 
             _helpButton = _ui.CreateTextMenuButton(
                 canvas.transform,
@@ -114,7 +129,7 @@ namespace AMath.UI
                 OpenHelp);
             UiFactory.SetCenteredRect(
                 _helpButton.GetComponent<RectTransform>(),
-                new Vector2(0f, 14f),
+                new Vector2(0f, -34f),
                 new Vector2(buttonWidth, buttonHeight));
             LocalizedText.Bind(_helpButton.GetComponentInChildren<Text>(), "ui.menu.help");
 
@@ -126,7 +141,7 @@ namespace AMath.UI
                 OpenSettings);
             UiFactory.SetCenteredRect(
                 _settingsButton.GetComponent<RectTransform>(),
-                new Vector2(0f, -82f),
+                new Vector2(0f, -130f),
                 new Vector2(buttonWidth, buttonHeight));
             LocalizedText.Bind(_settingsButton.GetComponentInChildren<Text>(), "ui.menu.settings");
 
@@ -138,7 +153,7 @@ namespace AMath.UI
                 QuitGame);
             UiFactory.SetCenteredRect(
                 _quitButton.GetComponent<RectTransform>(),
-                new Vector2(0f, -178f),
+                new Vector2(0f, -226f),
                 new Vector2(buttonWidth, buttonHeight));
             LocalizedText.Bind(_quitButton.GetComponentInChildren<Text>(), "ui.menu.quit");
 
@@ -150,6 +165,31 @@ namespace AMath.UI
         private void StartGame()
         {
             PlaySessionController.EnsureExists().OpenFromMainMenu(this);
+        }
+
+        /// <summary>
+        /// A tutorial button that loads nothing is worse than no button, so
+        /// when the scene is missing from Build Settings the entry is disabled
+        /// and says so instead of failing on click.
+        /// </summary>
+        private void ConfigureTutorialButton()
+        {
+            var label = _tutorialButton.GetComponentInChildren<Text>();
+            if (Application.CanStreamedLevelBeLoaded(TutorialSceneBootstrap.SceneName))
+            {
+                LocalizedText.Bind(label, "ui.menu.tutorial");
+                return;
+            }
+
+            LocalizedText.Bind(label, "ui.menu.no_tutorial");
+            _tutorialButton.interactable = false;
+            Debug.LogError(
+                $"A-Math: scene '{TutorialSceneBootstrap.SceneName}' is missing from Build Settings.");
+        }
+
+        private void OpenTutorial()
+        {
+            SceneManager.LoadScene(TutorialSceneBootstrap.SceneName);
         }
 
         private void OpenHelp()
@@ -199,8 +239,9 @@ namespace AMath.UI
 
         private void ConfigureMenuNavigation()
         {
-            UiFactory.SetVerticalNavigation(_startButton, _quitButton, _helpButton);
-            UiFactory.SetVerticalNavigation(_helpButton, _startButton, _settingsButton);
+            UiFactory.SetVerticalNavigation(_startButton, _quitButton, _tutorialButton);
+            UiFactory.SetVerticalNavigation(_tutorialButton, _startButton, _helpButton);
+            UiFactory.SetVerticalNavigation(_helpButton, _tutorialButton, _settingsButton);
             UiFactory.SetVerticalNavigation(_settingsButton, _helpButton, _quitButton);
             UiFactory.SetVerticalNavigation(_quitButton, _settingsButton, _startButton);
         }

@@ -6,6 +6,7 @@
         "AMath.Networking",
         "AMath.Tutorial",
         "AMath.AI",
+        "Mirror",
         "UnityEngine.TestRunner",
         "UnityEditor.TestRunner"
     ],

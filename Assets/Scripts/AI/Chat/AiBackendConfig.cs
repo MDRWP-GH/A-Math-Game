@@ -1,3 +1,4 @@
+using System;
 using UnityEngine;
 
 namespace AMath.AI.Chat
@@ -19,11 +20,30 @@ namespace AMath.AI.Chat
         [SerializeField, Range(0, 5)] private int _maxRetryAttempts = 2;
         [SerializeField, Range(0.1f, 10f)] private float _retryBaseDelaySeconds = 0.75f;
 
+        // Runtime overrides are deliberately not serialized: the endpoint and
+        // model are per-deployment values, so writing them into the asset would
+        // both dirty it in the Editor and ship one environment's settings to
+        // every build.
+        [NonSerialized] private string _runtimeEndpoint;
+        [NonSerialized] private string _runtimeModel;
+
         /// <summary>Full HTTPS chat-completions URL exposed by the backend proxy.</summary>
-        public string Endpoint => _endpoint;
+        public string Endpoint => string.IsNullOrWhiteSpace(_runtimeEndpoint) ? _endpoint : _runtimeEndpoint;
 
         /// <summary>Backend model/deployment identifier.</summary>
-        public string Model => _model;
+        public string Model => string.IsNullOrWhiteSpace(_runtimeModel) ? _model : _runtimeModel;
+
+        /// <summary>
+        /// Applies per-deployment values supplied at startup. Blank arguments
+        /// leave the asset's own values in place.
+        /// </summary>
+        public void ApplyRuntimeOverrides(string endpoint, string model)
+        {
+            if (!string.IsNullOrWhiteSpace(endpoint))
+                _runtimeEndpoint = endpoint.Trim();
+            if (!string.IsNullOrWhiteSpace(model))
+                _runtimeModel = model.Trim();
+        }
 
         /// <summary>Request timeout in seconds.</summary>
         public int TimeoutSeconds => _timeoutSeconds;
@@ -43,14 +63,14 @@ namespace AMath.AI.Chat
         /// <summary>Checks required non-secret configuration before a request is attempted.</summary>
         public bool IsValid(out string reason)
         {
-            if (!System.Uri.TryCreate(_endpoint, System.UriKind.Absolute, out System.Uri endpoint) ||
-                endpoint.Scheme != System.Uri.UriSchemeHttps)
+            if (!Uri.TryCreate(Endpoint, UriKind.Absolute, out Uri endpoint) ||
+                endpoint.Scheme != Uri.UriSchemeHttps)
             {
                 reason = "AI backend endpoint must be an absolute HTTPS URL.";
                 return false;
             }
 
-            if (string.IsNullOrWhiteSpace(_model))
+            if (string.IsNullOrWhiteSpace(Model))
             {
                 reason = "AI backend model is not configured.";
                 return false;

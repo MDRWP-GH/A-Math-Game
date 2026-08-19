@@ -58,8 +58,19 @@ namespace AMath.Gameplay.Players
         }
 
         /// <summary>Finds a player by match-local id; null when absent.</summary>
-        public PlayerState GetById(int playerId) =>
-            playerId >= 0 && playerId < _players.Count ? _players[playerId] : null;
+        public PlayerState GetById(int playerId)
+        {
+            if (playerId < 0) return null;
+
+            // Seats are handed out as 0..n-1 (see MatchConfig), so the index is
+            // almost always the answer — but the lookup stays keyed on PlayerId
+            // so a non-contiguous roster degrades to a search instead of
+            // silently returning the wrong player.
+            if (playerId < _players.Count && _players[playerId].PlayerId == playerId)
+                return _players[playerId];
+
+            return _players.Find(p => p.PlayerId == playerId);
+        }
 
         /// <summary>Finds a player by persistent GUID (reconnection identity).</summary>
         public PlayerState FindByGuid(string persistentGuid) =>
@@ -82,7 +93,9 @@ namespace AMath.Gameplay.Players
         /// <summary>Removes exactly these tiles from a rack. Assumes prior validation.</summary>
         public void RemoveFromRack(int playerId, IReadOnlyList<byte> tileIds)
         {
-            PlayerState player = _players[playerId];
+            PlayerState player = GetById(playerId);
+            if (player == null) return;
+
             for (int i = 0; i < tileIds.Count; i++)
                 player.Rack.Remove(tileIds[i]);
 
@@ -92,7 +105,9 @@ namespace AMath.Gameplay.Players
         /// <summary>Adds drawn tiles to a rack.</summary>
         public void AddToRack(int playerId, IReadOnlyList<byte> tileIds)
         {
-            PlayerState player = _players[playerId];
+            PlayerState player = GetById(playerId);
+            if (player == null) return;
+
             for (int i = 0; i < tileIds.Count; i++)
                 player.Rack.Add(tileIds[i]);
 

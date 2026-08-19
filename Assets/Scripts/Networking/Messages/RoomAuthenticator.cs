@@ -1,4 +1,6 @@
 using System.Collections;
+using System.Collections.Generic;
+using System.Security.Cryptography;
 using AMath.Core.StateMachines;
 using AMath.Gameplay.Players;
 using AMath.Managers;
@@ -24,11 +26,35 @@ namespace AMath.Networking.Messages
     /// </summary>
     public sealed class RoomAuthenticator : NetworkAuthenticator
     {
+        #region Limits
+
+        /// <summary>
+        /// Upper bounds on every string a client can put in the very first
+        /// message it sends. Without them an unauthenticated peer chooses how
+        /// much the host allocates.
+        /// </summary>
+        private const int MaxGameVersionLength = 32;
+        private const int MaxRoomCodeLength = 16;
+        private const int MaxPersistentGuidLength = 64;
+        private const int MaxDisplayNameLength = 32;
+        private const int MaxReconnectTokenLength = 64;
+
+        #endregion
+
         #region Dependencies (injected by the composition root)
 
         private RoomSession _session;
         private PlayerManager _playerManager;
         private GameManager _gameManager;
+
+        /// <summary>
+        /// Tokens handed out to each GUID during this hosting session. Absent
+        /// entries mean "we never authenticated this client" — which is the
+        /// normal state for a host that just took over after migration, so a
+        /// missing entry falls back to GUID-only identification rather than
+        /// locking survivors out of their own match.
+        /// </summary>
+        private readonly Dictionary<string, string> _issuedTokens = new();
 
         /// <summary>Injects domain dependencies. Must be called before hosting.</summary>
         public void Configure(RoomSession session, PlayerManager playerManager, GameManager gameManager)
@@ -50,6 +76,7 @@ namespace AMath.Networking.Messages
         public override void OnStopServer()
         {
             NetworkServer.UnregisterHandler<AuthRequestMessage>();
+            _issuedTokens.Clear();
         }
 
         public override void OnServerAuthenticate(NetworkConnectionToClient conn)
@@ -62,8 +89,13 @@ namespace AMath.Networking.Messages
             string rejection = Evaluate(message, out AuthenticatedIdentity identity);
             if (rejection == null)
             {
+                // Rotate on every accepted connection: a token sniffed off the
+                // wire stops working as soon as its owner reconnects once.
+                string token = GenerateReconnectToken();
+                _issuedTokens[identity.PersistentGuid] = token;
+
                 conn.authenticationData = identity;
-                conn.Send(new AuthResponseMessage { Approved = true });
+                conn.Send(new AuthResponseMessage { Approved = true, ReconnectToken = token });
                 ServerAccept(conn);
             }
             else
@@ -78,6 +110,13 @@ namespace AMath.Networking.Messages
         private string Evaluate(AuthRequestMessage message, out AuthenticatedIdentity identity)
         {
             identity = null;
+
+            if (Exceeds(message.GameVersion, MaxGameVersionLength)
+                || Exceeds(message.RoomCode, MaxRoomCodeLength)
+                || Exceeds(message.PersistentGuid, MaxPersistentGuidLength)
+                || Exceeds(message.DisplayName, MaxDisplayNameLength)
+                || Exceeds(message.ReconnectToken, MaxReconnectTokenLength))
+                return "Malformed authentication request.";
 
             if (message.GameVersion != Application.version)
                 return $"Version mismatch (host {Application.version}, you {message.GameVersion}).";
@@ -99,7 +138,11 @@ namespace AMath.Networking.Messages
                     return "This player is already connected.";
             }
 
-            bool matchRunning = _gameManager.Config != null && _gameManager.Phase != MatchPhase.Lobby;
+            // Finished matches are not resumable, so treat them like the lobby
+            // instead of letting a stale client reconnect into a closed match.
+            bool matchRunning = _gameManager.Config != null
+                && _gameManager.Phase != MatchPhase.Lobby
+                && _gameManager.Phase != MatchPhase.Finished;
             if (matchRunning)
             {
                 // Mid-match, only players who already own a seat may (re)join.
@@ -109,6 +152,10 @@ namespace AMath.Networking.Messages
 
                 if (seat.IsAi)
                     return "This seat is controlled by the host AI.";
+
+                if (_issuedTokens.TryGetValue(message.PersistentGuid, out string expectedToken)
+                    && !FixedTimeEquals(expectedToken, message.ReconnectToken))
+                    return "Reconnection token does not match this seat.";
 
                 identity = new AuthenticatedIdentity
                 {
@@ -137,6 +184,33 @@ namespace AMath.Networking.Messages
             !string.IsNullOrEmpty(persistentGuid)
             && persistentGuid.StartsWith("ai:", System.StringComparison.Ordinal);
 
+        private static bool Exceeds(string value, int maxLength) =>
+            value != null && value.Length > maxLength;
+
+        private static string GenerateReconnectToken()
+        {
+            var bytes = new byte[16];
+            using (var rng = RandomNumberGenerator.Create())
+                rng.GetBytes(bytes);
+
+            return System.Convert.ToBase64String(bytes);
+        }
+
+        /// <summary>Length-independent comparison so a mismatch leaks no timing signal.</summary>
+        private static bool FixedTimeEquals(string expected, string provided)
+        {
+            if (string.IsNullOrEmpty(expected) || string.IsNullOrEmpty(provided))
+                return false;
+            if (expected.Length != provided.Length)
+                return false;
+
+            int difference = 0;
+            for (int i = 0; i < expected.Length; i++)
+                difference |= expected[i] ^ provided[i];
+
+            return difference == 0;
+        }
+
         private IEnumerator DelayedReject(NetworkConnectionToClient conn)
         {
             yield return new WaitForSeconds(0.5f);
@@ -164,7 +238,8 @@ namespace AMath.Networking.Messages
                 GameVersion = Application.version,
                 RoomCode = _session.RoomCode,
                 PersistentGuid = LocalIdentity.PersistentGuid,
-                DisplayName = LocalIdentity.DisplayName
+                DisplayName = LocalIdentity.DisplayName,
+                ReconnectToken = _session.ReconnectToken
             });
         }
 
@@ -172,6 +247,7 @@ namespace AMath.Networking.Messages
         {
             if (message.Approved)
             {
+                _session.ReconnectToken = message.ReconnectToken;
                 ClientAccept();
             }
             else

@@ -102,34 +102,55 @@ namespace AMath.Bootstrap
                 return;
             }
 
-            if (_aiBackendConfig == null || _ruleAssistantProfile == null)
-            {
-                Debug.LogWarning("[AI] Chat UI is available, but its configuration assets are missing.");
-                return;
-            }
-
             var contextProvider = _services.Register<IGameContextProvider>(
                 new LiveGameContextProvider(
                     _services.Resolve<BoardManager>(),
                     _services.Resolve<PlayerManager>(),
                     _services.Resolve<GameManager>(),
                     _services.Resolve<TurnManager>(),
-                    _services.Resolve<TurnInputSession>()));
+                    _services.Resolve<TurnInputSession>(),
+                    _services.Resolve<ICommandRejectionReader>(),
+                    _services.Resolve<ITutorialProgressReader>(),
+                    _services.Resolve<ReplayManager>()));
+
             var controller = _services.Register(new AiAssistantController(
-                new IAiAssistantMode[]
-                {
-                    new RuleAssistantMode(
-                        _services.Resolve<IAiClient>(),
-                        _ruleAssistantProfile,
-                        new GameContextPromptFormatter()),
-                    new StrategyCoachMode()
-                },
+                BuildAssistantModes(),
                 contextProvider,
                 new AiResponseRestrictionGuard(),
                 _aiChatWindow,
                 AMath.UI.Localization.UiLocalizationProvider.Shared));
             _services.Register<IAiEntryPoint>(controller);
             _aiChatWindow.Configure(controller);
+        }
+
+        /// <summary>
+        /// Strategy Coach runs entirely offline, so it is always offered. Rule
+        /// Assistant needs a reachable backend, and offering a button that can
+        /// only ever fail is worse than not offering it at all.
+        /// </summary>
+        private IAiAssistantMode[] BuildAssistantModes()
+        {
+            bool backendReady = _ruleAssistantProfile != null
+                && _aiBackendConfig != null
+                && _aiBackendConfig.IsValid(out _)
+                && _services.TryResolve(out IAiClient client)
+                && client != null;
+
+            ILocalizedTextProvider text = AMath.UI.Localization.UiLocalizationProvider.Shared;
+            if (!backendReady)
+            {
+                Debug.Log("[AI] Rule Assistant is unavailable (no backend configured); Strategy Coach only.");
+                return new IAiAssistantMode[] { new StrategyCoachMode(text) };
+            }
+
+            return new IAiAssistantMode[]
+            {
+                new RuleAssistantMode(
+                    _services.Resolve<IAiClient>(),
+                    _ruleAssistantProfile,
+                    new GameContextPromptFormatter()),
+                new StrategyCoachMode(text)
+            };
         }
 
         #endregion
@@ -215,11 +236,13 @@ namespace AMath.Bootstrap
             _services.Register(new AiSeatController(bus, gameManager, playerManager, boardManager, turnManager, moveChooser));
             var turnInput = _services.Register(new TurnInputSession(bus, boardManager, playerManager));
             _services.Register<ISelectionStateReader>(turnInput);
+            _services.Register<ICommandRejectionReader>(new CommandRejectionTracker(bus));
+            _services.Register<ITutorialProgressReader>(new TutorialProgressTracker(bus));
             RegisterAiBackendServices();
 
             var session = _services.Register(new RoomSession());
             var discovery = _services.Register(new DiscoveryManager(bus));
-            var roomManager = _services.Register(new RoomManager(bus, session, discovery, gameManager, stateMachine, _networkManager));
+            var roomManager = _services.Register(new RoomManager(bus, session, discovery, gameManager, _networkManager));
             var migrationManager = _services.Register(new HostMigrationManager(bus, discovery, roomManager, saveManager, replayManager, playerManager, session));
             _services.Register(new ReconnectionManager(bus, stateMachine, gameManager, playerManager, saveManager, migrationManager, session));
 
@@ -238,6 +261,10 @@ namespace AMath.Bootstrap
         {
             _aiBackendConfig ??= Resources.Load<AiBackendConfig>("AI/AiBackendConfig");
             _ruleAssistantProfile ??= Resources.Load<AiPromptProfile>("AI/RuleAssistantProfile");
+
+            // The shipped asset is intentionally blank; the endpoint and model
+            // belong to a deployment, not to the project.
+            _aiBackendConfig?.ApplyRuntimeOverrides(AiRuntimeSettings.Endpoint, AiRuntimeSettings.Model);
         }
 
         private void RegisterAiBackendServices()
@@ -250,8 +277,12 @@ namespace AMath.Bootstrap
             _services.Register(_aiBackendConfig);
             _services.Register<IAiClient>(new OpenAiCompatibleClient(_aiBackendConfig, tokenProvider));
 
+            // Without this the client has no bearer token and every Rule
+            // Assistant request fails at the first line of SendAsync.
+            SetAiAccessToken(AiRuntimeSettings.AccessToken);
+
             if (!_aiBackendConfig.IsValid(out string error))
-                Debug.LogWarning($"[AI] Backend configuration is unavailable: {error}");
+                Debug.Log($"[AI] Rule Assistant backend not configured ({error}); set {AiRuntimeSettings.EndpointVariable} and {AiRuntimeSettings.ModelVariable} to enable it.");
 
             if (_aiChatWindow != null)
                 AttachAiChatWindow(_aiChatWindow);
@@ -262,6 +293,7 @@ namespace AMath.Bootstrap
             saveManager.RoomName = session.RoomName;
             saveManager.RoomCode = session.RoomCode;
             saveManager.MaxPlayers = session.MaxPlayers;
+            saveManager.Port = session.Port;
         }
 
         #endregion

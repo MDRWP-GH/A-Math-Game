@@ -145,6 +145,39 @@ namespace AMath.UI.Localization
             ["ui.match.wait_turn"] = "รอตาอื่น",
             ["ui.match.exchange_hint"] = "แตะไทล์ที่จะแลก แล้วกด “แลกไทล์ที่เลือก” อีกครั้ง",
             ["ui.match.idle_hint"] = "เลือกไทล์จากชั้นวาง แล้วแตะช่องบนกระดาน\nระบบจะตรวจสมการและคิดคะแนนให้อัตโนมัติ",
+            ["ui.match.ask_ai"] = "ถาม AI",
+
+            // AI assistant
+            ["ai.window.title"] = "ผู้ช่วย AI",
+            ["ai.window.mode_rules"] = "กติกา",
+            ["ai.window.mode_strategy"] = "กลยุทธ์",
+            ["ai.window.send"] = "ถาม",
+            ["ai.window.close"] = "ปิด",
+            ["ai.window.busy"] = "กำลังคิด…",
+            ["ai.window.placeholder"] = "ถามเรื่องกติกาได้เลย…",
+            ["ai.error.mode_unavailable"] = "ตอนนี้ยังใช้ผู้ช่วย AI ไม่ได้",
+            ["ai.error.empty_question"] = "พิมพ์คำถามก่อนกดถาม",
+            ["ai.error.unsafe_response"] = "คำตอบถูกระงับเพราะไม่ผ่านการตรวจสอบความปลอดภัย",
+            ["ai.error.request_failed"] = "ติดต่อผู้ช่วย AI ไม่สำเร็จ ลองใหม่อีกครั้ง",
+            ["ai.error.mode_not_ready"] = "โหมดนี้ยังตอบไม่ได้ในช่วงนี้ของเกม",
+            ["ai.strategy.header"] = "คำใบ้จากสถานะกระดาน (สคริปต์):",
+            ["ai.strategy.no_tips"] =
+                "ยังไม่มีคำใบ้พิเศษจากสถานะตอนนี้ — ลองหาสมการที่ทั้งสองข้างของ '=' เท่ากัน " +
+                "และต่อกับกระดาน แล้วค่อยวิเคราะห์เองอีกครั้ง",
+            ["ai.strategy.question_ignored"] =
+                "คำถามของคุณถูกบันทึกไว้แล้ว แต่โหมดนี้ใช้การตรวจจับสถานะ ไม่ได้วิเคราะห์ข้อความอิสระ",
+            ["ai.strategy.rejection"] =
+                "การวางล่าสุดไม่ผ่าน: {0} ลองจัดสมการใหม่ให้ทั้งสองข้างของ '=' เท่ากัน และต่อกับกระดานที่มีอยู่",
+            ["ai.strategy.first_move_center"] =
+                "ตาแรกต้องวางสมการให้ครอบช่องกลางกระดาน และมีความยาวอย่างน้อย 3 ชิ้น เช่น 1+2=3",
+            ["ai.strategy.missing_equals"] =
+                "ในมือยังไม่มี '=' (หรือใบว่างที่จะใช้แทน) — ลองแลกไทล์ หรือรอจังหวะที่มี '=' ก่อนวางสมการยาว",
+            ["ai.strategy.low_bag"] =
+                "ถุงไทล์เหลือน้อยแล้ว — ระวังไทล์ติดมือตอนจบเกม จะถูกหักคะแนน และคนที่หมดมือก่อนจะได้โบนัสจากของคนอื่น",
+            ["ai.strategy.few_numbers"] =
+                "ตัวเลขในมือน้อย — แลกไทล์บางใบ หรือหาสมการสั้นๆ อย่าง ก=ก ถ้ามีเลขคู่และ '='",
+            ["ai.strategy.equals_but_stuck"] =
+                "มีวัตถุดิบพอสำหรับสมการแบบ ก+ข=ค — ลองวางต่อจากไทล์บนกระดานในแถวหรือคอลัมน์เดียว ให้ต่อเนื่องไม่มีช่องว่าง",
 
             // Pause
             ["ui.pause.title"] = "พักเกม",
@@ -284,6 +317,39 @@ namespace AMath.UI.Localization
             ["ui.match.wait_turn"] = "Waiting for another player",
             ["ui.match.exchange_hint"] = "Tap the tiles to trade in, then press Exchange again",
             ["ui.match.idle_hint"] = "Pick a tile from your rack, then tap a board cell.\nEquations are validated and scored automatically.",
+            ["ui.match.ask_ai"] = "Ask AI",
+
+            // AI assistant
+            ["ai.window.title"] = "AI Assistant",
+            ["ai.window.mode_rules"] = "Rules",
+            ["ai.window.mode_strategy"] = "Strategy",
+            ["ai.window.send"] = "Ask",
+            ["ai.window.close"] = "Close",
+            ["ai.window.busy"] = "Thinking…",
+            ["ai.window.placeholder"] = "Ask about the rules…",
+            ["ai.error.mode_unavailable"] = "The AI assistant is not available right now.",
+            ["ai.error.empty_question"] = "Type a question first.",
+            ["ai.error.unsafe_response"] = "That answer was withheld because it failed a safety check.",
+            ["ai.error.request_failed"] = "Could not reach the AI assistant. Please try again.",
+            ["ai.error.mode_not_ready"] = "This mode cannot answer at this point in the match.",
+            ["ai.strategy.header"] = "Tips from the current board (scripted):",
+            ["ai.strategy.no_tips"] =
+                "Nothing specific stands out right now — look for an equation where both sides of '=' " +
+                "are equal and that connects to the board, then reassess.",
+            ["ai.strategy.question_ignored"] =
+                "Your question was noted, but this mode reads the board state rather than free text.",
+            ["ai.strategy.rejection"] =
+                "Your last placement was rejected: {0} Rebuild the equation so both sides of '=' match and it connects to the existing board.",
+            ["ai.strategy.first_move_center"] =
+                "The opening move must cover the centre square and be at least 3 tiles long, for example 1+2=3.",
+            ["ai.strategy.missing_equals"] =
+                "You have no '=' (or blank to stand in for one) — exchange tiles, or wait for an '=' before attempting a long equation.",
+            ["ai.strategy.low_bag"] =
+                "The bag is nearly empty — leftover tiles cost you points at the end, and whoever goes out first collects everyone else's.",
+            ["ai.strategy.few_numbers"] =
+                "You are short on numbers — exchange a few tiles, or look for a short equation if you hold a matching pair and an '='.",
+            ["ai.strategy.equals_but_stuck"] =
+                "You have enough for an a+b=c equation — extend from a tile already on the board along one row or column, with no gaps.",
 
             // Pause
             ["ui.pause.title"] = "Paused",

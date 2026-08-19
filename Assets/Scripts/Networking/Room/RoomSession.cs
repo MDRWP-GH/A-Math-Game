@@ -26,6 +26,13 @@ namespace AMath.Networking.Room
         /// <summary>True while any room membership is active (host or client).</summary>
         public bool IsActive { get; set; }
 
+        /// <summary>
+        /// Token the host issued on our last accepted connection, replayed when
+        /// reconnecting to prove we are the same client. Memory-only and
+        /// discarded together with the room.
+        /// </summary>
+        public string ReconnectToken { get; set; }
+
         /// <summary>Resets to the "not in a room" state.</summary>
         public void Reset()
         {
@@ -35,6 +42,7 @@ namespace AMath.Networking.Room
             IsHost = false;
             Port = 0;
             IsActive = false;
+            ReconnectToken = null;
         }
     }
 }

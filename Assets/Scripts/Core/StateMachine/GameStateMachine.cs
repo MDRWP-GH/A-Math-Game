@@ -63,6 +63,13 @@ namespace AMath.Core.StateMachines
         /// <summary>Requests a phase change; returns false when illegal.</summary>
         public bool TransitionTo(MatchPhase phase) => _machine.TransitionTo(phase);
 
+        /// <summary>
+        /// Adopts a phase carried by a snapshot (save load, host migration,
+        /// reconnection resync) without running it through the live transition
+        /// table. Still publishes <see cref="MatchPhaseChangedEvent"/>.
+        /// </summary>
+        public void RestoreTo(MatchPhase phase) => _machine.RestoreTo(phase);
+
         /// <inheritdoc />
         public void Tick(float deltaTime) => _machine.Tick(deltaTime);
 

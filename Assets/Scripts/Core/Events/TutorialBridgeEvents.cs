@@ -19,6 +19,9 @@ namespace AMath.Core.Events
         /// <summary>Id of the active tutorial sequence, or null when the tutorial ended.</summary>
         public string TutorialId;
 
+        /// <summary>Authored id of the new current step, or null when the tutorial ended.</summary>
+        public string StepId;
+
         /// <summary>0-based index of the new current step.</summary>
         public int StepIndex;
 
