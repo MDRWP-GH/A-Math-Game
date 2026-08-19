@@ -127,6 +127,7 @@ namespace AMath.Tutorial
             _runtimeContext.Highlighter.ClearHighlight();
             _runtimeContext.Ui.SetAiButtonAvailable(false);
             _stateMachine.TransitionTo(TutorialPhase.Skipped);
+            PersistProgress(isCompleted: true);
             PublishProgress(isActive: false, objectiveText: null);
         }
 

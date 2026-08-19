@@ -40,8 +40,11 @@ namespace AMath.UI
         /// <summary>Room display name.</summary>
         public string RoomName => _session?.RoomName ?? string.Empty;
 
-        /// <summary>Only the host may start the match, and only with enough players.</summary>
-        public bool CanStartMatch => _session is { IsHost: true } && _members.Count >= GameRules.MinPlayers;
+        /// <summary>
+        /// Only the host may start. One human is enough — empty seats up to the
+        /// minimum are filled with the scripted medium AI.
+        /// </summary>
+        public bool CanStartMatch => _session is { IsHost: true } && _members.Count >= 1;
 
         #endregion
 
@@ -75,8 +78,12 @@ namespace AMath.UI
 
         #region View commands
 
-        /// <summary>Host action: assign seats and start the match.</summary>
-        public void StartMatch() => _roomManager.StartMatch();
+        /// <summary>
+        /// Host action: assign seats and start the match.
+        /// <paramref name="extraAiPlayers"/> adds AI opponents beyond the
+        /// automatic fill-to-minimum.
+        /// </summary>
+        public void StartMatch(int extraAiPlayers = 0) => _roomManager.StartMatch(extraAiPlayers);
 
         /// <summary>Leaves the room (both roles).</summary>
         public void LeaveRoom() => _roomManager.LeaveRoom();

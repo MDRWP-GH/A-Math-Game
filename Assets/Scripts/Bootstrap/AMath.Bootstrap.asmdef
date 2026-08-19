@@ -4,8 +4,10 @@
     "references": [
         "AMath.Core",
         "AMath.Networking",
+        "AMath.AI",
         "AMath.UI",
         "Mirror",
+        "Mirror.Transports",
         "kcp2k"
     ],
     "includePlatforms": [],

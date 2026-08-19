@@ -53,7 +53,8 @@ namespace AMath.Networking
             player.ServerInitialize(
                 identity.IsReconnection ? identity.ExistingPlayerId : -1,
                 identity.DisplayName,
-                identity.PersistentGuid);
+                identity.PersistentGuid,
+                isHost: conn == NetworkServer.localConnection);
 
             NetworkServer.AddPlayerForConnection(conn, playerObject);
 
@@ -98,6 +99,7 @@ namespace AMath.Networking
         {
             _session.IsHost = true;
             _gameManager.IsAuthority = true;
+            RefreshNetworkPlayerHostFlags();
             _eventBus.Publish(new HostStartedEvent());
         }
 
@@ -110,11 +112,31 @@ namespace AMath.Networking
 
         #endregion
 
+        #region Host badge replication
+
+        [Server]
+        private void RefreshNetworkPlayerHostFlags()
+        {
+            foreach (NetworkConnectionToClient connection in NetworkServer.connections.Values)
+            {
+                if (connection?.identity == null ||
+                    !connection.identity.TryGetComponent(out NetworkPlayer player))
+                {
+                    continue;
+                }
+
+                player.ServerSetIsHost(connection == NetworkServer.localConnection);
+            }
+        }
+
+        #endregion
+
         #region Client callbacks
 
         public override void OnClientConnect()
         {
             base.OnClientConnect();
+            Debug.Log($"[Network] Connected to {_session?.RoomName ?? networkAddress}.");
             _eventBus.Publish(new ClientConnectedEvent());
         }
 
@@ -128,6 +150,8 @@ namespace AMath.Networking
             base.OnClientDisconnect();
 
             // The reconnection/host-migration pipeline reacts to this event.
+            Debug.LogWarning(
+                $"[Network] Client disconnected (match running: {matchWasRunning}, RTT: {NetworkTime.rtt * 1000d:0} ms).");
             _eventBus.Publish(new ClientDisconnectedEvent { MatchWasRunning = matchWasRunning });
         }
 

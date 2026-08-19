@@ -35,6 +35,39 @@ namespace AMath.Tests
             // the center square doubles the equation => 12.
             int score = board.Commit(validation, placements);
             Assert.AreEqual(12, score);
+
+            PlacementScoreBreakdown detail = new ScoreCalculator().CalculateDetailed(validation.Lines, placements.Count);
+            Assert.AreEqual(12, detail.Total);
+            Assert.AreEqual(1, detail.Equations.Count);
+            Assert.AreEqual("1+2=3", detail.Equations[0].EquationText);
+            Assert.AreEqual(2, detail.Equations[0].EquationMultiplier);
+        }
+
+        [Test]
+        public void TileFacePoints_MatchOfficialAMathValues()
+        {
+            Assert.AreEqual(1, PointsOf(0));
+            Assert.AreEqual(1, PointsOf(1));
+            Assert.AreEqual(2, PointsOf(4));
+            Assert.AreEqual(3, PointsOf(10));
+            Assert.AreEqual(7, PointsOf(19));
+            Assert.AreEqual(2, PointsOf(Plus));
+            Assert.AreEqual(1, PointsOf(EqualsSign));
+            Assert.AreEqual(0, PointsOf(Blank));
+        }
+
+        [Test]
+        public void InvalidEquation_IsRejected_WithMathError()
+        {
+            var board = new BoardManager();
+            var placements = new List<TilePlacement>
+            {
+                P(1, 5, 7), P(Plus, 6, 7), P(2, 7, 7), P(EqualsSign, 8, 7), P(4, 9, 7)
+            };
+
+            PlacementValidation validation = board.Validate(Rack(1, Plus, 2, EqualsSign, 4), placements);
+            Assert.IsFalse(validation.IsValid);
+            StringAssert.Contains("equal", validation.Error.ToLowerInvariant());
         }
 
         [Test]

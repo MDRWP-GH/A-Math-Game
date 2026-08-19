@@ -16,6 +16,8 @@ namespace AMath.AI.Chat
         [SerializeField, Range(1, 120)] private int _timeoutSeconds = 30;
         [SerializeField, Range(64, 4096)] private int _maxTokens = 700;
         [SerializeField, Range(0f, 2f)] private float _temperature = 0.3f;
+        [SerializeField, Range(0, 5)] private int _maxRetryAttempts = 2;
+        [SerializeField, Range(0.1f, 10f)] private float _retryBaseDelaySeconds = 0.75f;
 
         /// <summary>Full HTTPS chat-completions URL exposed by the backend proxy.</summary>
         public string Endpoint => _endpoint;
@@ -31,6 +33,12 @@ namespace AMath.AI.Chat
 
         /// <summary>Sampling temperature requested from the backend.</summary>
         public float Temperature => _temperature;
+
+        /// <summary>Maximum retries after a transient backend failure.</summary>
+        public int MaxRetryAttempts => _maxRetryAttempts;
+
+        /// <summary>Initial delay for exponential retry backoff.</summary>
+        public float RetryBaseDelaySeconds => _retryBaseDelaySeconds;
 
         /// <summary>Checks required non-secret configuration before a request is attempted.</summary>
         public bool IsValid(out string reason)

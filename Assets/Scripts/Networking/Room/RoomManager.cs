@@ -92,10 +92,12 @@ namespace AMath.Networking.Room
 
         /// <summary>
         /// Host-only: finalizes seats and starts the match. Seat order is host
-        /// first, then join order; the seed is generated here and shared with
-        /// every peer through the match config broadcast.
+        /// first, then join order, then optional scripted AI seats. If there are
+        /// fewer than <see cref="GameRules.MinPlayers"/> humans, AI seats are
+        /// added automatically so a solo host can play. Extra AI opponents can
+        /// be requested via <paramref name="extraAiPlayers"/>.
         /// </summary>
-        public bool StartMatch()
+        public bool StartMatch(int extraAiPlayers = 0)
         {
             if (!NetworkServer.active)
             {
@@ -104,9 +106,19 @@ namespace AMath.Networking.Room
             }
 
             List<NetworkPlayer> members = CollectSeatedMembers();
-            if (members.Count < GameRules.MinPlayers)
+            if (members.Count < 1)
             {
-                Debug.LogWarning($"[Room] Need at least {GameRules.MinPlayers} players.");
+                Debug.LogWarning("[Room] Need at least the host to start.");
+                return false;
+            }
+
+            int aiCount = Math.Max(0, extraAiPlayers);
+            if (members.Count + aiCount < GameRules.MinPlayers)
+                aiCount = GameRules.MinPlayers - members.Count;
+
+            if (members.Count + aiCount > GameRules.MaxPlayers)
+            {
+                Debug.LogWarning($"[Room] Too many seats (max {GameRules.MaxPlayers}).");
                 return false;
             }
 
@@ -124,7 +136,20 @@ namespace AMath.Networking.Room
                 {
                     PlayerId = seat,
                     PersistentGuid = members[seat].PersistentGuid,
-                    DisplayName = members[seat].DisplayName
+                    DisplayName = members[seat].DisplayName,
+                    IsAi = false
+                });
+            }
+
+            for (int i = 0; i < aiCount; i++)
+            {
+                int seat = members.Count + i;
+                config.Players.Add(new PlayerIdentity
+                {
+                    PlayerId = seat,
+                    PersistentGuid = $"ai:{config.RandomSeed}:{seat}",
+                    DisplayName = aiCount == 1 ? "AI" : $"AI {i + 1}",
+                    IsAi = true
                 });
             }
 
@@ -180,6 +205,27 @@ namespace AMath.Networking.Room
             if (NetworkServer.active || NetworkClient.active)
             {
                 Debug.LogWarning("[Room] Already in a session.");
+                return false;
+            }
+
+            if (room?.Advertisement == null || string.IsNullOrWhiteSpace(room.HostAddress))
+            {
+                Debug.LogWarning("[Room] Cannot join an invalid room advertisement.");
+                return false;
+            }
+
+            // A match advertisement is only a reconnect target. Reject a fresh
+            // join here so users do not wait for an authentication failure that
+            // cannot result in a seat.
+            if (room.Advertisement.MatchInProgress && _gameManager.Config == null)
+            {
+                Debug.LogWarning("[Room] Cannot join a match that is already in progress.");
+                return false;
+            }
+
+            if (!room.Advertisement.MatchInProgress && !room.IsJoinable)
+            {
+                Debug.LogWarning("[Room] Cannot join because the room is full.");
                 return false;
             }
 

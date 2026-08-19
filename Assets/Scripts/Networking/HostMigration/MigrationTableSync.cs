@@ -45,6 +45,9 @@ namespace AMath.Networking.HostMigration
         public override void OnStartServer()
         {
             Resolve();
+            if (NetworkContext.Services != null)
+                NetworkContext.Services.RegisterOrReplace(this);
+
             _latestRtt.Clear();
             _eventBus.Subscribe<QualityReportReceivedEvent>(OnQualityReport);
         }
@@ -57,6 +60,9 @@ namespace AMath.Networking.HostMigration
         public override void OnStartClient()
         {
             Resolve();
+            if (NetworkContext.Services != null)
+                NetworkContext.Services.RegisterOrReplace(this);
+
             _candidates.OnChange += OnTableChanged;
             PushTableToCache();
         }

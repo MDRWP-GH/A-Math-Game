@@ -40,6 +40,10 @@ namespace AMath.Networking.RPC
         [SyncVar]
         private string _persistentGuid;
 
+        /// <summary>True for the connection that owns the room (replicated to all clients).</summary>
+        [SyncVar]
+        private bool _isHost;
+
         #endregion
 
         #region Fields
@@ -62,17 +66,28 @@ namespace AMath.Networking.RPC
         /// <summary>Persistent identity GUID.</summary>
         public string PersistentGuid => _persistentGuid;
 
+        /// <summary>True when this connection is the room host.</summary>
+        public bool IsHost => _isHost;
+
         #endregion
 
         #region Server initialization
 
         /// <summary>Server-only: sets identity before the object is spawned.</summary>
         [Server]
-        public void ServerInitialize(int playerId, string displayName, string persistentGuid)
+        public void ServerInitialize(int playerId, string displayName, string persistentGuid, bool isHost = false)
         {
             _playerId = playerId;
             _displayName = displayName;
             _persistentGuid = persistentGuid;
+            _isHost = isHost;
+        }
+
+        /// <summary>Server-only: updates the replicated host badge after migration.</summary>
+        [Server]
+        public void ServerSetIsHost(bool isHost)
+        {
+            _isHost = isHost;
         }
 
         /// <summary>Server-only: assigns the final seat when the host starts the match.</summary>
@@ -145,6 +160,13 @@ namespace AMath.Networking.RPC
         [Command]
         private void CmdSubmitCommand(byte commandType, byte[] payload)
         {
+            PlayerState seat = _playerManager.GetById(_playerId);
+            if (seat == null || seat.IsAi)
+            {
+                TargetCommandRejected(connectionToClient, "This seat cannot submit commands.");
+                return;
+            }
+
             IGameCommand command;
             try
             {

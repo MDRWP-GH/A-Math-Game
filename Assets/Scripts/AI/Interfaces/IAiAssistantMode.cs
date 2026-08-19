@@ -5,11 +5,10 @@ using AMath.Core.Assistance.Context;
 namespace AMath.AI.Interfaces
 {
     /// <summary>
-    /// One of the three coaching responsibilities (Rule Assistant, Strategy
-    /// Coach, Replay Coach). All three consume the exact same
-    /// <see cref="GameContextSnapshot"/> shape but answer different
-    /// questions, which is what keeps them small, independently testable
-    /// and addable/removable without touching each other.
+    /// Optional chat assistant mode (e.g. Rule Assistant, scripted Strategy
+    /// Coach). Modes consume the same <see cref="GameContextSnapshot"/> but
+    /// answer different questions. Tile-placing AI seats use
+    /// <c>IAiMoveChooser</c> instead — not this interface.
     /// </summary>
     public interface IAiAssistantMode
     {

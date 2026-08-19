@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using AMath.Art;
 using AMath.Settings;
 using UnityEngine;
 using UnityEngine.InputSystem;
@@ -8,8 +9,9 @@ using UnityEngine.UI;
 namespace AMath.UI
 {
     /// <summary>
-    /// The settings screen: a tab column on the left and one page of rows on the right.
-    /// Every change is applied and stored as soon as it is made, so there is no Apply button.
+    /// Settings screen matching the mockup: scene background, translucent panel,
+    /// outlined Jersey text, tab column with selection marker, and one content page.
+    /// Changes apply immediately; there is no Apply button.
     /// </summary>
     public sealed class SettingsMenuController : MonoBehaviour
     {
@@ -18,47 +20,61 @@ namespace AMath.UI
         private const int AudioTab = 2;
         private const int ExitTab = 3;
 
-        private const float ScreenPaddingLeft = 96f;
-        private const float TitleTop = 46f;
-        private const float TitleWidth = 700f;
-        private const float TitleHeight = 116f;
+        private const float TitleLeft = 72f;
+        private const float TitleTop = 36f;
+        private const float TitleWidth = 640f;
+        private const float TitleHeight = 96f;
 
-        // The tab column and the rows share this top edge, and a row is as tall as a tab, so the
-        // first row always lines up with the first tab.
-        private const float BodyTop = 208f;
+        private const float PanelLeft = 48f;
+        private const float PanelTop = 140f;
+        private const float PanelRight = 360f;
+        private const float PanelBottom = 48f;
 
-        private const float TabColumnLeft = 150f;
-        private const float TabColumnWidth = 320f;
-        private const float TabHeight = 74f;
-        private const float TabSpacing = 12f;
-        private const float MarkerSize = 32f;
-        // Far enough left of a tab to leave the diamond in the margin the title starts at.
-        private const float MarkerDistanceFromTab = 38f;
+        private const float BodyTop = 200f;
+        private const float TabColumnLeft = 96f;
+        private const float TabColumnWidth = 300f;
+        private const float TabHeight = 70f;
+        private const float TabSpacing = 10f;
+        private const float MarkerSize = 44f;
+        private const float TabTextLeftPad = 56f;
 
-        private const float BackdropLeft = 470f;
-        private const float BackdropTop = 150f;
-        private const float BackdropRight = 48f;
-        private const float BackdropBottom = 56f;
+        private const float RowsLeft = 460f;
+        private const float RowsRight = 400f;
+        private const float RowsBottom = 100f;
+        private const float RowHeight = 70f;
+        private const float RowSpacing = 28f;
+        private const float LabelWidth = 340f;
+        private const float LabelGap = 48f;
 
-        private const float RowsLeft = 540f;
-        private const float RowsRight = 80f;
-        private const float RowsBottom = 120f;
-        private const float RowHeight = TabHeight;
-        private const float RowSpacing = 18f;
-        private const float LabelWidth = 400f;
-        private const float LabelGap = 100f;
+        private const float FieldWidth = 420f;
+        private const float FieldHeight = 52f;
+        private const float SliderHeight = 40f;
+        private const float SliderHandleSize = 28f;
+        private const float GuiScaleValueWidth = 96f;
 
-        private const float ArrowSize = 56f;
-        private const float ArrowGap = 12f;
-        private const int ControlInset = 20;
-        private const float SliderHeight = 48f;
-        private const float FieldWidth = 500f;
-        private const float FieldHeight = 56f;
+        private static readonly Color PanelColor = new Color(0.05f, 0.05f, 0.07f, 0.58f);
+        private static readonly Color FieldColor = new Color(0.12f, 0.12f, 0.14f, 0.92f);
+        private static readonly Color FieldBorder = new Color(0f, 0f, 0f, 0.85f);
+        private static readonly Color SliderTrack = new Color(1f, 1f, 1f, 0.95f);
+        private static readonly Color SliderHandle = new Color(0.82f, 0.84f, 0.88f, 1f);
+        private static readonly Color MarkerFallback = new Color(0.35f, 0.78f, 1f, 1f);
 
-        private static readonly string[] TabLabels = { "General", "Display", "Audio", "Exit" };
+        private static readonly string[] TabKeys =
+        {
+            "ui.settings.tab_general",
+            "ui.settings.tab_display",
+            "ui.settings.tab_audio",
+            "ui.settings.tab_exit"
+        };
+
+        private static readonly string[] ViewModeKeys =
+        {
+            "ui.settings.view_window",
+            "ui.settings.view_fullscreen",
+            "ui.settings.view_borderless"
+        };
 
         private readonly List<Button> _tabButtons = new List<Button>();
-        private readonly List<Text> _tabTexts = new List<Text>();
         private readonly GameObject[] _pages = new GameObject[3];
         private readonly Selectable[] _pageFocus = new Selectable[3];
         private readonly List<Action> _refreshers = new List<Action>();
@@ -117,7 +133,7 @@ namespace AMath.UI
 
             DisplaySettings.Changed += RefreshAll;
             GameSettings.Changed += RefreshAll;
-            _cancelAction = FindCancelAction();
+            _cancelAction = UiFactory.FindCancelAction();
         }
 
         private void OnDestroy()
@@ -139,21 +155,32 @@ namespace AMath.UI
             var canvas = _ui.CreateCanvas(transform, "Settings Canvas", 200);
             _screen = canvas.gameObject;
 
-            var backdrop = UiFactory.CreateImage("Backdrop", _screen.transform, UiPalette.Background);
-            backdrop.raycastTarget = true;
-            UiFactory.Stretch(backdrop.rectTransform);
+            UiFactory.CreateFullScreenBackground(
+                _screen.transform,
+                "Main Menu Backgrounds",
+                UiPalette.Background);
 
-            var title = _ui.CreateText("Title", _screen.transform, "Settings", 84, FontStyle.Bold, UiPalette.LightText, TextAnchor.UpperLeft);
-            UiFactory.SetTopLeftRect(title.rectTransform, new Vector2(ScreenPaddingLeft, TitleTop), new Vector2(TitleWidth, TitleHeight));
-            UiFactory.AddShadow(title.gameObject, UiPalette.Shadow, new Vector2(0f, -4f));
+            var panel = UiFactory.CreateImage("Panel", _screen.transform, PanelColor);
+            panel.raycastTarget = true;
+            UiFactory.SetStretchRect(panel.rectTransform, PanelLeft, PanelTop, PanelRight, PanelBottom);
 
-            var contentBackdrop = UiFactory.CreateImage("Content Backdrop", _screen.transform, UiPalette.PanelTranslucent);
-            UiFactory.SetStretchRect(contentBackdrop.rectTransform, BackdropLeft, BackdropTop, BackdropRight, BackdropBottom);
+            var title = _ui.CreateText(
+                "Title",
+                _screen.transform,
+                string.Empty,
+                72,
+                FontStyle.Normal,
+                Color.white,
+                TextAnchor.UpperLeft);
+            UiFactory.SetTopLeftRect(
+                title.rectTransform,
+                new Vector2(TitleLeft, TitleTop),
+                new Vector2(TitleWidth, TitleHeight));
+            UiFactory.AddDoubleOutline(title.gameObject, new Vector2(3f, -3f), new Vector2(1.5f, -1.5f));
+            LocalizedText.Bind(title, "ui.settings.title");
 
             BuildNavigation(_screen.transform);
 
-            // The rows sit on top of the backdrop rather than inside it so that they can share the
-            // tab column's top edge instead of restating it in the backdrop's own coordinates.
             var rows = UiFactory.CreateRect("Rows", _screen.transform);
             UiFactory.SetStretchRect(rows, RowsLeft, BodyTop, RowsRight, RowsBottom);
 
@@ -161,27 +188,29 @@ namespace AMath.UI
             _pages[DisplayTab] = BuildDisplayPage(rows);
             _pages[AudioTab] = BuildAudioPage(rows);
 
-            var hint = _ui.CreateText("Hint", _screen.transform, "Esc / B  •  back to menu", 22, FontStyle.Normal, new Color(0.66f, 0.75f, 0.93f, 0.7f), TextAnchor.LowerLeft);
-            UiFactory.SetAnchoredRect(hint.rectTransform, new Vector2(0f, 0f), new Vector2(0f, 0f), new Vector2(0f, 0f), new Vector2(520f, 40f), new Vector2(ScreenPaddingLeft, 28f));
-
             ShowTab(GeneralTab);
         }
 
         private void BuildNavigation(Transform parent)
         {
             var column = UiFactory.CreateRect("Tab Column", parent);
-            var columnHeight = TabLabels.Length * TabHeight + (TabLabels.Length - 1) * TabSpacing;
-            UiFactory.SetTopLeftRect(column, new Vector2(TabColumnLeft, BodyTop), new Vector2(TabColumnWidth, columnHeight));
+            var columnHeight = TabKeys.Length * TabHeight + (TabKeys.Length - 1) * TabSpacing;
+            UiFactory.SetTopLeftRect(
+                column,
+                new Vector2(TabColumnLeft, BodyTop),
+                new Vector2(TabColumnWidth, columnHeight));
             UiFactory.AddVerticalLayout(column.gameObject, TabSpacing);
 
-            for (var i = 0; i < TabLabels.Length; i++)
+            for (var i = 0; i < TabKeys.Length; i++)
             {
                 var index = i;
-                var button = _ui.CreateFlatButton(column, "Tab " + TabLabels[i], TabLabels[i], 50, TextAnchor.MiddleLeft, () => OnTabPressed(index));
+                var button = CreateTabButton(column, "Tab " + TabKeys[i], () => OnTabPressed(index));
                 UiFactory.SetLayoutSize(button.gameObject, TabColumnWidth, TabHeight);
 
+                var text = button.GetComponentInChildren<Text>();
+                LocalizedText.Bind(text, TabKeys[i]);
+
                 _tabButtons.Add(button);
-                _tabTexts.Add(button.GetComponentInChildren<Text>());
             }
 
             for (var i = 0; i < _tabButtons.Count; i++)
@@ -194,22 +223,58 @@ namespace AMath.UI
             _navMarker = CreateSelectionMarker(_tabButtons[0].transform);
         }
 
-        /// <summary>
-        /// The diamond lives inside a tab rather than beside the column, so moving it is a matter
-        /// of reparenting it and never of knowing where that tab ended up.
-        /// </summary>
+        private Button CreateTabButton(Transform parent, string name, Action onClick)
+        {
+            var buttonObject = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Button));
+            buttonObject.transform.SetParent(parent, false);
+
+            var image = buttonObject.GetComponent<Image>();
+            image.color = Color.white;
+            image.raycastTarget = true;
+
+            var button = buttonObject.GetComponent<Button>();
+            button.targetGraphic = image;
+            button.colors = new ColorBlock
+            {
+                normalColor = new Color(1f, 1f, 1f, 0f),
+                highlightedColor = new Color(1f, 1f, 1f, 0f),
+                pressedColor = new Color(1f, 1f, 1f, 0f),
+                selectedColor = new Color(1f, 1f, 1f, 0f),
+                disabledColor = new Color(1f, 1f, 1f, 0f),
+                colorMultiplier = 1f,
+                fadeDuration = 0f
+            };
+            button.onClick.AddListener(onClick.Invoke);
+
+            var label = _ui.CreateText(
+                "Label",
+                buttonObject.transform,
+                string.Empty,
+                44,
+                FontStyle.Normal,
+                Color.white,
+                TextAnchor.MiddleLeft);
+            UiFactory.SetStretchRect(label.rectTransform, TabTextLeftPad, 0f, 12f, 0f);
+            UiFactory.AddDoubleOutline(label.gameObject, new Vector2(3f, -3f), new Vector2(1.5f, -1.5f));
+
+            return button;
+        }
+
         private static RectTransform CreateSelectionMarker(Transform tab)
         {
-            var marker = UiFactory.CreateImage("Selection Marker", tab, UiPalette.Primary).rectTransform;
+            var sprite = GameImages.LoadIcon("Selected");
+            var marker = sprite != null
+                ? UiFactory.CreateImage("Selection Marker", tab, sprite)
+                : UiFactory.CreateImage("Selection Marker", tab, MarkerFallback);
+            marker.preserveAspect = true;
             UiFactory.SetAnchoredRect(
-                marker,
+                marker.rectTransform,
                 new Vector2(0f, 0.5f),
                 new Vector2(0f, 0.5f),
                 new Vector2(0.5f, 0.5f),
                 new Vector2(MarkerSize, MarkerSize),
-                new Vector2(-MarkerDistanceFromTab, 0f));
-            marker.localEulerAngles = new Vector3(0f, 0f, 45f);
-            return marker;
+                new Vector2(MarkerSize * 0.45f, 0f));
+            return marker.rectTransform;
         }
 
         private GameObject BuildGeneralPage(Transform parent)
@@ -218,13 +283,13 @@ namespace AMath.UI
 
             _pageFocus[GeneralTab] = AddTextRow(
                 page.transform,
-                "Player Name",
+                "ui.settings.player_name",
                 () => GameSettings.PlayerName,
                 value => GameSettings.PlayerName = value);
 
             AddOptionRow(
                 page.transform,
-                "Language",
+                "ui.settings.language",
                 () => GameSettings.LanguageLabels.Length,
                 () => GameSettings.LanguageIndex,
                 index => GameSettings.LanguageIndex = index,
@@ -239,19 +304,21 @@ namespace AMath.UI
 
             _pageFocus[DisplayTab] = AddOptionRow(
                 page.transform,
-                "View Mode",
-                () => DisplaySettings.ViewModeLabels.Length,
+                "ui.settings.view_mode",
+                () => ViewModeKeys.Length,
                 () => (int)DisplaySettings.ViewMode,
                 index => DisplaySettings.SetViewMode((ViewMode)index),
-                index => DisplaySettings.ViewModeLabels[index]);
+                index => Localization.UiLocalizationProvider.Shared.GetText(ViewModeKeys[index]));
 
             AddOptionRow(
                 page.transform,
-                "Resolution",
+                "ui.settings.resolution",
                 () => DisplaySettings.AvailableSizes.Count,
                 () => DisplaySettings.ResolutionIndex,
                 index => DisplaySettings.SetResolution(DisplaySettings.AvailableSizes[index]),
                 index => DisplaySettings.AvailableSizes[index].Label);
+
+            AddGuiScaleRow(page.transform);
 
             return page;
         }
@@ -262,13 +329,13 @@ namespace AMath.UI
 
             _pageFocus[AudioTab] = AddSliderRow(
                 page.transform,
-                "Sound Effects",
+                "ui.settings.sfx",
                 () => GameSettings.SoundEffectsVolume,
                 value => GameSettings.SoundEffectsVolume = value);
 
             AddSliderRow(
                 page.transform,
-                "Music Volume",
+                "ui.settings.music",
                 () => GameSettings.MusicVolume,
                 value => GameSettings.MusicVolume = value);
 
@@ -299,12 +366,8 @@ namespace AMath.UI
                 }
             }
 
-            for (var i = 0; i < _tabTexts.Count; i++)
-            {
-                _tabTexts[i].color = i == _activeTab ? UiPalette.LightText : UiPalette.MutedText;
-            }
-
             _navMarker.SetParent(_tabButtons[_activeTab].transform, false);
+            _navMarker.SetAsFirstSibling();
         }
 
         private GameObject CreatePage(Transform parent, string name)
@@ -315,24 +378,32 @@ namespace AMath.UI
             return page.gameObject;
         }
 
-        /// <summary>
-        /// Builds "label on the left, control area on the right" and returns the control area.
-        /// The page stacks the rows, so a row only states how wide its two halves are.
-        /// </summary>
-        private RectTransform CreateRow(Transform page, string label)
+        private RectTransform CreateRow(Transform page, string labelKey)
         {
-            var row = UiFactory.CreateRect("Row " + label, page);
+            var row = UiFactory.CreateRect("Row " + labelKey, page);
             UiFactory.SetLayoutSize(row.gameObject, 0f, RowHeight);
             UiFactory.AddHorizontalLayout(row.gameObject, LabelGap);
 
-            var labelText = _ui.CreateText("Label", row, label, 38, FontStyle.Bold, UiPalette.LightText, TextAnchor.MiddleLeft);
+            var labelText = _ui.CreateText(
+                "Label",
+                row,
+                string.Empty,
+                36,
+                FontStyle.Normal,
+                Color.white,
+                TextAnchor.MiddleLeft);
             UiFactory.SetLayoutSize(labelText.gameObject, LabelWidth, RowHeight);
+            UiFactory.AddDoubleOutline(labelText.gameObject, new Vector2(3f, -3f), new Vector2(1.5f, -1.5f));
+            LocalizedText.Bind(labelText, labelKey);
 
             var control = UiFactory.CreateRect("Control", row);
             UiFactory.SetLayoutSize(control.gameObject, 0f, RowHeight, flexibleWidth: 1f);
             return control;
         }
 
+        /// <summary>
+        /// Label + value text only (mockup has no arrow buttons). Click cycles the option.
+        /// </summary>
         private Selectable AddOptionRow(
             Transform page,
             string label,
@@ -342,18 +413,44 @@ namespace AMath.UI
             Func<int, string> formatIndex)
         {
             var control = CreateRow(page, label);
-            UiFactory.AddHorizontalLayout(control.gameObject, ArrowGap);
+            UiFactory.AddHorizontalLayout(control.gameObject, 0f);
 
-            // The arrows close over the value label, but the layout group orders the row by
-            // creation, so the left arrow still has to be built first.
-            Text valueText = null;
+            var buttonObject = new GameObject(
+                "Value",
+                typeof(RectTransform),
+                typeof(CanvasRenderer),
+                typeof(Image),
+                typeof(Button));
+            buttonObject.transform.SetParent(control, false);
+            UiFactory.SetLayoutSize(buttonObject, 0f, RowHeight, flexibleWidth: 1f);
 
-            var previous = CreateArrowButton(control, "Previous", "<", () => Step(-1));
+            var image = buttonObject.GetComponent<Image>();
+            image.color = Color.white;
+            image.raycastTarget = true;
 
-            valueText = _ui.CreateText("Value", control, string.Empty, 38, FontStyle.Normal, UiPalette.LightText, TextAnchor.MiddleCenter);
-            UiFactory.SetLayoutSize(valueText.gameObject, 0f, RowHeight, flexibleWidth: 1f);
+            var button = buttonObject.GetComponent<Button>();
+            button.targetGraphic = image;
+            button.colors = new ColorBlock
+            {
+                normalColor = new Color(1f, 1f, 1f, 0f),
+                highlightedColor = new Color(1f, 1f, 1f, 0f),
+                pressedColor = new Color(1f, 1f, 1f, 0f),
+                selectedColor = new Color(1f, 1f, 1f, 0f),
+                disabledColor = new Color(1f, 1f, 1f, 0f),
+                colorMultiplier = 1f,
+                fadeDuration = 0f
+            };
 
-            CreateArrowButton(control, "Next", ">", () => Step(1));
+            var valueText = _ui.CreateText(
+                "Label",
+                buttonObject.transform,
+                string.Empty,
+                36,
+                FontStyle.Normal,
+                Color.white,
+                TextAnchor.MiddleLeft);
+            UiFactory.Stretch(valueText.rectTransform);
+            UiFactory.AddDoubleOutline(valueText.gameObject, new Vector2(3f, -3f), new Vector2(1.5f, -1.5f));
 
             void Step(int direction)
             {
@@ -370,20 +467,22 @@ namespace AMath.UI
             void Refresh()
             {
                 var count = countProvider();
-                valueText.text = count <= 0 ? "-" : formatIndex(Mathf.Clamp(indexProvider(), 0, count - 1));
+                var value = count <= 0 ? "-" : formatIndex(Mathf.Clamp(indexProvider(), 0, count - 1));
+                UiText.Set(valueText, value, _ui.Font);
             }
 
+            button.onClick.AddListener(() => Step(1));
             _refreshers.Add(Refresh);
             Refresh();
-            return previous;
+            return button;
         }
 
         private Selectable AddSliderRow(Transform page, string label, Func<float> getValue, Action<float> setValue)
         {
             var control = CreateRow(page, label);
-            UiFactory.AddHorizontalLayout(control.gameObject, 0f, new RectOffset(ControlInset, ControlInset, 0, 0));
+            UiFactory.AddHorizontalLayout(control.gameObject, 0f);
 
-            var slider = _ui.CreateSlider(control, "Slider", getValue());
+            var slider = CreateSettingsSlider(control, "Slider", getValue());
             UiFactory.SetLayoutSize(slider.gameObject, 0f, SliderHeight, flexibleWidth: 1f);
             slider.onValueChanged.AddListener(value => setValue(value));
 
@@ -391,24 +490,178 @@ namespace AMath.UI
             return slider;
         }
 
+        private Selectable AddGuiScaleRow(Transform page)
+        {
+            var control = CreateRow(page, "ui.settings.gui_scale");
+            UiFactory.AddHorizontalLayout(control.gameObject, 16f);
+
+            var slider = CreateSettingsSlider(control, "GUI Scale Slider", DisplaySettings.GuiScale);
+            UiFactory.SetLayoutSize(slider.gameObject, 0f, SliderHeight, flexibleWidth: 1f);
+
+            var valueText = _ui.CreateText(
+                "Value",
+                control,
+                string.Empty,
+                32,
+                FontStyle.Normal,
+                Color.white,
+                TextAnchor.MiddleRight);
+            UiFactory.SetLayoutSize(valueText.gameObject, GuiScaleValueWidth, RowHeight);
+            UiFactory.AddDoubleOutline(valueText.gameObject, new Vector2(3f, -3f), new Vector2(1.5f, -1.5f));
+
+            slider.onValueChanged.AddListener(DisplaySettings.SetGuiScale);
+
+            void Refresh()
+            {
+                slider.minValue = DisplaySettings.GuiScaleMinimum;
+                slider.maxValue = DisplaySettings.GuiScaleMaximum;
+                slider.SetValueWithoutNotify(Mathf.Clamp(
+                    DisplaySettings.GuiScale,
+                    slider.minValue,
+                    slider.maxValue));
+                UiText.Set(valueText, $"{Mathf.RoundToInt(DisplaySettings.GuiScale * 100f)}%", _ui.Font);
+            }
+
+            _refreshers.Add(Refresh);
+            Refresh();
+            return slider;
+        }
+
+        private Slider CreateSettingsSlider(Transform parent, string name, float value)
+        {
+            var sliderObject = new GameObject(name, typeof(RectTransform));
+            sliderObject.transform.SetParent(parent, false);
+
+            var slider = sliderObject.AddComponent<Slider>();
+
+            var background = UiFactory.CreateImage("Background", sliderObject.transform, SliderTrack);
+            background.raycastTarget = true;
+            background.rectTransform.anchorMin = new Vector2(0f, 0.5f);
+            background.rectTransform.anchorMax = new Vector2(1f, 0.5f);
+            background.rectTransform.pivot = new Vector2(0.5f, 0.5f);
+            background.rectTransform.sizeDelta = new Vector2(0f, 3f);
+            background.rectTransform.anchoredPosition = Vector2.zero;
+
+            var fillArea = UiFactory.CreateRect("Fill Area", sliderObject.transform);
+            fillArea.anchorMin = new Vector2(0f, 0.5f);
+            fillArea.anchorMax = new Vector2(1f, 0.5f);
+            fillArea.pivot = new Vector2(0.5f, 0.5f);
+            fillArea.sizeDelta = new Vector2(-SliderHandleSize, 3f);
+            fillArea.anchoredPosition = Vector2.zero;
+
+            var fill = UiFactory.CreateImage("Fill", fillArea, new Color(1f, 1f, 1f, 0f));
+            fill.rectTransform.anchorMin = Vector2.zero;
+            fill.rectTransform.anchorMax = new Vector2(0f, 1f);
+            fill.rectTransform.pivot = new Vector2(0.5f, 0.5f);
+            fill.rectTransform.sizeDelta = new Vector2(SliderHandleSize, 0f);
+
+            var handleArea = UiFactory.CreateRect("Handle Slide Area", sliderObject.transform);
+            handleArea.anchorMin = Vector2.zero;
+            handleArea.anchorMax = Vector2.one;
+            handleArea.pivot = new Vector2(0.5f, 0.5f);
+            handleArea.sizeDelta = new Vector2(-SliderHandleSize, 0f);
+            handleArea.anchoredPosition = Vector2.zero;
+
+            var handle = UiFactory.CreateImage("Handle", handleArea, SliderHandle);
+            handle.raycastTarget = true;
+            handle.rectTransform.anchorMin = new Vector2(0f, 0.5f);
+            handle.rectTransform.anchorMax = new Vector2(0f, 0.5f);
+            handle.rectTransform.pivot = new Vector2(0.5f, 0.5f);
+            handle.rectTransform.sizeDelta = new Vector2(SliderHandleSize, SliderHandleSize);
+
+            slider.fillRect = fill.rectTransform;
+            slider.handleRect = handle.rectTransform;
+            slider.targetGraphic = handle;
+            slider.direction = Slider.Direction.LeftToRight;
+            slider.minValue = 0f;
+            slider.maxValue = 1f;
+            slider.wholeNumbers = false;
+            slider.value = Mathf.Clamp01(value);
+            slider.colors = new ColorBlock
+            {
+                normalColor = SliderHandle,
+                highlightedColor = Color.white,
+                pressedColor = Color.white,
+                selectedColor = Color.white,
+                disabledColor = new Color(0.5f, 0.5f, 0.5f, 1f),
+                colorMultiplier = 1f,
+                fadeDuration = 0.08f
+            };
+
+            return slider;
+        }
+
         private Selectable AddTextRow(Transform page, string label, Func<string> getValue, Action<string> setValue)
         {
             var control = CreateRow(page, label);
-            UiFactory.AddHorizontalLayout(control.gameObject, 0f, new RectOffset(ControlInset, 0, 0, 0));
+            UiFactory.AddHorizontalLayout(control.gameObject, 0f);
 
-            var field = _ui.CreateInputField(control, "Input", getValue(), "Your name");
-            UiFactory.SetLayoutSize(field.gameObject, FieldWidth, FieldHeight);
+            var border = UiFactory.CreateImage("Field Border", control, FieldBorder);
+            UiFactory.SetLayoutSize(border.gameObject, FieldWidth, FieldHeight);
+
+            var fieldObject = new GameObject(
+                "Input",
+                typeof(RectTransform),
+                typeof(CanvasRenderer),
+                typeof(Image));
+            fieldObject.transform.SetParent(border.transform, false);
+            UiFactory.SetStretchRect(fieldObject.GetComponent<RectTransform>(), 2f, 2f, 2f, 2f);
+
+            var background = fieldObject.GetComponent<Image>();
+            background.color = FieldColor;
+
+            var text = _ui.CreateText(
+                "Text",
+                fieldObject.transform,
+                getValue(),
+                30,
+                FontStyle.Normal,
+                Color.white,
+                TextAnchor.MiddleLeft);
+            text.supportRichText = false;
+            UiFactory.SetStretchRect(text.rectTransform, 14f, 4f, 14f, 4f);
+
+            var hint = _ui.CreateText(
+                "Placeholder",
+                fieldObject.transform,
+                string.Empty,
+                30,
+                FontStyle.Normal,
+                new Color(1f, 1f, 1f, 0.35f),
+                TextAnchor.MiddleLeft);
+            hint.supportRichText = false;
+            UiFactory.SetStretchRect(hint.rectTransform, 14f, 4f, 14f, 4f);
+            LocalizedText.Bind(hint, "ui.settings.name_placeholder");
+
+            var field = fieldObject.AddComponent<InputField>();
+            field.targetGraphic = background;
+            field.textComponent = text;
+            field.placeholder = hint;
+            field.lineType = InputField.LineType.SingleLine;
+            field.characterLimit = 24;
+            field.text = getValue();
+            field.colors = new ColorBlock
+            {
+                normalColor = FieldColor,
+                highlightedColor = FieldColor,
+                pressedColor = FieldColor,
+                selectedColor = FieldColor,
+                disabledColor = FieldColor,
+                colorMultiplier = 1f,
+                fadeDuration = 0f
+            };
             field.onEndEdit.AddListener(value => setValue(value));
 
-            _refreshers.Add(() => field.SetTextWithoutNotify(getValue()));
+            _refreshers.Add(() =>
+            {
+                // Keep the raw string in the field; only swap the font for Thai display.
+                text.font = UiText.IsThai ? GameFonts.K2D : _ui.Font;
+                text.lineSpacing = UiText.IsThai ? 1.4f : 1f;
+                hint.font = text.font;
+                hint.lineSpacing = text.lineSpacing;
+                field.SetTextWithoutNotify(getValue());
+            });
             return field;
-        }
-
-        private Button CreateArrowButton(Transform control, string name, string glyph, Action onClick)
-        {
-            var button = _ui.CreateButton(control, name, glyph, UiPalette.Secondary, UiPalette.SecondaryHighlight, onClick, 34);
-            UiFactory.SetLayoutSize(button.gameObject, ArrowSize, ArrowSize);
-            return button;
         }
 
         private void RefreshAll()
@@ -421,18 +674,7 @@ namespace AMath.UI
 
         private bool WasCancelPressed()
         {
-            if (_cancelAction != null && _cancelAction.enabled && _cancelAction.WasPressedThisFrame())
-            {
-                return true;
-            }
-
-            return Keyboard.current != null && Keyboard.current.escapeKey.wasPressedThisFrame;
-        }
-
-        private static InputAction FindCancelAction()
-        {
-            var actions = InputSystem.actions;
-            return actions == null ? null : actions.FindAction("UI/Cancel", false);
+            return UiFactory.WasCancelPressed(_cancelAction);
         }
     }
 }

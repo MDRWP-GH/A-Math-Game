@@ -1,3 +1,4 @@
+using AMath.Settings;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -17,12 +18,20 @@ namespace AMath.UI
         private CanvasScaler _scaler;
         private int _lastWidth;
         private int _lastHeight;
+        private float _lastGuiScale;
 
         private void OnEnable()
         {
             _lastWidth = 0;
             _lastHeight = 0;
+            _lastGuiScale = 0f;
+            DisplaySettings.Changed += Invalidate;
             ApplyIfScreenChanged();
+        }
+
+        private void OnDisable()
+        {
+            DisplaySettings.Changed -= Invalidate;
         }
 
         private void Update()
@@ -30,15 +39,29 @@ namespace AMath.UI
             ApplyIfScreenChanged();
         }
 
+        private void Invalidate()
+        {
+            _lastWidth = 0;
+            _lastHeight = 0;
+        }
+
         private void ApplyIfScreenChanged()
         {
-            if (Screen.width == _lastWidth && Screen.height == _lastHeight)
+            var width = Screen.width;
+            var height = Screen.height;
+            DisplaySettings.EnsureGuiScaleFits(width, height);
+            var guiScale = DisplaySettings.GuiScale;
+
+            if (width == _lastWidth &&
+                height == _lastHeight &&
+                Mathf.Approximately(guiScale, _lastGuiScale))
             {
                 return;
             }
 
-            _lastWidth = Screen.width;
-            _lastHeight = Screen.height;
+            _lastWidth = width;
+            _lastHeight = height;
+            _lastGuiScale = guiScale;
 
             if (_scaler == null)
             {
@@ -46,11 +69,11 @@ namespace AMath.UI
             }
 
             _scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-            _scaler.referenceResolution = ReferenceResolution;
+            _scaler.referenceResolution = ReferenceResolution / guiScale;
             _scaler.screenMatchMode = CanvasScaler.ScreenMatchMode.MatchWidthOrHeight;
 
             var referenceAspect = ReferenceResolution.x / ReferenceResolution.y;
-            var currentAspect = _lastWidth / (float)Mathf.Max(1, _lastHeight);
+            var currentAspect = width / (float)Mathf.Max(1, height);
             _scaler.matchWidthOrHeight = currentAspect >= referenceAspect ? 1f : 0f;
         }
     }

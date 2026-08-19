@@ -70,6 +70,19 @@ namespace AMath.Gameplay.Board
         /// <summary>Human-readable symbol (UI / replay text).</summary>
         public static string SymbolOf(byte tileId) => Symbols[tileId];
 
+        /// <summary>Short label for rack/HUD: symbol plus official face points.</summary>
+        public static string SymbolWithPoints(byte tileId) =>
+            $"{SymbolOf(tileId)} ({PointsOf(tileId)})";
+
+        /// <summary>Thai/English-neutral description of face value for teaching UI.</summary>
+        public static string DescribeFaceValue(byte tileId)
+        {
+            int points = PointsOf(tileId);
+            if (tileId == Blank)
+                return $"{SymbolOf(tileId)} = 0 pts (blank)";
+            return $"{SymbolOf(tileId)} = {points} pts";
+        }
+
         /// <summary>True for single-digit number tiles (0..9), which may combine into multi-digit numbers.</summary>
         public static bool IsSingleDigit(byte tileId) => tileId <= 9;
 

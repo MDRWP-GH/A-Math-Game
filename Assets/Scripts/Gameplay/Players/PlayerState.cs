@@ -29,11 +29,15 @@ namespace AMath.Gameplay.Players
         /// <summary>Live connection state (transient; not part of saves).</summary>
         public bool IsConnected { get; set; } = true;
 
-        public PlayerState(int playerId, string persistentGuid, string displayName)
+        /// <summary>True when the host's scripted AI plays this seat.</summary>
+        public bool IsAi { get; }
+
+        public PlayerState(int playerId, string persistentGuid, string displayName, bool isAi = false)
         {
             PlayerId = playerId;
             PersistentGuid = persistentGuid;
             DisplayName = displayName;
+            IsAi = isAi;
         }
     }
 }

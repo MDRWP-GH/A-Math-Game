@@ -37,6 +37,9 @@ namespace AMath.Networking.HostMigration
         /// <summary>Extra wait per succession rank before self-promoting.</summary>
         public const float PromotionStaggerSeconds = 10f;
 
+        /// <summary>Maximum automatic reconnect attempts to one recovered host.</summary>
+        public const int MaxReconnectAttempts = 4;
+
         #endregion
 
         #region Fields
@@ -54,8 +57,12 @@ namespace AMath.Networking.HostMigration
         private RecoveryPhase _phase = RecoveryPhase.Idle;
         private float _elapsed;
         private float _promotionDeadline;
+        private float _nextReconnectAttempt;
         private float _nextHeartbeat;
         private string _targetRoomCode;
+        private int _promotionRank;
+        private bool _promotionRankResolved;
+        private int _reconnectAttempts;
 
         #endregion
 
@@ -63,6 +70,9 @@ namespace AMath.Networking.HostMigration
 
         /// <summary>Current recovery phase (UI state).</summary>
         public RecoveryPhase Phase => _phase;
+
+        /// <summary>Number of automatic reconnect attempts in this recovery cycle.</summary>
+        public int ReconnectAttempts => _reconnectAttempts;
 
         #endregion
 
@@ -113,8 +123,13 @@ namespace AMath.Networking.HostMigration
             _targetRoomCode = _session.RoomCode;
             _elapsed = 0f;
             _nextHeartbeat = 0f;
+            _nextReconnectAttempt = 0f;
+            _promotionRank = 0;
+            _promotionRankResolved = false;
+            _reconnectAttempts = 0;
             SetPhase(RecoveryPhase.GraceWait);
             _discovery.StartSearching();
+            Debug.Log($"[Migration] Recovery started for room {_targetRoomCode}.");
         }
 
         /// <summary>Aborts recovery (player chose to end the match from the local save).</summary>
@@ -139,7 +154,9 @@ namespace AMath.Networking.HostMigration
 
             // Any broadcast with our room code — original host or an earlier
             // candidate that already took over — is a reconnect target.
-            if (_discovery.TryResolveRoomCode(_targetRoomCode, out RoomInfo room))
+            if (_discovery.TryResolveRoomCode(_targetRoomCode, out RoomInfo room)
+                && _reconnectAttempts < MaxReconnectAttempts
+                && _elapsed >= _nextReconnectAttempt)
             {
                 Reconnect(room);
                 return;
@@ -147,16 +164,14 @@ namespace AMath.Networking.HostMigration
 
             if (_phase == RecoveryPhase.GraceWait && _elapsed >= GraceSeconds)
             {
-                int rank = MigrationRanking.RankOf(_cachedTable, _playerManager.LocalPlayerId);
-                if (rank == 0)
+                ResolvePromotionRankIfNeeded();
+                if (_promotionRank == 0)
                 {
                     Promote();
                 }
                 else
                 {
-                    // rank < 0 (unknown): wait behind every known candidate.
-                    int effectiveRank = rank < 0 ? _cachedTable.Count : rank;
-                    _promotionDeadline = GraceSeconds + effectiveRank * PromotionStaggerSeconds;
+                    _promotionDeadline = CalculatePromotionDeadline(_promotionRank);
                     SetPhase(RecoveryPhase.Searching);
                 }
             }
@@ -236,8 +251,28 @@ namespace AMath.Networking.HostMigration
         public void OnReconnectFailed()
         {
             if (_phase != RecoveryPhase.Reconnecting) return;
+
+            _reconnectAttempts++;
+            ResolvePromotionRankIfNeeded();
+            if (_reconnectAttempts >= MaxReconnectAttempts)
+            {
+                Debug.LogWarning(
+                    $"[Migration] Reconnect failed {_reconnectAttempts} times; promoting only when this client is elected.");
+                _promotionDeadline = Mathf.Max(
+                    _promotionDeadline,
+                    CalculatePromotionDeadline(_promotionRank));
+                SetPhase(RecoveryPhase.Searching);
+                return;
+            }
+
             _discovery.StartSearching();
-            _promotionDeadline = _elapsed + PromotionStaggerSeconds;
+            float backoff = Mathf.Min(8f, 1 << (_reconnectAttempts - 1));
+            _promotionDeadline = Mathf.Max(
+                _elapsed + backoff,
+                CalculatePromotionDeadline(_promotionRank));
+            _nextReconnectAttempt = _elapsed + backoff;
+            Debug.LogWarning(
+                $"[Migration] Reconnect attempt {_reconnectAttempts} failed; retrying discovery in {backoff:0.#}s.");
             SetPhase(RecoveryPhase.Searching);
         }
 
@@ -245,8 +280,46 @@ namespace AMath.Networking.HostMigration
         {
             if (_phase == phase) return;
             _phase = phase;
-            _eventBus.Publish(new RecoveryStateChangedEvent { Phase = phase, ElapsedSeconds = _elapsed });
+            _eventBus.Publish(new RecoveryStateChangedEvent
+            {
+                Phase = phase,
+                ElapsedSeconds = _elapsed,
+                ReconnectAttempts = _reconnectAttempts
+            });
         }
+
+        /// <summary>
+        /// When the succession table is empty every survivor used to promote
+        /// together; fall back to deterministic seat order instead.
+        /// </summary>
+        private int ResolvePromotionRank()
+        {
+            int rank = MigrationRanking.RankOf(_cachedTable, _playerManager.LocalPlayerId);
+            if (rank >= 0)
+                return rank;
+
+            if (_cachedTable.Count == 0)
+            {
+                int localId = _playerManager.LocalPlayerId;
+                return localId >= 0 ? localId : 0;
+            }
+
+            return _cachedTable.Count;
+        }
+
+        private void ResolvePromotionRankIfNeeded()
+        {
+            if (_promotionRankResolved)
+            {
+                return;
+            }
+
+            _promotionRank = ResolvePromotionRank();
+            _promotionRankResolved = true;
+        }
+
+        private static float CalculatePromotionDeadline(int promotionRank) =>
+            GraceSeconds + promotionRank * PromotionStaggerSeconds;
 
         #endregion
     }

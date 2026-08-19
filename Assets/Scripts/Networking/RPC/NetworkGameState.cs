@@ -91,10 +91,23 @@ namespace AMath.Networking.RPC
         public override void OnStartServer()
         {
             ResolveServices();
+            if (NetworkContext.Services != null)
+                NetworkContext.Services.RegisterOrReplace(this);
+
             _eventBus.Subscribe<MatchStartedEvent>(OnServerMatchStarted);
             _eventBus.Subscribe<TurnStartedEvent>(OnServerTurnStarted);
             _eventBus.Subscribe<TurnResolvedEvent>(OnServerTurnResolved);
             _eventBus.Subscribe<MatchPhaseChangedEvent>(OnServerPhaseChanged);
+        }
+
+        public override void OnStartClient()
+        {
+            ResolveServices();
+            if (NetworkContext.Services != null)
+                NetworkContext.Services.RegisterOrReplace(this);
+
+            if (!isServer)
+                _eventBus.Subscribe<DesyncDetectedEvent>(OnClientDesync);
         }
 
         public override void OnStopServer()
@@ -103,13 +116,6 @@ namespace AMath.Networking.RPC
             _eventBus.Unsubscribe<TurnStartedEvent>(OnServerTurnStarted);
             _eventBus.Unsubscribe<TurnResolvedEvent>(OnServerTurnResolved);
             _eventBus.Unsubscribe<MatchPhaseChangedEvent>(OnServerPhaseChanged);
-        }
-
-        public override void OnStartClient()
-        {
-            ResolveServices();
-            if (!isServer)
-                _eventBus.Subscribe<DesyncDetectedEvent>(OnClientDesync);
         }
 
         public override void OnStopClient()
@@ -230,8 +236,34 @@ namespace AMath.Networking.RPC
         [Server]
         public void ServerSendFullStateTo(NetworkConnectionToClient conn)
         {
+            ServerSeedFromGameState();
             GameStateSnapshot snapshot = _gameManager.CaptureSnapshot();
             TargetFullState(conn, JsonUtility.ToJson(snapshot), _replayManager.ExportJson());
+        }
+
+        /// <summary>
+        /// Copies authoritative match scalars into SyncVars so reconnecting
+        /// clients receive consistent lobby/match headers alongside the snapshot.
+        /// </summary>
+        [Server]
+        private void ServerSeedFromGameState()
+        {
+            if (_gameManager.Config == null)
+                return;
+
+            GameStateSnapshot snapshot = _gameManager.CaptureSnapshot();
+            _phase = snapshot.Phase;
+            _turnNumber = snapshot.TurnNumber;
+            _currentPlayerId = snapshot.CurrentPlayerId;
+            _randomSeed = snapshot.Config.RandomSeed;
+            _bagCount = _gameManager.BagCount;
+
+            if (_gameManager.Phase == MatchPhase.Playing && _turnManager != null)
+                _turnDeadline = NetworkTime.time + _turnManager.RemainingSeconds;
+            else
+                _turnDeadline = 0d;
+
+            RebuildScores();
         }
 
         [TargetRpc]
@@ -242,7 +274,7 @@ namespace AMath.Networking.RPC
             var snapshot = JsonUtility.FromJson<GameStateSnapshot>(snapshotJson);
             _gameManager.RestoreSnapshot(snapshot);
             _replayManager.ImportJson(replayJson);
-            _stateMachine.TransitionTo(Phase);
+            _stateMachine.TransitionTo((MatchPhase)snapshot.Phase);
             Debug.Log($"[Sync] Full state restored at turn {snapshot.TurnNumber}.");
         }
 

@@ -2,7 +2,8 @@
     "name": "AMath.Tutorial",
     "rootNamespace": "AMath.Tutorial",
     "references": [
-        "AMath.Core"
+        "AMath.Core",
+        "AMath.Settings"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

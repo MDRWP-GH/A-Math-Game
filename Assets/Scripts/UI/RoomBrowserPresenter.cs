@@ -31,6 +31,7 @@ namespace AMath.UI
         private IEventBus _eventBus;
         private DiscoveryManager _discovery;
         private RoomManager _roomManager;
+        private bool _initialized;
 
         #endregion
 
@@ -43,55 +44,75 @@ namespace AMath.UI
 
         #region Lifecycle
 
-        private void Start()
-        {
-            _eventBus = NetworkContext.Services.Resolve<IEventBus>();
-            _discovery = NetworkContext.Services.Resolve<DiscoveryManager>();
-            _roomManager = NetworkContext.Services.Resolve<RoomManager>();
-
-            _eventBus.Subscribe<RoomListUpdatedEvent>(OnRoomListUpdated);
-        }
+        private void Start() => EnsureInitialized();
 
         private void OnDestroy()
         {
-            _eventBus?.Unsubscribe<RoomListUpdatedEvent>(OnRoomListUpdated);
+            if (!_initialized) return;
+            _eventBus.Unsubscribe<RoomListUpdatedEvent>(OnRoomListUpdated);
         }
 
         private void OnRoomListUpdated(RoomListUpdatedEvent evt) => RoomsChanged?.Invoke(evt.Rooms);
+
+        private void EnsureInitialized()
+        {
+            if (_initialized) return;
+            if (NetworkContext.Services == null) return;
+
+            _eventBus = NetworkContext.Services.Resolve<IEventBus>();
+            _discovery = NetworkContext.Services.Resolve<DiscoveryManager>();
+            _roomManager = NetworkContext.Services.Resolve<RoomManager>();
+            _eventBus.Subscribe<RoomListUpdatedEvent>(OnRoomListUpdated);
+            _initialized = true;
+        }
 
         #endregion
 
         #region View commands
 
         /// <summary>Begins LAN discovery (call when the browser screen opens).</summary>
-        public void StartSearching() => _discovery.StartSearching();
+        public void StartSearching()
+        {
+            EnsureInitialized();
+            _discovery.StartSearching();
+        }
 
         /// <summary>Stops LAN discovery (call when the screen closes).</summary>
-        public void StopSearching() => _discovery.StopSearching();
+        public void StopSearching()
+        {
+            EnsureInitialized();
+            _discovery.StopSearching();
+        }
+
+        // Error events carry localization keys; the view translates them so the
+        // message always matches the language selected in the settings screen.
 
         /// <summary>Creates and hosts a new room.</summary>
         public void CreateRoom(string roomName, int maxPlayers)
         {
+            EnsureInitialized();
             if (!_roomManager.CreateRoom(roomName, maxPlayers))
-                ErrorRaised?.Invoke("Could not create the room.");
+                ErrorRaised?.Invoke("ui.play.err_create");
         }
 
         /// <summary>Joins a room selected from the discovered list.</summary>
         public void JoinRoom(RoomInfo room)
         {
+            EnsureInitialized();
             if (!room.IsJoinable)
             {
-                ErrorRaised?.Invoke("That room cannot be joined right now.");
+                ErrorRaised?.Invoke("ui.play.err_not_joinable");
                 return;
             }
 
             if (!_roomManager.JoinRoom(room))
-                ErrorRaised?.Invoke("Could not join the room.");
+                ErrorRaised?.Invoke("ui.play.err_join");
         }
 
         /// <summary>Joins by a user-typed room code (resolved through discovery).</summary>
         public void JoinByCode(string code)
         {
+            EnsureInitialized();
             if (!_roomManager.JoinByCode(code, out string error))
                 ErrorRaised?.Invoke(error);
         }

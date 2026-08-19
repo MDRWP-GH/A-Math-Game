@@ -129,10 +129,22 @@ namespace AMath.AI.Chat
                 if (!token.IsCancellationRequested)
                     _view.ShowError(_textProvider.GetText(AiLocalizationKeys.ModeNotReady));
             }
+            catch (AiBackendException exception)
+            {
+                if (!token.IsCancellationRequested)
+                {
+                    UnityEngine.Debug.LogWarning(
+                        $"[AI] Backend request failed with HTTP status {exception.StatusCode}.");
+                    _view.ShowError(_textProvider.GetText(AiLocalizationKeys.RequestFailed));
+                }
+            }
             catch (Exception)
             {
                 if (!token.IsCancellationRequested)
+                {
+                    UnityEngine.Debug.LogWarning("[AI] Assistant request failed.");
                     _view.ShowError(_textProvider.GetText(AiLocalizationKeys.RequestFailed));
+                }
             }
             finally
             {

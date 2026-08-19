@@ -1,6 +1,8 @@
 using System;
+using AMath.Art;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEngine.InputSystem;
 using UnityEngine.UI;
 
 namespace AMath.UI
@@ -15,9 +17,9 @@ namespace AMath.UI
 
         private readonly Font _font;
 
-        public UiFactory(Font font)
+        public UiFactory(Font font = null)
         {
-            _font = font != null ? font : Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            _font = font != null ? font : GameFonts.Jersey25;
         }
 
         public Font Font => _font;
@@ -78,7 +80,9 @@ namespace AMath.UI
             button.onClick.AddListener(onClick.Invoke);
             AddShadow(buttonObject, new Color(0f, 0f, 0f, 0.20f), new Vector2(0f, -5f));
 
-            var buttonText = CreateText("Label", buttonObject.transform, label, fontSize, FontStyle.Bold, Color.white, TextAnchor.MiddleCenter);
+            // Jersey 25 is a single-weight display face; keep labels as Text (not sprites)
+            // and avoid synthetic Bold so glyphs stay crisp.
+            var buttonText = CreateText("Label", buttonObject.transform, label, fontSize, FontStyle.Normal, Color.white, TextAnchor.MiddleCenter);
             Stretch(buttonText.rectTransform);
 
             return button;
@@ -109,7 +113,7 @@ namespace AMath.UI
             };
             button.onClick.AddListener(onClick.Invoke);
 
-            var buttonText = CreateText("Label", buttonObject.transform, label, fontSize, FontStyle.Bold, UiPalette.LightText, alignment);
+            var buttonText = CreateText("Label", buttonObject.transform, label, fontSize, FontStyle.Normal, UiPalette.LightText, alignment);
             SetStretchRect(buttonText.rectTransform, 20f, 0f, 20f, 0f);
 
             return button;
@@ -236,6 +240,28 @@ namespace AMath.UI
             return image;
         }
 
+        /// <summary>
+        /// Creates a full-screen background from the named resource, preserving its aspect ratio
+        /// while filling its parent. Uses <paramref name="fallbackColor"/> when the asset is absent.
+        /// </summary>
+        public static Image CreateFullScreenBackground(Transform parent, string resourceName, Color fallbackColor)
+        {
+            var sprite = GameImages.LoadBackground(resourceName);
+            var background = sprite != null
+                ? CreateImage("Background", parent, sprite)
+                : CreateImage("Background", parent, fallbackColor);
+            Stretch(background.rectTransform);
+
+            if (sprite != null && sprite.rect.height > 0f)
+            {
+                var fitter = background.gameObject.AddComponent<AspectRatioFitter>();
+                fitter.aspectMode = AspectRatioFitter.AspectMode.EnvelopeParent;
+                fitter.aspectRatio = sprite.rect.width / sprite.rect.height;
+            }
+
+            return background;
+        }
+
         public static RectTransform CreateRect(string name, Transform parent)
         {
             var rectObject = new GameObject(name, typeof(RectTransform));
@@ -338,6 +364,96 @@ namespace AMath.UI
             shadow.effectDistance = distance;
         }
 
+        public static void AddOutline(GameObject target, Color color, Vector2 distance)
+        {
+            var outline = target.AddComponent<Outline>();
+            outline.effectColor = color;
+            outline.effectDistance = distance;
+            outline.useGraphicAlpha = true;
+        }
+
+        /// <summary>Adds the paired black outline used by the code-driven screens.</summary>
+        public static void AddDoubleOutline(
+            GameObject target,
+            Vector2 outerDistance,
+            Vector2 innerDistance)
+        {
+            AddOutline(target, Color.black, outerDistance);
+            AddOutline(target, Color.black, innerDistance);
+        }
+
+        /// <summary>Creates an icon-only button with the standard hover treatment.</summary>
+        public static Button CreateIconButton(
+            Transform parent,
+            string name,
+            Sprite sprite,
+            Color fallbackColor,
+            Action onClick)
+        {
+            var buttonObject = new GameObject(
+                name,
+                typeof(RectTransform),
+                typeof(CanvasRenderer),
+                typeof(Image),
+                typeof(Button));
+            buttonObject.transform.SetParent(parent, false);
+
+            var image = buttonObject.GetComponent<Image>();
+            image.sprite = sprite;
+            image.preserveAspect = sprite != null;
+            image.color = sprite != null ? Color.white : fallbackColor;
+            image.raycastTarget = true;
+
+            var button = buttonObject.GetComponent<Button>();
+            button.targetGraphic = image;
+            button.colors = new ColorBlock
+            {
+                normalColor = Color.white,
+                highlightedColor = new Color(1f, 0.92f, 0.75f, 1f),
+                pressedColor = new Color(0.90f, 0.85f, 0.70f, 1f),
+                selectedColor = new Color(1f, 0.92f, 0.75f, 1f),
+                disabledColor = new Color(1f, 1f, 1f, 0.35f),
+                colorMultiplier = 1f,
+                fadeDuration = 0.08f
+            };
+            button.onClick.AddListener(onClick.Invoke);
+            return button;
+        }
+
+        /// <summary>
+        /// Text-only menu button: invisible hit box, white label with black outline.
+        /// </summary>
+        public Button CreateTextMenuButton(Transform parent, string name, string label, int fontSize, Action onClick)
+        {
+            var buttonObject = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Button));
+            buttonObject.transform.SetParent(parent, false);
+
+            var image = buttonObject.GetComponent<Image>();
+            image.color = Color.white;
+            image.raycastTarget = true;
+
+            var button = buttonObject.GetComponent<Button>();
+            button.targetGraphic = image;
+            button.colors = new ColorBlock
+            {
+                normalColor = new Color(1f, 1f, 1f, 0f),
+                highlightedColor = new Color(1f, 1f, 1f, 0f),
+                pressedColor = new Color(1f, 1f, 1f, 0f),
+                selectedColor = new Color(1f, 1f, 1f, 0f),
+                disabledColor = new Color(1f, 1f, 1f, 0f),
+                colorMultiplier = 1f,
+                fadeDuration = 0f
+            };
+            button.onClick.AddListener(onClick.Invoke);
+
+            var buttonText = CreateText("Label", buttonObject.transform, label, fontSize, FontStyle.Normal, Color.white, TextAnchor.MiddleCenter);
+            Stretch(buttonText.rectTransform);
+            AddOutline(buttonText.gameObject, Color.black, new Vector2(3.5f, -3.5f));
+            AddOutline(buttonText.gameObject, Color.black, new Vector2(1.5f, -1.5f));
+
+            return button;
+        }
+
         public static void SetVerticalNavigation(Selectable selectable, Selectable up, Selectable down)
         {
             var navigation = selectable.navigation;
@@ -356,6 +472,15 @@ namespace AMath.UI
                 EventSystem.current.SetSelectedGameObject(selectable.gameObject);
             }
         }
+
+        /// <summary>Returns the project's UI Cancel action when one is configured.</summary>
+        public static InputAction FindCancelAction() =>
+            InputSystem.actions?.FindAction("UI/Cancel", false);
+
+        /// <summary>Detects Cancel with Escape as a keyboard fallback.</summary>
+        public static bool WasCancelPressed(InputAction cancelAction) =>
+            (cancelAction != null && cancelAction.enabled && cancelAction.WasPressedThisFrame()) ||
+            (Keyboard.current != null && Keyboard.current.escapeKey.wasPressedThisFrame);
 
         private static void ConfigureLayout(HorizontalOrVerticalLayoutGroup layout, float spacing, RectOffset padding, TextAnchor alignment)
         {

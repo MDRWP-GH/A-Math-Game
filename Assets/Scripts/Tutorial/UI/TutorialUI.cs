@@ -80,7 +80,9 @@ namespace AMath.Tutorial.UI
         private void Update()
         {
             if (_dialogueFinished != null &&
-                (_voiceSource == null || !_voiceSource.isPlaying))
+                _voiceSource != null &&
+                _voiceSource.clip != null &&
+                !_voiceSource.isPlaying)
             {
                 CompleteDialogue();
             }
@@ -166,14 +168,18 @@ namespace AMath.Tutorial.UI
                 _dialogueText.text = localizedText ?? string.Empty;
 
             _dialogueFinished = onFinished;
-            if (voiceClip == null || _voiceSource == null)
+            if (voiceClip != null && _voiceSource != null)
             {
-                CompleteDialogue();
-                return;
+                _voiceSource.clip = voiceClip;
+                _voiceSource.Play();
             }
+        }
 
-            _voiceSource.clip = voiceClip;
-            _voiceSource.Play();
+        /// <summary>Dismisses visible dialogue when a scripted button is pressed.</summary>
+        public void DismissActiveDialogue()
+        {
+            if (_dialogueFinished != null)
+                StopCurrentDialogue(invokeCallback: true);
         }
 
         /// <inheritdoc />
@@ -193,7 +199,11 @@ namespace AMath.Tutorial.UI
                 if (signal == null || signal.Button == null || string.IsNullOrWhiteSpace(signal.ButtonId))
                     continue;
 
-                UnityAction callback = () => PublishButtonPress(signal.ButtonId);
+                UnityAction callback = () =>
+                {
+                    DismissActiveDialogue();
+                    PublishButtonPress(signal.ButtonId);
+                };
                 signal.Button.onClick.AddListener(callback);
                 _boundSignals.Add((signal.Button, callback));
             }
@@ -251,7 +261,10 @@ namespace AMath.Tutorial.UI
         private void StopCurrentDialogue(bool invokeCallback)
         {
             if (_voiceSource != null)
+            {
                 _voiceSource.Stop();
+                _voiceSource.clip = null;
+            }
 
             if (_dialoguePanel != null)
                 _dialoguePanel.SetActive(false);

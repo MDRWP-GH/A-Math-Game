@@ -44,6 +44,19 @@ namespace AMath.Core
             return instance;
         }
 
+        /// <summary>
+        /// Registers or replaces a service (used when a Mirror-spawned singleton
+        /// supersedes a placeholder created before hosting).
+        /// </summary>
+        public TService RegisterOrReplace<TService>(TService instance) where TService : class
+        {
+            if (instance == null) throw new ArgumentNullException(nameof(instance));
+            _services[typeof(TService)] = instance;
+            if (instance is ITickable tickable && !_tickables.Contains(tickable))
+                _tickables.Add(tickable);
+            return instance;
+        }
+
         /// <summary>Resolves a previously registered service. Throws when missing (fail fast).</summary>
         public TService Resolve<TService>() where TService : class
         {

@@ -36,6 +36,9 @@ namespace AMath.Managers
         /// <summary>Per-turn limit in seconds (from MatchConfig).</summary>
         public int TurnSeconds { get; private set; } = GameRules.DefaultTurnSeconds;
 
+        /// <summary>Seconds remaining in the current turn (host-side clock).</summary>
+        public float RemainingSeconds => _remainingSeconds;
+
         /// <summary>True when every player has passed for the configured number of rounds.</summary>
         public bool ShouldEndByPasses =>
             _playerCount > 0 && ConsecutivePasses >= _playerCount * GameRules.ConsecutivePassRoundsToEnd;

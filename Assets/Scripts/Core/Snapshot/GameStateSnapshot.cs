@@ -12,6 +12,7 @@ namespace AMath.Core.Snapshot
         public string PersistentGuid;
         public string DisplayName;
         public int Score;
+        public bool IsAi;
         public List<byte> Rack = new();
     }
 

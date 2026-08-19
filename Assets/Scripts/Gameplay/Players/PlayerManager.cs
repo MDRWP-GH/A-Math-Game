@@ -46,7 +46,13 @@ namespace AMath.Gameplay.Players
         {
             _players.Clear();
             foreach (PlayerIdentity identity in config.Players)
-                _players.Add(new PlayerState(identity.PlayerId, identity.PersistentGuid, identity.DisplayName));
+            {
+                _players.Add(new PlayerState(
+                    identity.PlayerId,
+                    identity.PersistentGuid,
+                    identity.DisplayName,
+                    identity.IsAi));
+            }
 
             _eventBus.Publish(new PlayerRosterChangedEvent());
         }
@@ -109,6 +115,7 @@ namespace AMath.Gameplay.Players
                     PersistentGuid = player.PersistentGuid,
                     DisplayName = player.DisplayName,
                     Score = player.Score,
+                    IsAi = player.IsAi,
                     Rack = new List<byte>(player.Rack)
                 });
             }
@@ -120,12 +127,17 @@ namespace AMath.Gameplay.Players
             _players.Clear();
             foreach (PlayerSnapshot saved in snapshot.Players)
             {
-                var player = new PlayerState(saved.PlayerId, saved.PersistentGuid, saved.DisplayName)
+                var player = new PlayerState(
+                    saved.PlayerId,
+                    saved.PersistentGuid,
+                    saved.DisplayName,
+                    saved.IsAi)
                 {
                     Score = saved.Score,
                     // Players are considered disconnected until the network
                     // layer re-associates their live connection.
-                    IsConnected = false
+                    // AI seats stay "connected" so migration wait logic treats them as present.
+                    IsConnected = saved.IsAi
                 };
                 player.Rack.AddRange(saved.Rack);
                 _players.Add(player);

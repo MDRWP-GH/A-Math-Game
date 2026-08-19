@@ -27,7 +27,7 @@ namespace AMath.Core.RandomNumbers
         public long State
         {
             get => _state;
-            set => _state = value == 0 ? 0x9E3779B97F4A7C15L : value; // state must never be zero
+            set => _state = value == 0 ? unchecked((long)0x9E3779B97F4A7C15UL) : value; // state must never be zero
         }
 
         #endregion

@@ -27,6 +27,7 @@ namespace AMath.Networking.HostMigration
     {
         public RecoveryPhase Phase;
         public float ElapsedSeconds;
+        public int ReconnectAttempts;
     }
 
     /// <summary>Host migration began (an elected candidate is taking over).</summary>

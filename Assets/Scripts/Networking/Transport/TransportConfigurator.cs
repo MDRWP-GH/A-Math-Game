@@ -16,9 +16,10 @@ namespace AMath.Networking.Transport
 
         /// <summary>
         /// Milliseconds without traffic before a connection is considered dead.
-        /// Deliberately short: fast host-loss detection drives host migration.
+        /// This allows brief Wi-Fi roaming stalls without delaying recovery for
+        /// a genuinely unavailable host excessively.
         /// </summary>
-        public const int TimeoutMilliseconds = 10_000;
+        public const int TimeoutMilliseconds = 20_000;
 
         /// <summary>Applies LAN-optimized settings to a KCP transport.</summary>
         public static void Configure(KcpTransport transport, ushort port = DefaultPort)

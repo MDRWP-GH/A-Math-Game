@@ -1,3 +1,4 @@
+using AMath.Art;
 using AMath.Core;
 using AMath.Core.Assistance;
 using AMath.Core.Events;
@@ -30,32 +31,33 @@ namespace AMath.UI.Tutorial
         private TutorialHudPresenter _presenter;
         private TutorialManager _tutorialManager;
         private UiFactory _ui;
+        private TutorialLocalizationProvider _textProvider;
+        private IEventBus _eventBus;
+        private Text _statusText;
+        private Button _backButton;
 
         private void Awake()
         {
             EnsureEventSystem();
-            _ui = new UiFactory(Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf"));
+            _textProvider = new TutorialLocalizationProvider();
+            _ui = new UiFactory(GameFonts.Jersey25);
             _presenter = BuildHud();
             WireServices(_presenter);
         }
 
         private void Start()
         {
-            IEventBus eventBus = _services.Resolve<IEventBus>();
             ILocalizedTextProvider textProvider = _services.Resolve<ILocalizedTextProvider>();
 
-            eventBus.Publish(new BoardLoadedEvent());
+            _eventBus.Publish(new BoardLoadedEvent());
             _tutorialManager.Start(new IntroTutorialSequence(textProvider), resumeProgress: true);
-        }
-
-        private void Update()
-        {
-            _services?.TickAll(Time.deltaTime);
-            _presenter?.Tick();
         }
 
         private void OnDestroy()
         {
+            if (_eventBus != null)
+                _eventBus.Unsubscribe<TutorialStepChangedEvent>(OnTutorialStepChanged);
+
             _presenter?.Dispose();
             _services?.Dispose();
         }
@@ -64,15 +66,14 @@ namespace AMath.UI.Tutorial
         {
             _services = new ServiceRegistry();
 
-            IEventBus eventBus = _services.Register<IEventBus>(new EventBus());
+            _eventBus = _services.Register<IEventBus>(new EventBus());
             var readers = _services.Register(new TutorialAssistanceReaders());
-            ILocalizedTextProvider textProvider = _services.Register<ILocalizedTextProvider>(
-                new TutorialLocalizationProvider());
+            ILocalizedTextProvider textProvider = _services.Register<ILocalizedTextProvider>(_textProvider);
             ITutorialSaveStore saveStore = _services.Register<ITutorialSaveStore>(
                 new TutorialProgressSaveStore());
 
             var runtimeContext = new TutorialRuntimeContext(
-                eventBus,
+                _eventBus,
                 readers,
                 readers,
                 readers,
@@ -81,9 +82,31 @@ namespace AMath.UI.Tutorial
                 presenter);
 
             _tutorialManager = _services.Register(
-                new TutorialManager(eventBus, runtimeContext, textProvider, saveStore));
+                new TutorialManager(_eventBus, runtimeContext, textProvider, saveStore));
 
-            presenter.Configure(_tutorialManager, eventBus);
+            presenter.Configure(_tutorialManager, _eventBus);
+            _eventBus.Subscribe<TutorialStepChangedEvent>(OnTutorialStepChanged);
+        }
+
+        private void Update()
+        {
+            _services?.TickAll(Time.deltaTime);
+            _presenter?.Tick();
+        }
+
+        private void OnTutorialStepChanged(TutorialStepChangedEvent evt)
+        {
+            if (_statusText == null)
+                return;
+
+            _statusText.text = evt.IsActive
+                ? string.Empty
+                : _textProvider.GetText("tutorial.ui.finished");
+        }
+
+        private void ReturnToMainMenu()
+        {
+            SceneManager.LoadScene(0);
         }
 
         private TutorialHudPresenter BuildHud()
@@ -96,7 +119,7 @@ namespace AMath.UI.Tutorial
             var title = _ui.CreateText(
                 "Title",
                 canvas.transform,
-                "A-MATH Tutorial",
+                _textProvider.GetText("tutorial.ui.title"),
                 56,
                 FontStyle.Bold,
                 UiPalette.LightText,
@@ -109,6 +132,37 @@ namespace AMath.UI.Tutorial
                 new Vector2(700f, 80f),
                 new Vector2(0f, -48f));
 
+            _backButton = _ui.CreateButton(
+                canvas.transform,
+                "Back To Menu Button",
+                _textProvider.GetText("tutorial.ui.back_menu"),
+                UiPalette.Secondary,
+                UiPalette.SecondaryHighlight,
+                ReturnToMainMenu);
+            UiFactory.SetAnchoredRect(
+                _backButton.GetComponent<RectTransform>(),
+                new Vector2(0.5f, 1f),
+                new Vector2(0.5f, 1f),
+                new Vector2(0f, 1f),
+                new Vector2(220f, 56f),
+                new Vector2(24f, -24f));
+
+            _statusText = _ui.CreateText(
+                "Tutorial Status",
+                canvas.transform,
+                string.Empty,
+                22,
+                FontStyle.Normal,
+                UiPalette.MutedText,
+                TextAnchor.MiddleCenter);
+            UiFactory.SetAnchoredRect(
+                _statusText.rectTransform,
+                new Vector2(0.5f, 0f),
+                new Vector2(0.5f, 0f),
+                new Vector2(0.5f, 0.5f),
+                new Vector2(760f, 42f),
+                new Vector2(0f, 24f));
+
             var boardPanel = UiFactory.CreateImage("Demo Board Panel", canvas.transform, UiPalette.Panel);
             UiFactory.SetCenteredRect(boardPanel.rectTransform, new Vector2(0f, 70f), new Vector2(620f, 420f));
             UiFactory.AddShadow(boardPanel.gameObject, UiPalette.Shadow, new Vector2(0f, -10f));
@@ -116,7 +170,7 @@ namespace AMath.UI.Tutorial
             var boardLabel = _ui.CreateText(
                 "Board Label",
                 boardPanel.transform,
-                "พื้นที่กระดานตัวอย่าง",
+                _textProvider.GetText("tutorial.ui.board_area"),
                 34,
                 FontStyle.Bold,
                 UiPalette.MutedText,
@@ -215,7 +269,7 @@ namespace AMath.UI.Tutorial
             var continueButton = _ui.CreateButton(
                 hudPanel.transform,
                 "Continue Button",
-                "ดำเนินการต่อ",
+                _textProvider.GetText("tutorial.ui.continue"),
                 UiPalette.Primary,
                 UiPalette.PrimaryHighlight,
                 () => { });
@@ -224,7 +278,7 @@ namespace AMath.UI.Tutorial
             var replayButton = _ui.CreateButton(
                 hudPanel.transform,
                 "Replay Step Button",
-                "เล่นขั้นนี้ใหม่",
+                _textProvider.GetText("tutorial.ui.replay"),
                 UiPalette.Secondary,
                 UiPalette.SecondaryHighlight,
                 () => { });
@@ -233,7 +287,7 @@ namespace AMath.UI.Tutorial
             var skipButton = _ui.CreateButton(
                 hudPanel.transform,
                 "Skip Tutorial Button",
-                "ข้ามบทฝึก",
+                _textProvider.GetText("tutorial.ui.skip"),
                 UiPalette.Quit,
                 UiPalette.QuitHighlight,
                 () => { });

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Reflection;
 using AMath.Networking.HostMigration;
 using AMath.Networking.Room;
 using NUnit.Framework;
@@ -75,6 +76,20 @@ namespace AMath.Tests
 
             for (int i = 0; i < peerA.Count; i++)
                 Assert.AreEqual(peerA[i].PlayerId, peerB[i].PlayerId);
+        }
+
+        [Test]
+        public void PromotionDeadline_AccountsForElectionRank()
+        {
+            MethodInfo calculateDeadline = typeof(HostMigrationManager).GetMethod(
+                "CalculatePromotionDeadline",
+                BindingFlags.Static | BindingFlags.NonPublic);
+
+            float rankTwoDeadline = (float)calculateDeadline.Invoke(null, new object[] { 2 });
+
+            Assert.AreEqual(
+                HostMigrationManager.GraceSeconds + 2 * HostMigrationManager.PromotionStaggerSeconds,
+                rankTwoDeadline);
         }
 
         #endregion

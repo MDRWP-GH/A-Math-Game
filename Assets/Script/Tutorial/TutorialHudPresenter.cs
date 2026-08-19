@@ -80,10 +80,9 @@ namespace AMath.UI.Tutorial
         /// <summary>Call from the scene controller each frame.</summary>
         public void Tick()
         {
-            if (_dialogueFinished == null)
-                return;
-
-            CompleteDialogue();
+            // Voice playback completion is handled by TutorialUI when an AudioSource
+            // is present. The bootstrap HUD has no voice source, so dialogue waits
+            // for the Continue button instead.
         }
 
         /// <summary>Releases button listeners.</summary>
@@ -165,15 +164,23 @@ namespace AMath.UI.Tutorial
                 _dialogueText.text = localizedText ?? string.Empty;
 
             _dialogueFinished = onFinished;
-            if (voiceClip == null)
+        }
+
+        /// <summary>Dismisses visible dialogue when Continue is pressed.</summary>
+        public void DismissActiveDialogue()
+        {
+            if (_dialogueFinished != null)
                 CompleteDialogue();
         }
 
         /// <inheritdoc />
         public void Skip() => StopDialogue(invokeCallback: true);
 
-        private void OnContinuePressed() =>
+        private void OnContinuePressed()
+        {
+            DismissActiveDialogue();
             PublishButtonPress(IntroTutorialSequence.ContinueButtonId);
+        }
 
         private void OnSkipPressed()
         {

@@ -85,6 +85,9 @@ namespace AMath.Networking.Messages
             if (string.IsNullOrEmpty(message.PersistentGuid) || string.IsNullOrEmpty(message.DisplayName))
                 return "Invalid identity.";
 
+            if (IsAiSeatGuid(message.PersistentGuid))
+                return "AI seats cannot connect over the network.";
+
             if (!string.Equals(message.RoomCode, _session.RoomCode, System.StringComparison.OrdinalIgnoreCase))
                 return "Wrong room code.";
 
@@ -103,6 +106,9 @@ namespace AMath.Networking.Messages
                 PlayerState seat = _playerManager.FindByGuid(message.PersistentGuid);
                 if (seat == null)
                     return "Match already in progress.";
+
+                if (seat.IsAi)
+                    return "This seat is controlled by the host AI.";
 
                 identity = new AuthenticatedIdentity
                 {
@@ -126,6 +132,10 @@ namespace AMath.Networking.Messages
             };
             return null;
         }
+
+        private static bool IsAiSeatGuid(string persistentGuid) =>
+            !string.IsNullOrEmpty(persistentGuid)
+            && persistentGuid.StartsWith("ai:", System.StringComparison.Ordinal);
 
         private IEnumerator DelayedReject(NetworkConnectionToClient conn)
         {

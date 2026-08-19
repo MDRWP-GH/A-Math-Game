@@ -1,9 +1,8 @@
-using AMath.UI.Tutorial;
+using AMath.Art;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.UI;
-using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
 namespace AMath.UI
@@ -11,6 +10,7 @@ namespace AMath.UI
     /// <summary>
     /// Builds and owns the first A-Math menu at runtime. Keeping it code-driven makes the
     /// starter scene safe to reuse while the game screens are still being developed.
+    /// Layout matches the main-menu mockup: background art, title, and four text buttons.
     /// </summary>
     public sealed class MainMenuController : MonoBehaviour
     {
@@ -22,21 +22,20 @@ namespace AMath.UI
 
         private UiFactory _ui;
         private GameObject _menuCanvas;
-        private GameObject _helpOverlay;
-        private Text _statusLabel;
+        private HowToPlayOverlay _helpOverlay;
         private Button _startButton;
-        private Button _tutorialButton;
         private Button _helpButton;
         private Button _settingsButton;
         private Button _quitButton;
-        private Button _closeHelpButton;
         private SettingsMenuController _settingsMenu;
+        private InputAction _cancelAction;
 
         private void Awake()
         {
             EnsureEventSystem();
-            _ui = new UiFactory(Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf"));
+            _ui = new UiFactory(GameFonts.Jersey25);
             BuildMenu();
+            _cancelAction = UiFactory.FindCancelAction();
         }
 
         private void Start()
@@ -44,56 +43,104 @@ namespace AMath.UI
             UiFactory.Select(_startButton);
         }
 
+        private void OnEnable()
+        {
+            // The play session hides this object and re-activates it on return;
+            // restore keyboard/gamepad focus.
+            if (_startButton != null)
+            {
+                UiFactory.Select(_startButton);
+            }
+        }
+
+        private void Update()
+        {
+            if (_helpOverlay != null && _helpOverlay.IsOpen && WasCancelPressed())
+            {
+                _helpOverlay.Close();
+            }
+        }
+
         private void BuildMenu()
         {
             var canvas = _ui.CreateCanvas(transform, "Canvas", 100);
             _menuCanvas = canvas.gameObject;
 
-            var background = UiFactory.CreateImage("Background", canvas.transform, UiPalette.Background);
-            UiFactory.Stretch(background.rectTransform);
+            UiFactory.CreateFullScreenBackground(
+                canvas.transform,
+                "Main Menu Backgrounds",
+                UiPalette.Background);
 
-            CreateDecorativeSymbol(canvas.transform, "+", new Vector2(0.12f, 0.79f), 132f, -10f);
-            CreateDecorativeSymbol(canvas.transform, "÷", new Vector2(0.84f, 0.81f), 110f, 8f);
-            CreateDecorativeSymbol(canvas.transform, "×", new Vector2(0.12f, 0.20f), 128f, 14f);
-            CreateDecorativeSymbol(canvas.transform, "=", new Vector2(0.87f, 0.17f), 110f, -10f);
+            var title = _ui.CreateText(
+                "Title",
+                canvas.transform,
+                string.Empty,
+                78,
+                FontStyle.Normal,
+                Color.white,
+                TextAnchor.MiddleCenter);
+            title.font = GameFonts.JainiPurva;
+            UiFactory.SetAnchoredRect(
+                title.rectTransform,
+                new Vector2(0.5f, 1f),
+                new Vector2(0.5f, 1f),
+                new Vector2(0.5f, 1f),
+                new Vector2(980f, 110f),
+                new Vector2(0f, -72f));
+            UiFactory.AddDoubleOutline(title.gameObject, new Vector2(4f, -4f), new Vector2(2f, -2f));
+            LocalizedText.Bind(title, "ui.menu.title");
 
-            var menuPanel = UiFactory.CreateImage("Menu Panel", canvas.transform, UiPalette.Panel);
-            UiFactory.SetCenteredRect(menuPanel.rectTransform, Vector2.zero, new Vector2(720f, 860f));
-            UiFactory.AddShadow(menuPanel.gameObject, new Color(0f, 0f, 0f, 0.32f), new Vector2(0f, -14f));
+            const float buttonWidth = 520f;
+            const float buttonHeight = 88f;
+            const int buttonFontSize = 52;
 
-            var accentLine = UiFactory.CreateImage("Accent Line", menuPanel.transform, UiPalette.Primary);
-            UiFactory.SetCenteredRect(accentLine.rectTransform, new Vector2(0f, 205f), new Vector2(150f, 8f));
+            _startButton = _ui.CreateTextMenuButton(
+                canvas.transform,
+                "Start Button",
+                string.Empty,
+                buttonFontSize,
+                StartGame);
+            UiFactory.SetCenteredRect(
+                _startButton.GetComponent<RectTransform>(),
+                new Vector2(0f, 110f),
+                new Vector2(buttonWidth, buttonHeight));
+            LocalizedText.Bind(_startButton.GetComponentInChildren<Text>(), "ui.menu.start");
 
-            var title = _ui.CreateText("Title", menuPanel.transform, "A-MATH", 94, FontStyle.Bold, UiPalette.LightText, TextAnchor.MiddleCenter);
-            UiFactory.SetCenteredRect(title.rectTransform, new Vector2(0f, 265f), new Vector2(650f, 120f));
-            UiFactory.AddShadow(title.gameObject, UiPalette.Shadow, new Vector2(0f, -4f));
+            _helpButton = _ui.CreateTextMenuButton(
+                canvas.transform,
+                "How To Play Button",
+                string.Empty,
+                buttonFontSize,
+                OpenHelp);
+            UiFactory.SetCenteredRect(
+                _helpButton.GetComponent<RectTransform>(),
+                new Vector2(0f, 14f),
+                new Vector2(buttonWidth, buttonHeight));
+            LocalizedText.Bind(_helpButton.GetComponentInChildren<Text>(), "ui.menu.help");
 
-            var subtitle = _ui.CreateText("Subtitle", menuPanel.transform, "สนุกกับการคิดเลข ทุกวัน", 30, FontStyle.Normal, UiPalette.MutedText, TextAnchor.MiddleCenter);
-            UiFactory.SetCenteredRect(subtitle.rectTransform, new Vector2(0f, 150f), new Vector2(620f, 64f));
+            _settingsButton = _ui.CreateTextMenuButton(
+                canvas.transform,
+                "Settings Button",
+                string.Empty,
+                buttonFontSize,
+                OpenSettings);
+            UiFactory.SetCenteredRect(
+                _settingsButton.GetComponent<RectTransform>(),
+                new Vector2(0f, -82f),
+                new Vector2(buttonWidth, buttonHeight));
+            LocalizedText.Bind(_settingsButton.GetComponentInChildren<Text>(), "ui.menu.settings");
 
-            var prompt = _ui.CreateText("Prompt", menuPanel.transform, "พร้อมเริ่มฝึกแล้วหรือยัง?", 25, FontStyle.Bold, UiPalette.LightText, TextAnchor.MiddleCenter);
-            UiFactory.SetCenteredRect(prompt.rectTransform, new Vector2(0f, 82f), new Vector2(600f, 54f));
-
-            _startButton = _ui.CreateButton(menuPanel.transform, "Start Button", "เริ่มเกม", UiPalette.Primary, UiPalette.PrimaryHighlight, StartGame);
-            UiFactory.SetCenteredRect(_startButton.GetComponent<RectTransform>(), new Vector2(0f, 16f), new Vector2(520f, 88f));
-
-            _tutorialButton = _ui.CreateButton(menuPanel.transform, "Tutorial Button", "ฝึกหัด", UiPalette.Secondary, UiPalette.SecondaryHighlight, OpenTutorial);
-            UiFactory.SetCenteredRect(_tutorialButton.GetComponent<RectTransform>(), new Vector2(0f, -82f), new Vector2(520f, 78f));
-
-            _helpButton = _ui.CreateButton(menuPanel.transform, "How To Play Button", "วิธีเล่น", UiPalette.Secondary, UiPalette.SecondaryHighlight, OpenHelp);
-            UiFactory.SetCenteredRect(_helpButton.GetComponent<RectTransform>(), new Vector2(0f, -174f), new Vector2(520f, 78f));
-
-            _settingsButton = _ui.CreateButton(menuPanel.transform, "Settings Button", "ตั้งค่า", UiPalette.Secondary, UiPalette.SecondaryHighlight, OpenSettings);
-            UiFactory.SetCenteredRect(_settingsButton.GetComponent<RectTransform>(), new Vector2(0f, -266f), new Vector2(520f, 78f));
-
-            _quitButton = _ui.CreateButton(menuPanel.transform, "Quit Button", "ออกจากเกม", UiPalette.Quit, UiPalette.QuitHighlight, QuitGame);
-            UiFactory.SetCenteredRect(_quitButton.GetComponent<RectTransform>(), new Vector2(0f, -354f), new Vector2(520f, 68f));
-
-            _statusLabel = _ui.CreateText("Status", menuPanel.transform, "เลือกเมนูเพื่อเริ่มต้น", 20, FontStyle.Normal, UiPalette.MutedText, TextAnchor.MiddleCenter);
-            UiFactory.SetCenteredRect(_statusLabel.rectTransform, new Vector2(0f, -427f), new Vector2(610f, 50f));
-
-            var footer = _ui.CreateText("Footer", canvas.transform, "A-MATH  •  LEARN  •  PLAY  •  GROW", 18, FontStyle.Bold, new Color(0.66f, 0.75f, 0.93f, 0.75f), TextAnchor.MiddleCenter);
-            UiFactory.SetAnchoredRect(footer.rectTransform, new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0.5f, 0.5f), new Vector2(720f, 42f), new Vector2(0f, 35f));
+            _quitButton = _ui.CreateTextMenuButton(
+                canvas.transform,
+                "Exit Button",
+                string.Empty,
+                buttonFontSize,
+                QuitGame);
+            UiFactory.SetCenteredRect(
+                _quitButton.GetComponent<RectTransform>(),
+                new Vector2(0f, -178f),
+                new Vector2(buttonWidth, buttonHeight));
+            LocalizedText.Bind(_quitButton.GetComponentInChildren<Text>(), "ui.menu.quit");
 
             ConfigureMenuNavigation();
             BuildHelpOverlay(canvas.transform);
@@ -102,32 +149,16 @@ namespace AMath.UI
 
         private void StartGame()
         {
-            // Gameplay scene is not ready yet — route players to the intro tutorial for now.
-            OpenTutorial();
-        }
-
-        private void OpenTutorial()
-        {
-            if (!Application.CanStreamedLevelBeLoaded(TutorialSceneBootstrap.SceneName))
-            {
-                _statusLabel.text = "ไม่พบฉากฝึกหัด — ตรวจสอบ Build Settings";
-                Debug.LogError(
-                    $"A-Math: scene '{TutorialSceneBootstrap.SceneName}' is missing from Build Settings.");
-                return;
-            }
-
-            SceneManager.LoadScene(TutorialSceneBootstrap.SceneName);
+            PlaySessionController.EnsureExists().OpenFromMainMenu(this);
         }
 
         private void OpenHelp()
         {
-            _helpOverlay.SetActive(true);
-            UiFactory.Select(_closeHelpButton);
+            _helpOverlay.Open();
         }
 
         private void CloseHelp()
         {
-            _helpOverlay.SetActive(false);
             UiFactory.Select(_helpButton);
         }
 
@@ -162,39 +193,14 @@ namespace AMath.UI
 
         private void BuildHelpOverlay(Transform canvasTransform)
         {
-            _helpOverlay = UiFactory.CreateImage("How To Play Overlay", canvasTransform, UiPalette.Overlay).gameObject;
-            UiFactory.Stretch(_helpOverlay.GetComponent<RectTransform>());
-
-            var card = UiFactory.CreateImage("How To Play Card", _helpOverlay.transform, UiPalette.Card);
-            UiFactory.SetCenteredRect(card.rectTransform, Vector2.zero, new Vector2(680f, 560f));
-            UiFactory.AddShadow(card.gameObject, new Color(0f, 0f, 0f, 0.38f), new Vector2(0f, -12f));
-
-            var heading = _ui.CreateText("Heading", card.transform, "วิธีเล่น", 52, FontStyle.Bold, UiPalette.LightText, TextAnchor.MiddleCenter);
-            UiFactory.SetCenteredRect(heading.rectTransform, new Vector2(0f, 177f), new Vector2(560f, 78f));
-
-            var body = _ui.CreateText(
-                "Body",
-                card.transform,
-                "เมนูนี้รองรับเมาส์ สัมผัส คีย์บอร์ด และจอย\n\nกด “ฝึกหัด” เพื่อเริ่มบทนำ\n\nกด “เริ่มเกม” เพื่อเข้าสู่บทฝึกหัดชั่วคราวจนกว่าฉากเกมจะพร้อม",
-                25,
-                FontStyle.Normal,
-                UiPalette.MutedText,
-                TextAnchor.MiddleCenter);
-            body.horizontalOverflow = HorizontalWrapMode.Wrap;
-            body.verticalOverflow = VerticalWrapMode.Overflow;
-            UiFactory.SetCenteredRect(body.rectTransform, new Vector2(0f, 6f), new Vector2(560f, 245f));
-
-            _closeHelpButton = _ui.CreateButton(card.transform, "Back Button", "กลับ", UiPalette.Primary, UiPalette.PrimaryHighlight, CloseHelp);
-            UiFactory.SetCenteredRect(_closeHelpButton.GetComponent<RectTransform>(), new Vector2(0f, -198f), new Vector2(310f, 76f));
-
-            _helpOverlay.SetActive(false);
+            _helpOverlay = new HowToPlayOverlay(_ui, canvasTransform);
+            _helpOverlay.Closed += CloseHelp;
         }
 
         private void ConfigureMenuNavigation()
         {
-            UiFactory.SetVerticalNavigation(_startButton, _quitButton, _tutorialButton);
-            UiFactory.SetVerticalNavigation(_tutorialButton, _startButton, _helpButton);
-            UiFactory.SetVerticalNavigation(_helpButton, _tutorialButton, _settingsButton);
+            UiFactory.SetVerticalNavigation(_startButton, _quitButton, _helpButton);
+            UiFactory.SetVerticalNavigation(_helpButton, _startButton, _settingsButton);
             UiFactory.SetVerticalNavigation(_settingsButton, _helpButton, _quitButton);
             UiFactory.SetVerticalNavigation(_quitButton, _settingsButton, _startButton);
         }
@@ -281,11 +287,9 @@ namespace AMath.UI
             }
         }
 
-        private void CreateDecorativeSymbol(Transform parent, string symbol, Vector2 anchor, float size, float rotation)
+        private bool WasCancelPressed()
         {
-            var text = _ui.CreateText("Decoration " + symbol, parent, symbol, Mathf.RoundToInt(size), FontStyle.Bold, new Color(0.28f, 0.42f, 0.76f, 0.23f), TextAnchor.MiddleCenter);
-            UiFactory.SetAnchoredRect(text.rectTransform, anchor, anchor, new Vector2(0.5f, 0.5f), new Vector2(size, size), Vector2.zero);
-            text.rectTransform.localEulerAngles = new Vector3(0f, 0f, rotation);
+            return UiFactory.WasCancelPressed(_cancelAction);
         }
     }
 }

@@ -97,9 +97,22 @@ namespace AMath.Settings
         private const string ViewModeKey = "amath.display.viewMode";
         private const string WidthKey = "amath.display.width";
         private const string HeightKey = "amath.display.height";
+        private const string GuiScaleKey = "amath.display.guiScale";
 
         private const int MinimumWidth = 1024;
         private const int MinimumHeight = 576;
+        private const float MinimumGuiScale = 0.5f;
+        private const float DefaultGuiScale = 1f;
+        private const float MaximumGuiScale = 1.5f;
+
+        // All runtime pages are authored for this minimum usable viewport. A larger GUI scale
+        // reduces the logical canvas size, so this floor prevents fixed-size game controls from
+        // being pushed outside the visible game area.
+        // The room browser/lobby use 920px-tall cards and Settings needs enough row width for
+        // labels plus slider values. These dimensions therefore cover the largest fixed layouts
+        // across every current game page, not merely the smallest supported window resolution.
+        private static readonly Vector2 MinimumGuiViewport = new Vector2(1750f, 980f);
+        private static readonly Vector2 GuiReferenceResolution = new Vector2(1920f, 1080f);
 
         private static readonly ScreenSize[] FallbackSizes =
         {
@@ -113,7 +126,7 @@ namespace AMath.Settings
 
         private static readonly List<ScreenSize> Sizes = new List<ScreenSize>();
 
-        /// <summary>Raised after the view mode or the screen size changed.</summary>
+        /// <summary>Raised after a display or GUI-scale setting changed.</summary>
         public static event Action Changed;
 
         public static readonly string[] ViewModeLabels = { "Window", "Full Screen", "Borderless" };
@@ -121,6 +134,14 @@ namespace AMath.Settings
         public static ViewMode ViewMode { get; private set; }
 
         public static ScreenSize Resolution { get; private set; }
+
+        /// <summary>Player-selected global GUI scale, after the current viewport safety cap.</summary>
+        public static float GuiScale { get; private set; }
+
+        public static float GuiScaleMinimum => MinimumGuiScale;
+
+        /// <summary>Largest GUI scale that keeps the current logical canvas at a usable size.</summary>
+        public static float GuiScaleMaximum => GetGuiScaleMaximum(Screen.width, Screen.height);
 
         public static IReadOnlyList<ScreenSize> AvailableSizes => Sizes;
 
@@ -168,6 +189,56 @@ namespace AMath.Settings
 
         public static void SetResolution(ScreenSize size) => Apply(ViewMode, size);
 
+        public static void SetGuiScale(float scale)
+        {
+            var clamped = ClampGuiScale(scale, Screen.width, Screen.height);
+            if (Mathf.Approximately(GuiScale, clamped))
+            {
+                return;
+            }
+
+            GuiScale = clamped;
+            Save();
+            Changed?.Invoke();
+        }
+
+        /// <summary>
+        /// Re-clamps the saved preference when the active viewport changes. Canvases call this
+        /// after Unity reports a new size, which covers window resizes and resolution changes.
+        /// </summary>
+        public static void EnsureGuiScaleFits(int width, int height)
+        {
+            var clamped = ClampGuiScale(GuiScale, width, height);
+            if (Mathf.Approximately(GuiScale, clamped))
+            {
+                return;
+            }
+
+            GuiScale = clamped;
+            Save();
+            Changed?.Invoke();
+        }
+
+        /// <summary>Returns the safe GUI-scale ceiling for an arbitrary game viewport.</summary>
+        public static float GetGuiScaleMaximum(int width, int height)
+        {
+            var safeWidth = Mathf.Max(1, width);
+            var safeHeight = Mathf.Max(1, height);
+            var referenceAspect = GuiReferenceResolution.x / GuiReferenceResolution.y;
+            var aspect = safeWidth / (float)safeHeight;
+            var baseScale = aspect >= referenceAspect
+                ? safeHeight / GuiReferenceResolution.y
+                : safeWidth / GuiReferenceResolution.x;
+
+            var logicalWidth = safeWidth / Mathf.Max(baseScale, float.Epsilon);
+            var logicalHeight = safeHeight / Mathf.Max(baseScale, float.Epsilon);
+            var viewportCap = Mathf.Min(
+                logicalWidth / MinimumGuiViewport.x,
+                logicalHeight / MinimumGuiViewport.y);
+
+            return Mathf.Clamp(viewportCap, MinimumGuiScale, MaximumGuiScale);
+        }
+
         public static FullScreenMode ToFullScreenMode(ViewMode viewMode)
         {
             switch (viewMode)
@@ -200,6 +271,7 @@ namespace AMath.Settings
             var width = PlayerPrefs.GetInt(WidthKey, Screen.width);
             var height = PlayerPrefs.GetInt(HeightKey, Screen.height);
             Resolution = ClosestAvailable(new ScreenSize(width, height));
+            GuiScale = ClampGuiScale(PlayerPrefs.GetFloat(GuiScaleKey, DefaultGuiScale), Screen.width, Screen.height);
         }
 
         private static void Save()
@@ -207,7 +279,13 @@ namespace AMath.Settings
             PlayerPrefs.SetInt(ViewModeKey, (int)ViewMode);
             PlayerPrefs.SetInt(WidthKey, Resolution.Width);
             PlayerPrefs.SetInt(HeightKey, Resolution.Height);
+            PlayerPrefs.SetFloat(GuiScaleKey, GuiScale);
             PlayerPrefs.Save();
+        }
+
+        private static float ClampGuiScale(float scale, int width, int height)
+        {
+            return Mathf.Clamp(scale, MinimumGuiScale, GetGuiScaleMaximum(width, height));
         }
 
         private static ViewMode FromFullScreenMode(FullScreenMode mode)

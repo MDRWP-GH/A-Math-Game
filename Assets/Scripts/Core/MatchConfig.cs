@@ -19,6 +19,12 @@ namespace AMath.Core
 
         /// <summary>Display name shown in UI, replays and saves.</summary>
         public string DisplayName;
+
+        /// <summary>
+        /// True when this seat is driven by the scripted medium AI on the host.
+        /// Human peers never send commands for these seats.
+        /// </summary>
+        public bool IsAi;
     }
 
     /// <summary>
