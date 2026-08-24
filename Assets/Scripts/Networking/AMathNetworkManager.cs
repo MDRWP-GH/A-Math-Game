@@ -21,12 +21,19 @@ namespace AMath.Networking
     /// </summary>
     public sealed class AMathNetworkManager : NetworkManager
     {
+        private const uint RuntimePlayerAssetId = 0xA001u;
+        private const uint RuntimeGameStateAssetId = 0xA002u;
+        private const uint RuntimeMigrationAssetId = 0xA003u;
+
         #region Dependencies (injected by the composition root)
 
         private IEventBus _eventBus;
         private PlayerManager _playerManager;
         private GameManager _gameManager;
         private RoomSession _session;
+        private GameObject _runtimePlayerPrefab;
+        private GameObject _runtimeGameStatePrefab;
+        private GameObject _runtimeMigrationPrefab;
 
         /// <summary>Injects domain dependencies. Must be called before any connection.</summary>
         public void Configure(IEventBus eventBus, PlayerManager playerManager, GameManager gameManager, RoomSession session)
@@ -37,6 +44,16 @@ namespace AMath.Networking
             _session = session;
         }
 
+        public void ConfigureRuntimePrefabs(
+            GameObject playerPrefab,
+            GameObject gameStatePrefab,
+            GameObject migrationPrefab)
+        {
+            _runtimePlayerPrefab = playerPrefab;
+            _runtimeGameStatePrefab = gameStatePrefab;
+            _runtimeMigrationPrefab = migrationPrefab;
+        }
+
         #endregion
 
         #region Server callbacks
@@ -45,7 +62,7 @@ namespace AMath.Networking
         {
             var identity = (AuthenticatedIdentity)conn.authenticationData;
 
-            GameObject playerObject = Instantiate(playerPrefab);
+            GameObject playerObject = Instantiate(_runtimePlayerPrefab);
             var player = playerObject.GetComponent<NetworkPlayer>();
 
             // Reconnections resume their original seat; lobby joins are
@@ -56,7 +73,7 @@ namespace AMath.Networking
                 identity.PersistentGuid,
                 isHost: conn == NetworkServer.localConnection);
 
-            NetworkServer.AddPlayerForConnection(conn, playerObject);
+            NetworkServer.AddPlayerForConnection(conn, playerObject, RuntimePlayerAssetId);
 
             if (identity.IsReconnection)
             {
@@ -133,11 +150,38 @@ namespace AMath.Networking
 
         #region Client callbacks
 
+        public override void OnStartClient()
+        {
+            RegisterRuntimePrefab(_runtimePlayerPrefab, RuntimePlayerAssetId);
+            RegisterRuntimePrefab(_runtimeGameStatePrefab, RuntimeGameStateAssetId);
+            RegisterRuntimePrefab(_runtimeMigrationPrefab, RuntimeMigrationAssetId);
+        }
+
         public override void OnClientConnect()
         {
-            base.OnClientConnect();
+            if (!clientLoadedScene)
+            {
+                if (!NetworkClient.ready)
+                    NetworkClient.Ready();
+
+                if (NetworkClient.localPlayer == null)
+                    NetworkClient.AddPlayer();
+            }
+
             Debug.Log($"[Network] Connected to {_session?.RoomName ?? networkAddress}.");
             _eventBus.Publish(new ClientConnectedEvent());
+        }
+
+        public override void OnClientSceneChanged()
+        {
+            if (NetworkClient.connection.isAuthenticated && !NetworkClient.ready)
+                NetworkClient.Ready();
+
+            if (NetworkClient.connection.isAuthenticated
+                && NetworkClient.localPlayer == null)
+            {
+                NetworkClient.AddPlayer();
+            }
         }
 
         public override void OnClientDisconnect()
@@ -149,12 +193,32 @@ namespace AMath.Networking
 
             base.OnClientDisconnect();
 
-            // The reconnection/host-migration pipeline reacts to this event.
+            // The reconnection pipeline reacts to this event.
             Debug.LogWarning(
                 $"[Network] Client disconnected (match running: {matchWasRunning}, RTT: {NetworkTime.rtt * 1000d:0} ms).");
             _eventBus.Publish(new ClientDisconnectedEvent { MatchWasRunning = matchWasRunning });
         }
 
         #endregion
+
+        private static void RegisterRuntimePrefab(GameObject prefab, uint assetId)
+        {
+            if (prefab == null)
+                return;
+
+            NetworkClient.RegisterPrefab(prefab, assetId);
+        }
+
+        public static uint GetRuntimeAssetId<T>() where T : NetworkBehaviour
+        {
+            if (typeof(T) == typeof(NetworkPlayer))
+                return RuntimePlayerAssetId;
+            if (typeof(T) == typeof(NetworkGameState))
+                return RuntimeGameStateAssetId;
+            if (typeof(T) == typeof(AMath.Networking.HostMigration.MigrationTableSync))
+                return RuntimeMigrationAssetId;
+
+            throw new System.ArgumentOutOfRangeException(nameof(T), typeof(T), "No runtime asset id registered.");
+        }
     }
 }

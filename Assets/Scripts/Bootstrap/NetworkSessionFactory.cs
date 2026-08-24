@@ -35,18 +35,20 @@ namespace AMath.Bootstrap
             var transport = root.AddComponent<KcpTransport>();
             TransportConfigurator.Configure(transport);
 
-            var authenticator = root.AddComponent<RoomAuthenticator>();
+            // NetworkAuthenticator requires a NetworkManager. Adding the
+            // authenticator first lets Unity inject a generic NetworkManager,
+            // which then blocks AMathNetworkManager ([DisallowMultipleComponent]).
             var networkManager = root.AddComponent<AMathNetworkManager>();
+            var authenticator = root.AddComponent<RoomAuthenticator>();
             networkManager.transport = transport;
             networkManager.authenticator = authenticator;
-            networkManager.autoCreatePlayer = true;
-            networkManager.playerPrefab = CreatePlayerPrefab();
+            networkManager.autoCreatePlayer = false;
             Transport.active = transport;
 
+            var playerPrefab = CreatePlayerPrefab();
             var gameStatePrefab = CreateNetworkBehaviourPrefab<NetworkGameState>("NetworkGameStatePrefab");
             var migrationPrefab = CreateNetworkBehaviourPrefab<MigrationTableSync>("MigrationTableSyncPrefab");
-            networkManager.spawnPrefabs.Add(gameStatePrefab);
-            networkManager.spawnPrefabs.Add(migrationPrefab);
+            networkManager.ConfigureRuntimePrefabs(playerPrefab, gameStatePrefab, migrationPrefab);
 
             // Inactive scene stand-ins so NetworkedGameContext can register them;
             // live copies are spawned when the host starts.
@@ -69,7 +71,7 @@ namespace AMath.Bootstrap
                 Authenticator = authenticator,
                 GameState = gameState.GetComponent<NetworkGameState>(),
                 MigrationTable = migration.GetComponent<MigrationTableSync>(),
-                PlayerPrefab = networkManager.playerPrefab,
+                PlayerPrefab = playerPrefab,
                 GameStatePrefab = gameStatePrefab,
                 MigrationPrefab = migrationPrefab
             };
@@ -125,11 +127,15 @@ namespace AMath.Bootstrap
 
                 GameObject gameStateObject = Object.Instantiate(_gameStatePrefab);
                 gameStateObject.SetActive(true);
-                NetworkServer.Spawn(gameStateObject);
+                NetworkServer.Spawn(
+                    gameStateObject,
+                    AMathNetworkManager.GetRuntimeAssetId<NetworkGameState>());
 
                 GameObject migrationObject = Object.Instantiate(_migrationPrefab);
                 migrationObject.SetActive(true);
-                NetworkServer.Spawn(migrationObject);
+                NetworkServer.Spawn(
+                    migrationObject,
+                    AMathNetworkManager.GetRuntimeAssetId<MigrationTableSync>());
 
                 if (NetworkContext.Services != null)
                 {
