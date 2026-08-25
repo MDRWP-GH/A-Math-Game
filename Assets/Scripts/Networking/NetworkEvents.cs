@@ -16,13 +16,30 @@ namespace AMath.Networking
     public struct ClientConnectedEvent { }
 
     /// <summary>
-    /// The local client lost its connection to the host. During a match this
-    /// triggers the pause + backup + host-migration flow.
+    /// The local client lost its connection to the host. Triggers the
+    /// reconnect grace window (then leave + fresh join on failure).
     /// </summary>
     public struct ClientDisconnectedEvent
     {
         /// <summary>True when a match was in progress at the moment of disconnect.</summary>
         public bool MatchWasRunning;
+    }
+
+    /// <summary>Why a room was dissolved for this machine.</summary>
+    public enum RoomDissolveReason
+    {
+        HostNetworkLost = 0,
+        ReconnectFailed = 1,
+        LobbyDisconnect = 2
+    }
+
+    /// <summary>
+    /// The local room session was torn down (host network loss, or client
+    /// gave up after reconnect / fresh-join failed).
+    /// </summary>
+    public struct RoomDissolvedEvent
+    {
+        public RoomDissolveReason Reason;
     }
 
     /// <summary>The discovered-room list changed (rooms appeared, expired or updated).</summary>

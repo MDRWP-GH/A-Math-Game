@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.Reflection;
 using AMath.Networking.HostMigration;
 using AMath.Networking.Room;
 using NUnit.Framework;
@@ -79,17 +78,10 @@ namespace AMath.Tests
         }
 
         [Test]
-        public void PromotionDeadline_AccountsForElectionRank()
+        public void ReconnectGrace_IsFiveSeconds()
         {
-            MethodInfo calculateDeadline = typeof(HostMigrationManager).GetMethod(
-                "CalculatePromotionDeadline",
-                BindingFlags.Static | BindingFlags.NonPublic);
-
-            float rankTwoDeadline = (float)calculateDeadline.Invoke(null, new object[] { 2 });
-
-            Assert.AreEqual(
-                HostMigrationManager.GraceSeconds + 2 * HostMigrationManager.PromotionStaggerSeconds,
-                rankTwoDeadline);
+            Assert.AreEqual(5f, HostMigrationManager.GraceSeconds);
+            Assert.AreEqual(1, HostMigrationManager.MaxReconnectAttempts);
         }
 
         #endregion

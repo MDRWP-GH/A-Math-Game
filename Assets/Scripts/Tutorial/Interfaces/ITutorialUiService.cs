@@ -2,9 +2,7 @@ namespace AMath.Tutorial.Interfaces
 {
     /// <summary>
     /// Drives the tutorial's own HUD: objective text, step progress and the
-    /// scripted hint display. Deliberately does not expose anything about
-    /// the AI chat window itself — that lives behind <c>IAiEntryPoint</c>
-    /// (Core), which this service's owner may hold separately.
+    /// scripted hint display.
     /// </summary>
     public interface ITutorialUiService
     {
@@ -19,8 +17,5 @@ namespace AMath.Tutorial.Interfaces
 
         /// <summary>Clears any currently shown hint.</summary>
         void ClearHint();
-
-        /// <summary>Enables/disables the "Ask AI" affordance. Has no effect if no <c>IAiEntryPoint</c> was ever injected.</summary>
-        void SetAiButtonAvailable(bool available);
     }
 }

@@ -4,9 +4,8 @@ namespace AMath.Tutorial.Interfaces
 {
     /// <summary>
     /// Authoring contract for one complete tutorial: an ordered list of
-    /// steps plus the configuration for when the "Ask AI" affordance may
-    /// appear (see the Hint System design — AI is only offered after the
-    /// scripted hints, if configured to do so at all).
+    /// scripted steps. The match itself is driven by
+    /// <c>ScriptedTutorialMatchScript</c>, not by an AI mover or assistant.
     /// </summary>
     public interface ITutorialSequenceDefinition
     {
@@ -18,12 +17,5 @@ namespace AMath.Tutorial.Interfaces
 
         /// <summary>Steps in play order.</summary>
         IReadOnlyList<ITutorialStepDefinition> Steps { get; }
-
-        /// <summary>
-        /// Number of scripted hints (across the current step) that must be
-        /// shown before the AI button unlocks. -1 means the AI is never
-        /// offered during this tutorial regardless of hints shown.
-        /// </summary>
-        int AiUnlockAfterHintCount { get; }
     }
 }

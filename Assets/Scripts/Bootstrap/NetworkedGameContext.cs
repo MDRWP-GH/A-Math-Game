@@ -243,8 +243,10 @@ namespace AMath.Bootstrap
             var session = _services.Register(new RoomSession());
             var discovery = _services.Register(new DiscoveryManager(bus));
             var roomManager = _services.Register(new RoomManager(bus, session, discovery, gameManager, _networkManager));
-            var migrationManager = _services.Register(new HostMigrationManager(bus, discovery, roomManager, saveManager, replayManager, playerManager, session));
-            _services.Register(new ReconnectionManager(bus, stateMachine, gameManager, playerManager, saveManager, migrationManager, session));
+            var migrationManager = _services.Register(new HostMigrationManager(bus, discovery, roomManager, session));
+            _services.Register(new ReconnectionManager(
+                bus, stateMachine, gameManager, playerManager, saveManager,
+                migrationManager, roomManager, discovery, session));
 
             _services.Register(_networkManager);
             _services.Register(_networkGameState);

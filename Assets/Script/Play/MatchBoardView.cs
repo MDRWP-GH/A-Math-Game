@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using AMath.Core;
 using AMath.Gameplay.Board;
 using AMath.Gameplay.Interaction;
@@ -20,6 +21,7 @@ namespace AMath.UI
     internal sealed class MatchBoardView
     {
         private const float CellSize = 46f;
+        private static readonly Color CellGuide = new(0.98f, 0.84f, 0.18f, 0.95f);
 
         private static readonly Color CellPlain = new(0.16f, 0.22f, 0.40f, 1f);
         private static readonly Color CellOccupied = new(0.20f, 0.45f, 0.55f, 1f);
@@ -29,11 +31,14 @@ namespace AMath.UI
 
         private readonly Button[,] _cells = new Button[GameRules.BoardSize, GameRules.BoardSize];
         private readonly Text[,] _labels = new Text[GameRules.BoardSize, GameRules.BoardSize];
+        private readonly float _cellSize;
+        private readonly HashSet<int> _guideCells = new();
 
         /// <summary>Builds the cell grid under <paramref name="parent"/>.</summary>
-        public MatchBoardView(UiFactory ui, RectTransform parent, Action<int, int> onCellClicked)
+        public MatchBoardView(UiFactory ui, RectTransform parent, Action<int, int> onCellClicked, float cellSize = CellSize)
         {
-            float origin = -((GameRules.BoardSize - 1) * CellSize) * 0.5f;
+            _cellSize = cellSize;
+            float origin = -((GameRules.BoardSize - 1) * _cellSize) * 0.5f;
             for (int y = 0; y < GameRules.BoardSize; y++)
             {
                 for (int x = 0; x < GameRules.BoardSize; x++)
@@ -47,13 +52,22 @@ namespace AMath.UI
 
                     UiFactory.SetCenteredRect(
                         button.GetComponent<RectTransform>(),
-                        new Vector2(origin + x * CellSize, -origin - y * CellSize),
-                        new Vector2(CellSize - 2f, CellSize - 2f));
+                        new Vector2(origin + x * _cellSize, -origin - y * _cellSize),
+                        new Vector2(_cellSize - 2f, _cellSize - 2f));
 
                     _cells[x, y] = button;
                     _labels[x, y] = button.GetComponentInChildren<Text>();
                 }
             }
+        }
+
+        /// <summary>Marks cells the tutorial wants the player to occupy next.</summary>
+        public void SetGuideCells(IReadOnlyList<TilePlacement> placements)
+        {
+            _guideCells.Clear();
+            if (placements == null) return;
+            for (int i = 0; i < placements.Count; i++)
+                _guideCells.Add(placements[i].Y * GameRules.BoardSize + placements[i].X);
         }
 
         /// <summary>
@@ -76,7 +90,7 @@ namespace AMath.UI
             }
         }
 
-        private static void ResolveCell(BoardGrid grid, int x, int y, out string symbol, out Color color)
+        private void ResolveCell(BoardGrid grid, int x, int y, out string symbol, out Color color)
         {
             if (grid != null && grid.IsOccupied(x, y))
             {
@@ -97,6 +111,9 @@ namespace AMath.UI
 
             if (x == GameRules.CenterX && y == GameRules.CenterY)
                 symbol = "★";
+
+            if (_guideCells.Contains(y * GameRules.BoardSize + x))
+                color = CellGuide;
         }
 
         private static void ApplyDraft(

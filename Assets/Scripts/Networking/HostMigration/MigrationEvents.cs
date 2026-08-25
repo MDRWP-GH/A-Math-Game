@@ -12,7 +12,7 @@ namespace AMath.Networking.HostMigration
         /// <summary>Scanning LAN discovery for the room code (original or migrated host).</summary>
         Searching = 2,
 
-        /// <summary>This machine is promoting itself to host from its autosave.</summary>
+        /// <summary>Unused — host promotion is disabled (kept for serialization compatibility).</summary>
         Promoting = 3,
 
         /// <summary>Connecting to a rediscovered host.</summary>

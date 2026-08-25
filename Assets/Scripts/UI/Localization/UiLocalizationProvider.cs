@@ -243,9 +243,9 @@ namespace AMath.UI.Localization
             ["ui.recovery.title"] = "การเชื่อมต่อขาดหาย",
             ["ui.recovery.wait"] = "รอต่อ",
             ["ui.recovery.end"] = "จบจากเซฟสำรอง",
-            ["ui.recovery.grace"] = "รอเจ้าบ้านกลับมา…",
+            ["ui.recovery.grace"] = "กำลังเชื่อมต่อใหม่…",
             ["ui.recovery.search"] = "กำลังค้นหาห้องในเครือข่าย…",
-            ["ui.recovery.promote"] = "กำลังรับเป็นเจ้าบ้านใหม่…",
+            ["ui.recovery.promote"] = "กำลังเชื่อมต่อใหม่…",
             ["ui.recovery.reconnect"] = "พบห้องแล้ว กำลังเชื่อมใหม่…",
             ["ui.recovery.recovered"] = "เชื่อมต่อสำเร็จ!",
         };
@@ -462,9 +462,9 @@ namespace AMath.UI.Localization
             ["ui.recovery.title"] = "Connection Lost",
             ["ui.recovery.wait"] = "Keep Waiting",
             ["ui.recovery.end"] = "End From Backup Save",
-            ["ui.recovery.grace"] = "Waiting for the host to return…",
+            ["ui.recovery.grace"] = "Reconnecting…",
             ["ui.recovery.search"] = "Searching the LAN for the room…",
-            ["ui.recovery.promote"] = "Taking over as the new host…",
+            ["ui.recovery.promote"] = "Reconnecting…",
             ["ui.recovery.reconnect"] = "Room found — reconnecting…",
             ["ui.recovery.recovered"] = "Reconnected!",
         };

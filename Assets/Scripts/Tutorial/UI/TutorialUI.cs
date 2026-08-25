@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
-using AMath.Core.Assistance;
 using AMath.Core.Events;
+using AMath.Tutorial;
 using AMath.Tutorial.Interfaces;
 using UnityEngine;
 using UnityEngine.Events;
@@ -12,8 +12,7 @@ namespace AMath.Tutorial.UI
     /// <summary>
     /// Scene-facing tutorial presenter. Implements the Tutorial presentation
     /// service contracts while keeping all scene references localized here.
-    /// It receives its manager, event bus and optional AI entry point through
-    /// <see cref="Configure"/>; it never locates global services itself.
+    /// It receives its manager and event bus through <see cref="Configure"/>.
     /// </summary>
     public sealed class TutorialUI : MonoBehaviour,
         ITutorialUiService,
@@ -34,7 +33,6 @@ namespace AMath.Tutorial.UI
         [Header("Player controls")]
         [SerializeField] private Button _skipButton;
         [SerializeField] private Button _replayStepButton;
-        [SerializeField] private Button _askAiButton;
 
         [Header("Highlights")]
         [SerializeField] private TutorialHighlightTarget[] _highlightTargets = Array.Empty<TutorialHighlightTarget>();
@@ -47,31 +45,24 @@ namespace AMath.Tutorial.UI
 
         private TutorialManager _manager;
         private IEventBus _eventBus;
-        private IAiEntryPoint _aiEntryPoint;
         private Action _dialogueFinished;
-        private bool _aiUnlockedByTutorial;
 
         /// <summary>
         /// Injects the runtime collaborators. This must be called by the
-        /// composition root before the tutorial begins; <paramref name="aiEntryPoint"/>
-        /// may be null when the AI assembly/module is disabled or absent.
+        /// composition root before the tutorial begins.
         /// </summary>
         public void Configure(
             TutorialManager manager,
-            IEventBus eventBus,
-            IAiEntryPoint aiEntryPoint = null)
+            IEventBus eventBus)
         {
             _manager = manager ?? throw new ArgumentNullException(nameof(manager));
             _eventBus = eventBus ?? throw new ArgumentNullException(nameof(eventBus));
-            _aiEntryPoint = aiEntryPoint;
-            RefreshAiButton();
         }
 
         private void Awake()
         {
             BuildHighlightLookup();
             BindControls();
-            SetAiButtonAvailable(false);
 
             if (_dialoguePanel != null)
                 _dialoguePanel.SetActive(false);
@@ -95,7 +86,6 @@ namespace AMath.Tutorial.UI
 
             _skipButton?.onClick.RemoveListener(OnSkipPressed);
             _replayStepButton?.onClick.RemoveListener(OnReplayStepPressed);
-            _askAiButton?.onClick.RemoveListener(OnAskAiPressed);
         }
 
         /// <inheritdoc />
@@ -126,13 +116,6 @@ namespace AMath.Tutorial.UI
         {
             if (_hintText != null)
                 _hintText.text = string.Empty;
-        }
-
-        /// <inheritdoc />
-        public void SetAiButtonAvailable(bool available)
-        {
-            _aiUnlockedByTutorial = available;
-            RefreshAiButton();
         }
 
         /// <inheritdoc />
@@ -191,8 +174,6 @@ namespace AMath.Tutorial.UI
                 _skipButton.onClick.AddListener(OnSkipPressed);
             if (_replayStepButton != null)
                 _replayStepButton.onClick.AddListener(OnReplayStepPressed);
-            if (_askAiButton != null)
-                _askAiButton.onClick.AddListener(OnAskAiPressed);
 
             foreach (TutorialButtonSignal signal in _buttonSignals)
             {
@@ -238,24 +219,9 @@ namespace AMath.Tutorial.UI
             _manager?.ReplayCurrentStep();
         }
 
-        private void OnAskAiPressed()
-        {
-            PublishButtonPress(TutorialButtonIds.AskAi);
-            if (_aiUnlockedByTutorial && _aiEntryPoint?.IsAvailable == true)
-                _aiEntryPoint.OpenChat();
-        }
-
         private void PublishButtonPress(string buttonId)
         {
             _eventBus?.Publish(new ButtonPressedEvent { ButtonId = buttonId });
-        }
-
-        private void RefreshAiButton()
-        {
-            if (_askAiButton == null) return;
-
-            bool show = _aiUnlockedByTutorial && _aiEntryPoint?.IsAvailable == true;
-            _askAiButton.gameObject.SetActive(show);
         }
 
         private void StopCurrentDialogue(bool invokeCallback)
@@ -295,9 +261,6 @@ namespace AMath.Tutorial.UI
 
         /// <summary>Replay Step button id.</summary>
         public const string ReplayStep = "tutorial.replay-step";
-
-        /// <summary>Ask AI button id.</summary>
-        public const string AskAi = "tutorial.ask-ai";
     }
 
     /// <summary>Scene binding that makes an arbitrary UGUI button observable by a scripted condition.</summary>

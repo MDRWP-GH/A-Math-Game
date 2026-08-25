@@ -20,6 +20,7 @@ namespace AMath.Gameplay.Interaction
         private readonly IEventBus _eventBus;
         private readonly BoardManager _boardManager;
         private readonly PlayerManager _playerManager;
+        private readonly ITurnInputConstraint _constraint;
         private readonly ScoreCalculator _scoreCalculator = new();
         private readonly List<TilePlacement> _pending = new(GameRules.RackSize);
         private readonly List<byte> _rackScratch = new(GameRules.RackSize);
@@ -30,11 +31,13 @@ namespace AMath.Gameplay.Interaction
         public TurnInputSession(
             IEventBus eventBus,
             BoardManager boardManager,
-            PlayerManager playerManager)
+            PlayerManager playerManager,
+            ITurnInputConstraint constraint = null)
         {
             _eventBus = eventBus ?? throw new ArgumentNullException(nameof(eventBus));
             _boardManager = boardManager ?? throw new ArgumentNullException(nameof(boardManager));
             _playerManager = playerManager ?? throw new ArgumentNullException(nameof(playerManager));
+            _constraint = constraint;
         }
 
         /// <inheritdoc />
@@ -147,6 +150,12 @@ namespace AMath.Gameplay.Interaction
                 declaredAs = _pendingDeclaration.Value;
             }
 
+            if (_constraint != null
+                && !_constraint.AllowsPlaceOnCell(tileId, declaredAs, x, y, _pending, out error))
+            {
+                return false;
+            }
+
             // Build a virtual rack that excludes tiles already in the draft.
             BuildAvailableRack(local.Rack, _rackScratch);
             if (!_rackScratch.Remove(tileId))
@@ -210,6 +219,9 @@ namespace AMath.Gameplay.Interaction
                 return false;
             }
 
+            if (_constraint != null && !_constraint.AllowsConfirmPlace(_pending, out error))
+                return false;
+
             RefreshPreview(local.Rack);
             if (!PreviewValidation.IsValid)
             {
@@ -226,6 +238,12 @@ namespace AMath.Gameplay.Interaction
 
         public void RequestPass()
         {
+            if (_constraint != null && !_constraint.AllowsPass(out string error))
+            {
+                _eventBus.Publish(new CommandRejectedEvent { Reason = error });
+                return;
+            }
+
             _eventBus.Publish(new LocalCommandRequestedEvent { Command = new PassTurnCommand() });
             ClearDraft();
         }
@@ -239,6 +257,9 @@ namespace AMath.Gameplay.Interaction
                 error = "Local player is not ready.";
                 return false;
             }
+
+            if (_constraint != null && !_constraint.AllowsExchange(out error))
+                return false;
 
             if (rackIndices == null || rackIndices.Count == 0)
             {

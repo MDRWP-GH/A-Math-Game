@@ -6,10 +6,9 @@ using UnityEngine;
 namespace AMath.UI
 {
     /// <summary>
-    /// Presenter for the "connection lost" overlay shown while the recovery
-    /// pipeline runs. The player has exactly the two choices required by the
-    /// design: keep waiting for the host (recovery keeps searching forever) or
-    /// end the match now from the local backup save.
+    /// Presenter for the "connection lost" overlay shown while reconnect /
+    /// fresh-join runs. The player may keep waiting (automatic) or end the
+    /// match now from the local backup save.
     /// </summary>
     public sealed class ConnectionLostPresenter : MonoBehaviour
     {
@@ -18,7 +17,7 @@ namespace AMath.UI
         /// <summary>Show/refresh the overlay: (phase, user-readable status, elapsed seconds).</summary>
         public event Action<RecoveryPhase, string, float> StatusChanged;
 
-        /// <summary>Recovery finished (hide the overlay on success).</summary>
+        /// <summary>Recovery finished (hide the overlay on success; leave room on failure).</summary>
         public event Action<bool> RecoveryFinished;
 
         #endregion
@@ -39,12 +38,14 @@ namespace AMath.UI
 
             _eventBus.Subscribe<RecoveryStateChangedEvent>(OnRecoveryStateChanged);
             _eventBus.Subscribe<HostMigrationCompletedEvent>(OnMigrationCompleted);
+            _eventBus.Subscribe<RoomDissolvedEvent>(OnRoomDissolved);
         }
 
         private void OnDestroy()
         {
             _eventBus?.Unsubscribe<RecoveryStateChangedEvent>(OnRecoveryStateChanged);
             _eventBus?.Unsubscribe<HostMigrationCompletedEvent>(OnMigrationCompleted);
+            _eventBus?.Unsubscribe<RoomDissolvedEvent>(OnRoomDissolved);
         }
 
         #endregion
@@ -58,14 +59,22 @@ namespace AMath.UI
 
         private void OnMigrationCompleted(HostMigrationCompletedEvent evt)
         {
-            RecoveryFinished?.Invoke(evt.Success);
+            // Success = reconnected. Failure here only means seat-reconnect
+            // failed and a fresh join may still be in progress — wait for
+            // RoomDissolvedEvent before treating the session as gone.
+            if (evt.Success)
+                RecoveryFinished?.Invoke(true);
+        }
+
+        private void OnRoomDissolved(RoomDissolvedEvent _)
+        {
+            RecoveryFinished?.Invoke(false);
         }
 
         private static string DescribePhase(RecoveryPhase phase) => phase switch
         {
-            RecoveryPhase.GraceWait => "Connection lost — waiting for the host...",
+            RecoveryPhase.GraceWait => "Connection lost — reconnecting...",
             RecoveryPhase.Searching => "Searching for the room on this network...",
-            RecoveryPhase.Promoting => "Taking over as the new host...",
             RecoveryPhase.Reconnecting => "Room found — reconnecting...",
             RecoveryPhase.Recovered => "Reconnected!",
             _ => string.Empty

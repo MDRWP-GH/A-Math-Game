@@ -31,8 +31,6 @@ namespace AMath.Tutorial
         private ITutorialSequenceDefinition _sequence;
         private TutorialStep _currentStep;
         private int _stepIndex;
-        private int _shownHintCount;
-        private bool _isAiUnlocked;
 
         /// <summary>Creates the manager with explicit, independently mockable dependencies.</summary>
         public TutorialManager(
@@ -76,9 +74,6 @@ namespace AMath.Tutorial
             _runtimeContext.Dialogue.Skip();
             _sequence = sequence;
             _stepIndex = ResolveStartIndex(sequence, resumeProgress);
-            _shownHintCount = 0;
-            _isAiUnlocked = false;
-            _runtimeContext.Ui.SetAiButtonAvailable(false);
 
             TransitionToNotStarted();
             _stateMachine.TransitionTo(TutorialPhase.Running);
@@ -125,7 +120,6 @@ namespace AMath.Tutorial
             StopCurrentStep();
             _runtimeContext.Dialogue.Skip();
             _runtimeContext.Highlighter.ClearHighlight();
-            _runtimeContext.Ui.SetAiButtonAvailable(false);
             _stateMachine.TransitionTo(TutorialPhase.Skipped);
             PersistProgress(isCompleted: true);
             PublishProgress(isActive: false, objectiveText: null);
@@ -170,23 +164,7 @@ namespace AMath.Tutorial
 
         private void BeginHintsForCurrentStep()
         {
-            _shownHintCount = 0;
-            _hintScheduler.Begin(_currentStep.Hints, OnHintShown);
-        }
-
-        private void OnHintShown(int shownHintCount)
-        {
-            _shownHintCount = shownHintCount;
-            if (_isAiUnlocked ||
-                _sequence.AiUnlockAfterHintCount < 0 ||
-                _shownHintCount < _sequence.AiUnlockAfterHintCount)
-            {
-                return;
-            }
-
-            _isAiUnlocked = true;
-            _runtimeContext.Ui.SetAiButtonAvailable(true);
-            _eventBus.Publish(new AiButtonUnlockedEvent { StepId = _currentStep.StepId });
+            _hintScheduler.Begin(_currentStep.Hints, _ => { });
         }
 
         private void AdvanceStep()

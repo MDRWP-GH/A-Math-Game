@@ -54,6 +54,12 @@ namespace AMath.Networking.Discovery
         /// <summary>True while this machine is advertising a room.</summary>
         public bool IsAdvertising => _broadcaster.IsRunning;
 
+        /// <summary>
+        /// Consecutive failed advertisement sends while hosting. Hosts use this
+        /// to dissolve the room when the local network interface dies.
+        /// </summary>
+        public int ConsecutiveBroadcastFailures => _broadcaster.ConsecutiveSendFailures;
+
         #endregion
 
         #region Construction

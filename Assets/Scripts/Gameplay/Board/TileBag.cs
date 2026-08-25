@@ -51,6 +51,35 @@ namespace AMath.Gameplay.Board
 
         #region Operations
 
+        /// <summary>
+        /// Removes the requested tiles from the bag in the given order.
+        /// Returns false and leaves the bag unchanged when any tile is missing.
+        /// Used by the tutorial to deal predetermined opening racks.
+        /// </summary>
+        public bool TryTakeSpecific(IReadOnlyList<byte> tiles, List<byte> destination)
+        {
+            if (tiles == null) throw new ArgumentNullException(nameof(tiles));
+            if (destination == null) throw new ArgumentNullException(nameof(destination));
+
+            var remaining = new List<byte>(_tiles);
+            var taken = new List<byte>(tiles.Count);
+            for (int i = 0; i < tiles.Count; i++)
+            {
+                int index = remaining.IndexOf(tiles[i]);
+                if (index < 0)
+                    return false;
+
+                remaining.RemoveAt(index);
+                taken.Add(tiles[i]);
+            }
+
+            destination.Clear();
+            destination.AddRange(taken);
+            _tiles.Clear();
+            _tiles.AddRange(remaining);
+            return true;
+        }
+
         /// <summary>Draws up to <paramref name="count"/> tiles (less when the bag runs dry).</summary>
         public void Draw(int count, List<byte> destination)
         {

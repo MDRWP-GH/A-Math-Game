@@ -1,45 +1,27 @@
 using System.Collections.Generic;
 using AMath.Core;
 using AMath.Core.Events;
-using AMath.Gameplay.Players;
 using AMath.Networking.Discovery;
 using AMath.Networking.Room;
-using AMath.Networking.Transport;
-using AMath.Replay;
-using AMath.Save;
 using UnityEngine;
 
 namespace AMath.Networking.HostMigration
 {
     /// <summary>
-    /// Client-side host-succession engine. Uses only local data (the cached
-    /// succession table, the local autosave and LAN discovery), because when
-    /// it runs, the network session is already gone.
-    ///
-    /// Timeline after the host vanishes:
-    ///  1. Grace window — scan for the original host rebroadcasting the same
-    ///     room code (a router hiccup must not trigger a false migration).
-    ///  2. Election — my rank in the cached table decides my role:
-    ///     rank 0 promotes immediately; rank N waits N * stagger seconds and
-    ///     only promotes if no better candidate has appeared (fault-tolerant
-    ///     chain: if #1 also died, #2 takes over, and so on).
-    ///  3. Promotion loads the latest autosave and re-hosts under the SAME
-    ///     room code; everyone else rediscovers that code and reconnects.
-    /// There is no negotiation traffic at all — every survivor reaches the
-    /// same conclusion from identical replicated data.
+    /// Client-side reconnect pipeline (Minecraft-style): after the host link
+    /// drops, scan LAN for the same room code for a short grace window and try
+    /// to reconnect. There is no host promotion — if reconnect fails, recovery
+    /// ends so the caller can leave and attempt a fresh join.
     /// </summary>
     public sealed class HostMigrationManager : ITickable, System.IDisposable
     {
         #region Constants
 
-        /// <summary>Seconds to wait for the original host before electing a new one.</summary>
-        public const float GraceSeconds = 8f;
+        /// <summary>Seconds to wait / retry reconnect before giving up.</summary>
+        public const float GraceSeconds = 5f;
 
-        /// <summary>Extra wait per succession rank before self-promoting.</summary>
-        public const float PromotionStaggerSeconds = 10f;
-
-        /// <summary>Maximum automatic reconnect attempts to one recovered host.</summary>
-        public const int MaxReconnectAttempts = 4;
+        /// <summary>Maximum automatic seat-token reconnect attempts in one recovery cycle.</summary>
+        public const int MaxReconnectAttempts = 1;
 
         #endregion
 
@@ -48,23 +30,14 @@ namespace AMath.Networking.HostMigration
         private readonly IEventBus _eventBus;
         private readonly DiscoveryManager _discovery;
         private readonly RoomManager _roomManager;
-        private readonly SaveManager _saveManager;
-        private readonly ReplayManager _replayManager;
-        private readonly PlayerManager _playerManager;
         private readonly RoomSession _session;
-
-        private readonly List<MigrationCandidate> _cachedTable = new();
 
         private RecoveryPhase _phase = RecoveryPhase.Idle;
         private float _elapsed;
-        private float _promotionDeadline;
         private float _nextReconnectAttempt;
         private float _nextHeartbeat;
         private string _targetRoomCode;
-        private int _promotionRank;
-        private bool _promotionRankResolved;
         private int _reconnectAttempts;
-        private float _lastSawTargetRoomAt = float.NegativeInfinity;
 
         #endregion
 
@@ -76,6 +49,9 @@ namespace AMath.Networking.HostMigration
         /// <summary>Number of automatic reconnect attempts in this recovery cycle.</summary>
         public int ReconnectAttempts => _reconnectAttempts;
 
+        /// <summary>Room code being recovered, if any.</summary>
+        public string TargetRoomCode => _targetRoomCode;
+
         #endregion
 
         #region Construction
@@ -84,47 +60,41 @@ namespace AMath.Networking.HostMigration
             IEventBus eventBus,
             DiscoveryManager discovery,
             RoomManager roomManager,
-            SaveManager saveManager,
-            ReplayManager replayManager,
-            PlayerManager playerManager,
             RoomSession session)
         {
             _eventBus = eventBus;
             _discovery = discovery;
             _roomManager = roomManager;
-            _saveManager = saveManager;
-            _replayManager = replayManager;
-            _playerManager = playerManager;
             _session = session;
 
             _eventBus.Subscribe<ClientConnectedEvent>(OnClientConnected);
-            _eventBus.Subscribe<HostStartedEvent>(OnHostStarted);
         }
 
         /// <inheritdoc />
         public void Dispose()
         {
             _eventBus.Unsubscribe<ClientConnectedEvent>(OnClientConnected);
-            _eventBus.Unsubscribe<HostStartedEvent>(OnHostStarted);
         }
 
         #endregion
 
-        #region Table cache (fed by MigrationTableSync while connected)
+        #region Table cache (legacy; promotion disabled)
 
-        /// <summary>Replaces the cached succession table with the latest replicated copy.</summary>
+        /// <summary>
+        /// Accepts the replicated succession table for compatibility with
+        /// <see cref="MigrationTableSync"/>. Host promotion is disabled, so
+        /// the table is not used during reconnect.
+        /// </summary>
         public void UpdateCachedTable(List<MigrationCandidate> table)
         {
-            _cachedTable.Clear();
-            _cachedTable.AddRange(table);
-            MigrationRanking.Sort(_cachedTable);
+            // Intentionally unused — Minecraft-style reconnect does not promote.
         }
 
         #endregion
 
         #region Control
 
-        /// <summary>Starts the recovery pipeline (called by ReconnectionManager on host loss).</summary>
+        /// <summary>Starts the reconnect pipeline (called by ReconnectionManager on disconnect).</summary>
         public void BeginRecovery()
         {
             if (_phase != RecoveryPhase.Idle && _phase != RecoveryPhase.Recovered) return;
@@ -133,13 +103,10 @@ namespace AMath.Networking.HostMigration
             _elapsed = 0f;
             _nextHeartbeat = 0f;
             _nextReconnectAttempt = 0f;
-            _promotionRank = 0;
-            _promotionRankResolved = false;
             _reconnectAttempts = 0;
-            _lastSawTargetRoomAt = float.NegativeInfinity;
             SetPhase(RecoveryPhase.GraceWait);
             _discovery.StartSearching();
-            Debug.Log($"[Migration] Recovery started for room {_targetRoomCode}.");
+            Debug.Log($"[Reconnect] Recovery started for room {_targetRoomCode} (grace {GraceSeconds:0.#}s).");
         }
 
         /// <summary>Aborts recovery (player chose to end the match from the local save).</summary>
@@ -147,6 +114,7 @@ namespace AMath.Networking.HostMigration
         {
             if (_phase == RecoveryPhase.Idle) return;
             _discovery.StopSearching();
+            _targetRoomCode = null;
             SetPhase(RecoveryPhase.Idle);
         }
 
@@ -162,38 +130,20 @@ namespace AMath.Networking.HostMigration
 
             _elapsed += deltaTime;
 
-            // Any broadcast with our room code — original host or an earlier
-            // candidate that already took over — is a reconnect target.
-            if (_discovery.TryResolveRoomCode(_targetRoomCode, out RoomInfo room))
+            if (_discovery.TryResolveRoomCode(_targetRoomCode, out RoomInfo room)
+                && _reconnectAttempts < MaxReconnectAttempts
+                && _elapsed >= _nextReconnectAttempt)
             {
-                _lastSawTargetRoomAt = _elapsed;
-                if (_reconnectAttempts < MaxReconnectAttempts && _elapsed >= _nextReconnectAttempt)
-                {
-                    Reconnect(room);
-                    return;
-                }
+                Reconnect(room);
+                return;
             }
 
-            if (_phase == RecoveryPhase.GraceWait && _elapsed >= GraceSeconds)
+            if (_elapsed >= GraceSeconds)
             {
-                ResolvePromotionRankIfNeeded();
-                if (_promotionRank == 0)
-                {
-                    Promote();
-                }
-                else
-                {
-                    _promotionDeadline = CalculatePromotionDeadline(_promotionRank);
-                    SetPhase(RecoveryPhase.Searching);
-                }
-            }
-            else if (_phase == RecoveryPhase.Searching && _elapsed >= _promotionDeadline)
-            {
-                // Better-ranked candidates never appeared; it is my turn.
-                Promote();
+                FailRecovery("Grace window elapsed without a successful reconnect.");
+                return;
             }
 
-            // 1 Hz UI heartbeat (elapsed time display).
             if (_elapsed >= _nextHeartbeat)
             {
                 _nextHeartbeat = _elapsed + 1f;
@@ -209,99 +159,47 @@ namespace AMath.Networking.HostMigration
         {
             SetPhase(RecoveryPhase.Reconnecting);
             _discovery.StopSearching();
-            Debug.Log($"[Migration] Room {_targetRoomCode} rediscovered at {room.HostAddress}; reconnecting.");
+            Debug.Log($"[Reconnect] Room {_targetRoomCode} rediscovered at {room.HostAddress}; reconnecting.");
 
-            // A synchronous failure produces no disconnect event, so fall back
-            // to scanning immediately instead of waiting forever.
+            // A synchronous failure produces no disconnect event, so fail the
+            // attempt immediately instead of waiting forever.
             if (!_roomManager.JoinRoom(room))
                 OnReconnectFailed();
-        }
-
-        private void Promote()
-        {
-            // A host that is still broadcasting our room code is alive, even if
-            // we personally cannot reach it. Taking over now would put two
-            // hosts on the LAN under the same code and split the match in two,
-            // so keep waiting instead — the player can still end the match.
-            if (_elapsed - _lastSawTargetRoomAt < GraceSeconds)
-            {
-                Debug.LogWarning(
-                    $"[Migration] Room {_targetRoomCode} is still being advertised; not promoting.");
-                _promotionDeadline = _elapsed + GraceSeconds;
-                SetPhase(RecoveryPhase.Searching);
-                _discovery.StartSearching();
-                return;
-            }
-
-            SetPhase(RecoveryPhase.Promoting);
-            _discovery.StopSearching();
-
-            if (!_saveManager.TryLoadForRoom(_targetRoomCode, out SaveFile save, out string error))
-            {
-                Debug.LogError($"[Migration] Cannot promote — autosave unavailable: {error}");
-                // Keep waiting for someone else; the player can still end the match.
-                SetPhase(RecoveryPhase.Searching);
-                _promotionDeadline = float.MaxValue;
-                _discovery.StartSearching();
-                return;
-            }
-
-            _eventBus.Publish(new HostMigrationStartedEvent
-            {
-                IAmNewHost = true,
-                NewHostPlayerId = _playerManager.LocalPlayerId
-            });
-
-            // Port 0 means the save predates port persistence.
-            ushort port = save.Port > 0 ? (ushort)save.Port : TransportConfigurator.DefaultPort;
-            _roomManager.RehostFromSnapshot(save.State, save.RoomCode, save.RoomName, save.MaxPlayers, port);
-            // Restore the replay AFTER the snapshot: RestoreSnapshot publishes
-            // MatchStartedEvent, which resets the live replay log.
-            _replayManager.Restore(save.Replay);
-            // HostStartedEvent completes the flow.
-        }
-
-        private void OnHostStarted(HostStartedEvent _)
-        {
-            if (_phase != RecoveryPhase.Promoting) return;
-            SetPhase(RecoveryPhase.Recovered);
-            _eventBus.Publish(new HostMigrationCompletedEvent { Success = true });
         }
 
         private void OnClientConnected(ClientConnectedEvent _)
         {
             if (_phase != RecoveryPhase.Reconnecting) return;
             SetPhase(RecoveryPhase.Recovered);
+            _discovery.StopSearching();
             _eventBus.Publish(new HostMigrationCompletedEvent { Success = true });
         }
 
-        /// <summary>Reconnect attempt failed; fall back to scanning for the next candidate.</summary>
+        /// <summary>Reconnect attempt failed; retry within grace or end recovery.</summary>
         public void OnReconnectFailed()
         {
             if (_phase != RecoveryPhase.Reconnecting) return;
 
             _reconnectAttempts++;
-            ResolvePromotionRankIfNeeded();
-            if (_reconnectAttempts >= MaxReconnectAttempts)
+            if (_reconnectAttempts >= MaxReconnectAttempts || _elapsed >= GraceSeconds)
             {
-                Debug.LogWarning(
-                    $"[Migration] Reconnect failed {_reconnectAttempts} times; promoting only when this client is elected.");
-                _promotionDeadline = Mathf.Max(
-                    _promotionDeadline,
-                    CalculatePromotionDeadline(_promotionRank));
-                SetPhase(RecoveryPhase.Searching);
+                FailRecovery($"Reconnect failed after {_reconnectAttempts} attempt(s).");
                 return;
             }
 
             _discovery.StartSearching();
-            float backoff = Mathf.Min(8f, 1 << (_reconnectAttempts - 1));
-            _promotionDeadline = Mathf.Max(
-                _elapsed + backoff,
-                CalculatePromotionDeadline(_promotionRank));
-            _nextReconnectAttempt = _elapsed + backoff;
+            _nextReconnectAttempt = _elapsed + 1f;
             Debug.LogWarning(
-                $"[Migration] Reconnect attempt {_reconnectAttempts} failed; retrying discovery in {backoff:0.#}s.");
+                $"[Reconnect] Attempt {_reconnectAttempts} failed; retrying discovery in 1s.");
             SetPhase(RecoveryPhase.Searching);
+        }
+
+        private void FailRecovery(string reason)
+        {
+            Debug.LogWarning($"[Reconnect] Recovery failed: {reason}");
+            _discovery.StopSearching();
+            SetPhase(RecoveryPhase.Idle);
+            _eventBus.Publish(new HostMigrationCompletedEvent { Success = false });
         }
 
         private void SetPhase(RecoveryPhase phase)
@@ -315,39 +213,6 @@ namespace AMath.Networking.HostMigration
                 ReconnectAttempts = _reconnectAttempts
             });
         }
-
-        /// <summary>
-        /// When the succession table is empty every survivor used to promote
-        /// together; fall back to deterministic seat order instead.
-        /// </summary>
-        private int ResolvePromotionRank()
-        {
-            int rank = MigrationRanking.RankOf(_cachedTable, _playerManager.LocalPlayerId);
-            if (rank >= 0)
-                return rank;
-
-            if (_cachedTable.Count == 0)
-            {
-                int localId = _playerManager.LocalPlayerId;
-                return localId >= 0 ? localId : 0;
-            }
-
-            return _cachedTable.Count;
-        }
-
-        private void ResolvePromotionRankIfNeeded()
-        {
-            if (_promotionRankResolved)
-            {
-                return;
-            }
-
-            _promotionRank = ResolvePromotionRank();
-            _promotionRankResolved = true;
-        }
-
-        private static float CalculatePromotionDeadline(int promotionRank) =>
-            GraceSeconds + promotionRank * PromotionStaggerSeconds;
 
         #endregion
     }

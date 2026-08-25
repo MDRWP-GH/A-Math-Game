@@ -1,15 +1,14 @@
 using AMath.Art;
-using AMath.Bootstrap;
 using AMath.Core;
 using AMath.Core.Assistance;
 using AMath.Core.Events;
 using AMath.Tutorial;
-using AMath.Tutorial.Assistance;
 using AMath.Tutorial.Bootstrap;
 using AMath.Tutorial.Definitions;
 using AMath.Tutorial.Interfaces;
 using AMath.Tutorial.Localization;
 using AMath.Tutorial.Save;
+using AMath.Tutorial.Scripted;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
@@ -31,6 +30,8 @@ namespace AMath.UI.Tutorial
         private ServiceRegistry _services;
         private TutorialHudPresenter _presenter;
         private TutorialManager _tutorialManager;
+        private TutorialMatchHost _matchHost;
+        private TutorialMatchView _matchView;
         private UiFactory _ui;
         private TutorialLocalizationProvider _textProvider;
         private IEventBus _eventBus;
@@ -42,8 +43,9 @@ namespace AMath.UI.Tutorial
             EnsureEventSystem();
             _textProvider = new TutorialLocalizationProvider();
             _ui = new UiFactory(GameFonts.Jersey25);
+            WireCoreServices();
             _presenter = BuildHud();
-            WireServices(_presenter);
+            WireTutorialManager(_presenter);
         }
 
         private void Start()
@@ -59,25 +61,32 @@ namespace AMath.UI.Tutorial
             if (_eventBus != null)
                 _eventBus.Unsubscribe<TutorialStepChangedEvent>(OnTutorialStepChanged);
 
+            _matchView?.Dispose();
             _presenter?.Dispose();
             _services?.Dispose();
         }
 
-        private void WireServices(TutorialHudPresenter presenter)
+        private void WireCoreServices()
         {
             _services = new ServiceRegistry();
-
             _eventBus = _services.Register<IEventBus>(new EventBus());
-            var readers = _services.Register(new TutorialAssistanceReaders());
             ILocalizedTextProvider textProvider = _services.Register<ILocalizedTextProvider>(_textProvider);
+            _matchHost = _services.Register(
+                new TutorialMatchHost(_eventBus, textProvider, ScriptedTutorialMatchScript.Intro()));
+            _services.Register(_matchHost.Game);
+        }
+
+        private void WireTutorialManager(TutorialHudPresenter presenter)
+        {
+            ILocalizedTextProvider textProvider = _services.Resolve<ILocalizedTextProvider>();
             ITutorialSaveStore saveStore = _services.Register<ITutorialSaveStore>(
                 new TutorialProgressSaveStore());
 
             var runtimeContext = new TutorialRuntimeContext(
                 _eventBus,
-                readers,
-                readers,
-                readers,
+                _matchHost.Readers,
+                _matchHost.Readers,
+                _matchHost.Readers,
                 presenter,
                 presenter,
                 presenter);
@@ -85,13 +94,7 @@ namespace AMath.UI.Tutorial
             _tutorialManager = _services.Register(
                 new TutorialManager(_eventBus, runtimeContext, textProvider, saveStore));
 
-            // The tutorial scene has its own registry, so the AI assistant is
-            // only reachable when the main composition root happens to be
-            // alive (the player came here from a play session). When it is not,
-            // the presenter keeps the Ask AI button hidden.
-            IAiEntryPoint aiEntryPoint = null;
-            NetworkedGameContext.Instance?.Services?.TryResolve(out aiEntryPoint);
-            presenter.Configure(_tutorialManager, _eventBus, aiEntryPoint);
+            presenter.Configure(_tutorialManager, _eventBus);
             _eventBus.Subscribe<TutorialStepChangedEvent>(OnTutorialStepChanged);
         }
 
@@ -164,31 +167,13 @@ namespace AMath.UI.Tutorial
                 TextAnchor.MiddleCenter);
             UiFactory.SetAnchoredRect(
                 _statusText.rectTransform,
-                new Vector2(0.5f, 0f),
-                new Vector2(0.5f, 0f),
+                new Vector2(0.5f, 1f),
+                new Vector2(0.5f, 1f),
                 new Vector2(0.5f, 0.5f),
-                new Vector2(760f, 42f),
-                new Vector2(0f, 24f));
+                new Vector2(760f, 36f),
+                new Vector2(0f, -118f));
 
-            var boardPanel = UiFactory.CreateImage("Demo Board Panel", canvas.transform, UiPalette.Panel);
-            UiFactory.SetCenteredRect(boardPanel.rectTransform, new Vector2(0f, 70f), new Vector2(620f, 420f));
-            UiFactory.AddShadow(boardPanel.gameObject, UiPalette.Shadow, new Vector2(0f, -10f));
-
-            var boardLabel = _ui.CreateText(
-                "Board Label",
-                boardPanel.transform,
-                _textProvider.GetText("tutorial.ui.board_area"),
-                34,
-                FontStyle.Bold,
-                UiPalette.MutedText,
-                TextAnchor.MiddleCenter);
-            UiFactory.SetCenteredRect(boardLabel.rectTransform, Vector2.zero, new Vector2(560f, 64f));
-
-            var boardHighlight = UiFactory.CreateImage(
-                "Demo Board Highlight",
-                boardPanel.transform,
-                new Color(0.98f, 0.84f, 0.18f, 0.35f));
-            UiFactory.Stretch(boardHighlight.rectTransform);
+            _matchView = new TutorialMatchView(_ui, _textProvider, _matchHost, canvas.transform);
 
             var hudPanel = UiFactory.CreateImage("Tutorial HUD", canvas.transform, UiPalette.Card);
             UiFactory.SetAnchoredRect(
@@ -196,8 +181,8 @@ namespace AMath.UI.Tutorial
                 new Vector2(0.5f, 0f),
                 new Vector2(0.5f, 0f),
                 new Vector2(0.5f, 0.5f),
-                new Vector2(900f, 320f),
-                new Vector2(0f, 170f));
+                new Vector2(900f, 210f),
+                new Vector2(0f, 24f));
             UiFactory.AddShadow(hudPanel.gameObject, UiPalette.Shadow, new Vector2(0f, -8f));
 
             var objectiveText = _ui.CreateText(
@@ -213,8 +198,8 @@ namespace AMath.UI.Tutorial
                 new Vector2(0f, 1f),
                 new Vector2(1f, 1f),
                 new Vector2(0f, 1f),
-                new Vector2(-48f, 56f),
-                new Vector2(24f, -20f));
+                new Vector2(-48f, 40f),
+                new Vector2(24f, -10f));
 
             var progressText = _ui.CreateText(
                 "Progress",
@@ -236,13 +221,13 @@ namespace AMath.UI.Tutorial
                 "Dialogue Panel",
                 hudPanel.transform,
                 UiPalette.PanelTranslucent);
-            UiFactory.SetCenteredRect(dialoguePanel.rectTransform, new Vector2(0f, 24f), new Vector2(820f, 120f));
+            UiFactory.SetCenteredRect(dialoguePanel.rectTransform, new Vector2(0f, 18f), new Vector2(820f, 72f));
 
             var dialogueText = _ui.CreateText(
                 "Dialogue",
                 dialoguePanel.transform,
                 string.Empty,
-                24,
+                20,
                 FontStyle.Normal,
                 UiPalette.LightText,
                 TextAnchor.MiddleLeft);
@@ -270,8 +255,8 @@ namespace AMath.UI.Tutorial
                 new Vector2(0f, 0f),
                 new Vector2(1f, 0f),
                 new Vector2(0f, 0f),
-                new Vector2(-48f, 48f),
-                new Vector2(24f, 92f));
+                new Vector2(-48f, 32f),
+                new Vector2(24f, 56f));
 
             var continueButton = _ui.CreateButton(
                 hudPanel.transform,
@@ -280,7 +265,7 @@ namespace AMath.UI.Tutorial
                 UiPalette.Primary,
                 UiPalette.PrimaryHighlight,
                 () => { });
-            UiFactory.SetCenteredRect(continueButton.GetComponent<RectTransform>(), new Vector2(-170f, -112f), new Vector2(240f, 68f));
+            UiFactory.SetCenteredRect(continueButton.GetComponent<RectTransform>(), new Vector2(-170f, -72f), new Vector2(220f, 48f));
 
             var replayButton = _ui.CreateButton(
                 hudPanel.transform,
@@ -289,7 +274,7 @@ namespace AMath.UI.Tutorial
                 UiPalette.Secondary,
                 UiPalette.SecondaryHighlight,
                 () => { });
-            UiFactory.SetCenteredRect(replayButton.GetComponent<RectTransform>(), new Vector2(90f, -112f), new Vector2(240f, 68f));
+            UiFactory.SetCenteredRect(replayButton.GetComponent<RectTransform>(), new Vector2(70f, -72f), new Vector2(220f, 48f));
 
             var skipButton = _ui.CreateButton(
                 hudPanel.transform,
@@ -298,17 +283,7 @@ namespace AMath.UI.Tutorial
                 UiPalette.Quit,
                 UiPalette.QuitHighlight,
                 () => { });
-            UiFactory.SetCenteredRect(skipButton.GetComponent<RectTransform>(), new Vector2(350f, -112f), new Vector2(220f, 68f));
-
-            // Hidden until the hint schedule unlocks it (see TutorialManager).
-            var askAiButton = _ui.CreateButton(
-                hudPanel.transform,
-                "Ask AI Button",
-                _textProvider.GetText("tutorial.ui.ask_ai"),
-                UiPalette.Secondary,
-                UiPalette.SecondaryHighlight,
-                () => { });
-            UiFactory.SetCenteredRect(askAiButton.GetComponent<RectTransform>(), new Vector2(-380f, -112f), new Vector2(180f, 68f));
+            UiFactory.SetCenteredRect(skipButton.GetComponent<RectTransform>(), new Vector2(310f, -72f), new Vector2(200f, 48f));
 
             var presenter = new TutorialHudPresenter(
                 hudPanel.gameObject,
@@ -319,10 +294,9 @@ namespace AMath.UI.Tutorial
                 dialogueText,
                 continueButton,
                 skipButton,
-                replayButton,
-                askAiButton);
+                replayButton);
 
-            presenter.RegisterHighlight(IntroTutorialSequence.DemoBoardTargetId, boardHighlight.gameObject);
+            presenter.RegisterHighlight(IntroTutorialSequence.DemoBoardTargetId, _matchView.BoardHighlight);
             hudPanel.gameObject.SetActive(false);
             return presenter;
         }

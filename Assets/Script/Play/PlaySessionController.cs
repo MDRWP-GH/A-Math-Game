@@ -195,7 +195,10 @@ namespace AMath.UI
             _onResultChanged = _ => ShowResult();
             _onRecoveryFinished = ok =>
             {
-                if (ok) _recoveryRoot.SetActive(false);
+                if (_recoveryRoot != null)
+                    _recoveryRoot.SetActive(false);
+                if (!ok)
+                    ShowBrowser();
             };
 
             _browserPresenter.RoomsChanged += RefreshRoomList;
@@ -213,7 +216,16 @@ namespace AMath.UI
             {
                 _eventBus = NetworkContext.Services.Resolve<IEventBus>();
                 _onHostStarted = _ => ShowLobby();
-                _onClientConnected = _ => ShowLobby();
+                _onClientConnected = _ =>
+                {
+                    if (NetworkContext.Services.TryResolve(out AMath.Managers.GameManager gameManager)
+                        && gameManager.Config != null
+                        && gameManager.Phase != MatchPhase.Lobby
+                        && gameManager.Phase != MatchPhase.Finished)
+                        ShowMatch();
+                    else
+                        ShowLobby();
+                };
                 _onMatchStarted = _ => ShowMatch();
                 _onHostStopped = _ => ReturnToMenu();
                 _eventBus.Subscribe(_onHostStarted);
@@ -1136,7 +1148,6 @@ namespace AMath.UI
             {
                 RecoveryPhase.GraceWait => "ui.recovery.grace",
                 RecoveryPhase.Searching => "ui.recovery.search",
-                RecoveryPhase.Promoting => "ui.recovery.promote",
                 RecoveryPhase.Reconnecting => "ui.recovery.reconnect",
                 RecoveryPhase.Recovered => "ui.recovery.recovered",
                 _ => "ui.recovery.grace"

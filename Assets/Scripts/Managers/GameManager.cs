@@ -86,11 +86,21 @@ namespace AMath.Managers
         /// Starts a match deterministically from a config. Runs identically on
         /// every peer, producing identical racks and bag from the shared seed.
         /// </summary>
-        public void StartMatch(MatchConfig config)
+        public void StartMatch(MatchConfig config) => StartMatch(config, openingRacks: null);
+
+        /// <summary>
+        /// Starts a match, optionally dealing predetermined opening racks
+        /// (tutorial). When <paramref name="openingRacks"/> is null, tiles
+        /// are drawn from the shuffled bag as usual.
+        /// </summary>
+        public void StartMatch(MatchConfig config, IReadOnlyList<IReadOnlyList<byte>> openingRacks)
         {
             Config = config ?? throw new ArgumentNullException(nameof(config));
             Result = null;
             _matchStartedUtcTicks = DateTime.UtcNow.Ticks;
+
+            if (Phase == MatchPhase.Playing || Phase == MatchPhase.Paused)
+                EndMatchManually();
 
             // Rematch path: the machine only allows Finished -> Lobby -> Loading.
             if (Phase == MatchPhase.Finished)
@@ -101,13 +111,10 @@ namespace AMath.Managers
             _tileBag.Reset(_rng);
             _playerManager.Setup(config);
 
-            // Deal racks in seat order — order is part of the deterministic contract.
-            foreach (PlayerState player in _playerManager.Players)
-            {
-                _dealBuffer.Clear();
-                _tileBag.Draw(GameRules.RackSize, _dealBuffer);
-                _playerManager.AddToRack(player.PlayerId, _dealBuffer);
-            }
+            if (openingRacks != null)
+                DealPredeterminedRacks(openingRacks);
+            else
+                DealRandomRacks();
 
             _stateMachine.TransitionTo(MatchPhase.Loading);
             _eventBus.Publish(new MatchStartedEvent { Config = config });
@@ -116,11 +123,69 @@ namespace AMath.Managers
             _stateMachine.TransitionTo(MatchPhase.Playing);
         }
 
-        /// <summary>Ends the match immediately (host choice, or stranded players after failed migration).</summary>
+        private void DealRandomRacks()
+        {
+            foreach (PlayerState player in _playerManager.Players)
+            {
+                _dealBuffer.Clear();
+                _tileBag.Draw(GameRules.RackSize, _dealBuffer);
+                _playerManager.AddToRack(player.PlayerId, _dealBuffer);
+            }
+        }
+
+        private void DealPredeterminedRacks(IReadOnlyList<IReadOnlyList<byte>> openingRacks)
+        {
+            if (openingRacks.Count != _playerManager.Players.Count)
+            {
+                throw new ArgumentException(
+                    "Opening racks must match the seated player count.",
+                    nameof(openingRacks));
+            }
+
+            foreach (PlayerState player in _playerManager.Players)
+            {
+                if (player.PlayerId < 0 || player.PlayerId >= openingRacks.Count)
+                {
+                    throw new ArgumentException(
+                        $"No opening rack was supplied for player {player.PlayerId}.",
+                        nameof(openingRacks));
+                }
+
+                IReadOnlyList<byte> rack = openingRacks[player.PlayerId];
+                if (rack == null || rack.Count != GameRules.RackSize)
+                {
+                    throw new ArgumentException(
+                        $"Opening rack for player {player.PlayerId} must contain {GameRules.RackSize} tiles.",
+                        nameof(openingRacks));
+                }
+
+                _dealBuffer.Clear();
+                if (!_tileBag.TryTakeSpecific(rack, _dealBuffer))
+                {
+                    throw new InvalidOperationException(
+                        $"Bag is missing tiles required by player {player.PlayerId}'s opening rack.");
+                }
+
+                _playerManager.AddToRack(player.PlayerId, _dealBuffer);
+            }
+        }
+
+        /// <summary>Ends the match immediately (host choice, or stranded players after failed reconnect).</summary>
         public void EndMatchManually()
         {
             if (Phase == MatchPhase.Finished) return;
             EndMatch(MatchEndReason.EndedManually, finisherPlayerId: -1);
+        }
+
+        /// <summary>
+        /// Clears local match state and returns to lobby after the room was
+        /// dissolved (reconnect/fresh-join failed). Does not publish a match result.
+        /// </summary>
+        public void AbandonSession()
+        {
+            Config = null;
+            Result = null;
+            _stateMachine.RestoreTo(MatchPhase.Lobby);
         }
 
         #endregion

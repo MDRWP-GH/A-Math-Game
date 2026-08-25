@@ -31,6 +31,12 @@ namespace AMath.Networking.Discovery
         /// <summary>True while advertising.</summary>
         public bool IsRunning { get; private set; }
 
+        /// <summary>
+        /// Consecutive failed UDP sends. Resets to 0 on success. Used by the
+        /// host to detect network loss and dissolve the room.
+        /// </summary>
+        public int ConsecutiveSendFailures { get; private set; }
+
         #endregion
 
         #region Construction
@@ -56,6 +62,7 @@ namespace AMath.Networking.Discovery
                 _broadcastEndPoint = new IPEndPoint(IPAddress.Broadcast, _discoveryPort);
                 UpdateAdvertisement(advertisement);
                 _nextSendTime = 0f;
+                ConsecutiveSendFailures = 0;
                 IsRunning = true;
             }
             catch (SocketException ex)
@@ -75,6 +82,7 @@ namespace AMath.Networking.Discovery
         public void Stop()
         {
             IsRunning = false;
+            ConsecutiveSendFailures = 0;
             _udp?.Close();
             _udp = null;
         }
@@ -95,11 +103,13 @@ namespace AMath.Networking.Discovery
             try
             {
                 _udp.Send(_payload, _payload.Length, _broadcastEndPoint);
+                ConsecutiveSendFailures = 0;
             }
             catch (SocketException ex)
             {
-                // Non-fatal (e.g. cable unplugged); keep trying each interval.
-                Debug.LogWarning($"[Discovery] Broadcast failed: {ex.Message}");
+                ConsecutiveSendFailures++;
+                Debug.LogWarning(
+                    $"[Discovery] Broadcast failed ({ConsecutiveSendFailures}): {ex.Message}");
             }
         }
 
