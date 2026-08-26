@@ -3,6 +3,7 @@ using System.IO;
 using AMath.Core.Events;
 using AMath.Managers;
 using AMath.Replay;
+using AMath.Utilities;
 using UnityEngine;
 
 namespace AMath.Save
@@ -95,7 +96,13 @@ namespace AMath.Save
             };
 
             string account = Core.Accounts.UserAccountStore.SessionUsername;
-            if (!_historyStore.TryArchiveFinishedMatch(file, account, out _, out string error))
+            if (!_historyStore.TryArchiveFinishedMatch(
+                    file,
+                    account,
+                    LocalIdentity.PersistentGuid,
+                    LocalIdentity.DisplayName,
+                    out _,
+                    out string error))
                 Debug.LogWarning($"[History] Archive failed: {error}");
         }
 

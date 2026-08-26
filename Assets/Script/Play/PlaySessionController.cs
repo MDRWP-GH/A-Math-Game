@@ -47,9 +47,43 @@ namespace AMath.UI
         private const float TurnWarningSeconds = 10f;
 
         /// <summary>Horizontal distance between rack tiles.</summary>
-        private const float RackPitch = 70f;
+        private const float RackPitch = 78f;
+
+        private const int VisibleSeatCount = 4;
 
         private static readonly Color TimerWarning = new(0.95f, 0.35f, 0.30f, 1f);
+
+        private static readonly Color[] SeatAvatarColors =
+        {
+            new(1.00f, 0.78f, 0.70f, 1f), // P1 peach
+            new(0.72f, 0.90f, 0.55f, 1f), // P2 green
+            new(1.00f, 0.93f, 0.55f, 1f), // P3 yellow
+            new(0.55f, 0.90f, 0.95f, 1f)  // P4 cyan
+        };
+
+        private static readonly Vector2[] SeatAnchors =
+        {
+            new(0f, 0f), // P1 bottom-left
+            new(0f, 1f), // P2 top-left
+            new(1f, 1f), // P3 top-right
+            new(1f, 0f)  // P4 bottom-right
+        };
+
+        private static readonly Vector2[] SeatPivots =
+        {
+            new(0f, 0f),
+            new(0f, 1f),
+            new(1f, 1f),
+            new(1f, 0f)
+        };
+
+        private static readonly Vector2[] SeatPositions =
+        {
+            new(28f, 28f),
+            new(28f, -28f),
+            new(-28f, -28f),
+            new(-28f, 28f)
+        };
 
         private UiFactory _ui;
         private ILocalizedTextProvider _text;
@@ -83,7 +117,6 @@ namespace AMath.UI
         private Text _matchTimer;
         private Text _bagLabel;
         private Text _matchPreview;
-        private Text _scoreboard;
         private Transform _rackRoot;
         private Button _confirmButton;
         private Button _clearButton;
@@ -93,8 +126,19 @@ namespace AMath.UI
         private readonly List<int> _exchangeSelection = new();
         private readonly List<Button> _rackButtons = new(GameRules.RackSize);
         private readonly List<Text> _rackLabels = new(GameRules.RackSize);
+        private readonly List<Image> _rackImages = new(GameRules.RackSize);
+        private readonly PlayerSeatHud[] _seats = new PlayerSeatHud[VisibleSeatCount];
         private bool _exchangeMode;
         private Transform _declareRoot;
+
+        private sealed class PlayerSeatHud
+        {
+            public GameObject Root;
+            public Image Avatar;
+            public Text Label;
+            public Text Score;
+            public Image TurnRing;
+        }
 
         private Text _resultWinner;
         private Text _resultMeta;
@@ -290,7 +334,7 @@ namespace AMath.UI
                 : UiPalette.Primary;
 
             if (_bagLabel != null)
-                _bagLabel.text = $"{_text.GetText("ui.match.bag")}  {_matchPresenter.BagCount}";
+                _bagLabel.text = _matchPresenter.BagCount.ToString();
         }
 
         private void HandlePauseInput()
@@ -354,6 +398,7 @@ namespace AMath.UI
             _screen = ScreenId.Lobby;
             _browserPresenter.StopSearching();
             SetActiveScreens(lobby: true);
+            _lobbyPresenter?.RefreshMembers();
             RefreshLobby();
         }
 
@@ -537,11 +582,13 @@ namespace AMath.UI
             _lobbyCode.text = $"{_text.GetText("ui.play.room_code")}: {_lobbyPresenter.RoomCode}";
 
             for (int i = _lobbyMembersRoot.childCount - 1; i >= 0; i--)
-                Destroy(_lobbyMembersRoot.GetChild(i).gameObject);
+                DestroyImmediate(_lobbyMembersRoot.GetChild(i).gameObject);
 
             float y = 90f;
-            var members = FindObjectsByType<NetworkPlayer>(FindObjectsSortMode.None)
-                .OrderBy(p => p.PlayerId)
+            var members = _lobbyPresenter.Members
+                .Where(static player => player != null)
+                .OrderByDescending(static player => player.IsHost)
+                .ThenByDescending(static player => player.isLocalPlayer)
                 .ToList();
             MatchFormat format = _lobbyPresenter.SelectedFormat;
             for (int index = 0; index < members.Count; index++)
@@ -609,69 +656,171 @@ namespace AMath.UI
             _matchRoot.transform.SetParent(_canvas.transform, false);
             UiFactory.Stretch(_matchRoot.GetComponent<RectTransform>());
 
-            var background = UiFactory.CreateImage("Background", _matchRoot.transform, UiPalette.Background);
-            UiFactory.Stretch(background.rectTransform);
+            UiFactory.CreateFullScreenBackground(
+                _matchRoot.transform,
+                "In Game Backgrounds",
+                UiPalette.Background);
 
-            _matchStatus = _ui.CreateText("Status", _matchRoot.transform, string.Empty, 24, FontStyle.Bold, UiPalette.LightText, TextAnchor.MiddleCenter);
-            UiFactory.SetAnchoredRect(_matchStatus.rectTransform, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(900f, 40f), new Vector2(0f, -36f));
+            _matchStatus = _ui.CreateText(
+                "Status", _matchRoot.transform, string.Empty, 26, FontStyle.Bold,
+                Color.white, TextAnchor.MiddleCenter);
+            UiFactory.SetAnchoredRect(
+                _matchStatus.rectTransform,
+                new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0.5f, 1f),
+                new Vector2(720f, 40f), new Vector2(0f, -28f));
+            UiFactory.AddDoubleOutline(_matchStatus.gameObject, new Vector2(3f, -3f), new Vector2(1.5f, -1.5f));
 
-            _matchTimer = _ui.CreateText("Timer", _matchRoot.transform, string.Empty, 34, FontStyle.Bold, UiPalette.Primary, TextAnchor.MiddleRight);
-            UiFactory.SetAnchoredRect(_matchTimer.rectTransform, new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(180f, 44f), new Vector2(-40f, -34f));
+            _matchTimer = _ui.CreateText(
+                "Timer", _matchRoot.transform, string.Empty, 36, FontStyle.Bold,
+                UiPalette.Primary, TextAnchor.MiddleCenter);
+            UiFactory.SetAnchoredRect(
+                _matchTimer.rectTransform,
+                new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0.5f, 1f),
+                new Vector2(140f, 44f), new Vector2(0f, -68f));
+            UiFactory.AddDoubleOutline(_matchTimer.gameObject, new Vector2(3f, -3f), new Vector2(1.5f, -1.5f));
 
-            _bagLabel = _ui.CreateText("Bag", _matchRoot.transform, string.Empty, 22, FontStyle.Bold, UiPalette.MutedText, TextAnchor.MiddleRight);
-            UiFactory.SetAnchoredRect(_bagLabel.rectTransform, new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(180f, 34f), new Vector2(-40f, -78f));
-
-            var menuButton = _ui.CreateButton(_matchRoot.transform, "Menu", string.Empty, UiPalette.Secondary, UiPalette.SecondaryHighlight, OpenPause, 20);
-            UiFactory.SetAnchoredRect(menuButton.GetComponent<RectTransform>(), new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(130f, 46f), new Vector2(24f, -24f));
+            var menuButton = _ui.CreateButton(
+                _matchRoot.transform, "Menu", string.Empty,
+                UiPalette.Secondary, UiPalette.SecondaryHighlight, OpenPause, 20);
+            UiFactory.SetAnchoredRect(
+                menuButton.GetComponent<RectTransform>(),
+                new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0.5f, 1f),
+                new Vector2(120f, 42f), new Vector2(-420f, -34f));
             LocalizedText.Bind(menuButton.GetComponentInChildren<Text>(), "ui.match.menu");
 
-            _scoreboard = _ui.CreateText("Scores", _matchRoot.transform, string.Empty, 22, FontStyle.Normal, UiPalette.MutedText, TextAnchor.UpperLeft);
-            _scoreboard.horizontalOverflow = HorizontalWrapMode.Wrap;
-            _scoreboard.verticalOverflow = VerticalWrapMode.Overflow;
-            UiFactory.SetAnchoredRect(_scoreboard.rectTransform, new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(300f, 220f), new Vector2(24f, -96f));
+            BuildPlayerSeats();
+            BuildBagHud();
 
-            var legend = _ui.CreateText("Legend", _matchRoot.transform, string.Empty, 18, FontStyle.Normal, UiPalette.MutedText, TextAnchor.LowerLeft);
-            UiFactory.SetAnchoredRect(legend.rectTransform, new Vector2(0f, 0f), new Vector2(0f, 0f), new Vector2(0f, 0f), new Vector2(420f, 60f), new Vector2(24f, 24f));
-            legend.horizontalOverflow = HorizontalWrapMode.Wrap;
-            LocalizedText.Bind(legend, "ui.match.premium_legend");
+            var boardFrame = UiFactory.CreateImage(
+                "Board Frame",
+                _matchRoot.transform,
+                new Color(0.42f, 0.26f, 0.12f, 1f));
+            UiFactory.SetCenteredRect(boardFrame.rectTransform, new Vector2(0f, 48f), new Vector2(736f, 736f));
+            UiFactory.AddShadow(boardFrame.gameObject, new Color(0f, 0f, 0f, 0.35f), new Vector2(0f, -10f));
 
-            var boardRoot = UiFactory.CreateRect("Board", _matchRoot.transform);
-            UiFactory.SetCenteredRect(boardRoot, new Vector2(0f, 40f), new Vector2(720f, 720f));
+            var boardRoot = UiFactory.CreateRect("Board", boardFrame.transform);
+            UiFactory.SetCenteredRect(boardRoot, Vector2.zero, new Vector2(700f, 700f));
             _boardView = new MatchBoardView(_ui, boardRoot, OnCellClicked);
 
-            _rackRoot = UiFactory.CreateRect("Rack", _matchRoot.transform).transform;
-            UiFactory.SetAnchoredRect((RectTransform)_rackRoot, new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(900f, 90f), new Vector2(0f, 120f));
+            var rackShelf = UiFactory.CreateImage(
+                "Rack Shelf",
+                _matchRoot.transform,
+                new Color(0.48f, 0.30f, 0.14f, 1f));
+            UiFactory.SetAnchoredRect(
+                rackShelf.rectTransform,
+                new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0.5f, 0f),
+                new Vector2(720f, 96f), new Vector2(0f, 118f));
+            UiFactory.AddShadow(rackShelf.gameObject, new Color(0f, 0f, 0f, 0.28f), new Vector2(0f, -6f));
 
-            _matchPreview = _ui.CreateText("Preview", _matchRoot.transform, string.Empty, 18, FontStyle.Normal, UiPalette.MutedText, TextAnchor.UpperLeft);
+            _rackRoot = UiFactory.CreateRect("Rack", rackShelf.transform).transform;
+            UiFactory.Stretch((RectTransform)_rackRoot);
+
+            _matchPreview = _ui.CreateText(
+                "Preview", _matchRoot.transform, string.Empty, 16, FontStyle.Normal,
+                Color.white, TextAnchor.MiddleCenter);
             _matchPreview.horizontalOverflow = HorizontalWrapMode.Wrap;
             _matchPreview.verticalOverflow = VerticalWrapMode.Overflow;
-            UiFactory.SetAnchoredRect(_matchPreview.rectTransform, new Vector2(1f, 0.5f), new Vector2(1f, 0.5f), new Vector2(1f, 0.5f), new Vector2(300f, 420f), new Vector2(-24f, 40f));
+            UiFactory.SetAnchoredRect(
+                _matchPreview.rectTransform,
+                new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0.5f, 0f),
+                new Vector2(640f, 40f), new Vector2(0f, 258f));
+            UiFactory.AddOutline(_matchPreview.gameObject, Color.black, new Vector2(1.5f, -1.5f));
 
             _declareRoot = UiFactory.CreateRect("Declare", _matchRoot.transform).transform;
-            UiFactory.SetAnchoredRect((RectTransform)_declareRoot, new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(1000f, 110f), new Vector2(0f, 300f));
+            UiFactory.SetAnchoredRect(
+                (RectTransform)_declareRoot,
+                new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0.5f, 0f),
+                new Vector2(1000f, 100f), new Vector2(0f, 300f));
             _declareRoot.gameObject.SetActive(false);
 
-            float bx = -360f;
+            float bx = -320f;
             _confirmButton = CreateMatchAction("Confirm", "ui.match.confirm", UiPalette.Primary, () => _matchPresenter.ConfirmPlace(), ref bx);
             _clearButton = CreateMatchAction("Clear", "ui.match.clear", UiPalette.Secondary, () => _matchPresenter.ClearDraft(), ref bx);
             _passButton = CreateMatchAction("Pass", "ui.match.pass", UiPalette.Secondary, () => _matchPresenter.Pass(), ref bx);
             _exchangeButton = CreateMatchAction("Exchange", "ui.match.exchange", UiPalette.Secondary, ToggleExchangeMode, ref bx);
-            CreateMatchAction("Leave", "ui.play.leave", UiPalette.Quit, () =>
-            {
-                _matchPresenter.LeaveRoom();
-                ReturnToMenu();
-            }, ref bx);
-            CreateMatchAction("AskAi", "ui.match.ask_ai", UiPalette.Secondary, OpenAiChat, ref bx);
 
             _matchRoot.SetActive(false);
         }
 
+        private void BuildPlayerSeats()
+        {
+            for (int i = 0; i < VisibleSeatCount; i++)
+            {
+                var seat = new PlayerSeatHud();
+                var root = UiFactory.CreateRect($"Seat{i + 1}", _matchRoot.transform);
+                Vector2 anchor = SeatAnchors[i];
+                UiFactory.SetAnchoredRect(
+                    root,
+                    anchor, anchor, SeatPivots[i],
+                    new Vector2(170f, 170f),
+                    SeatPositions[i]);
+
+                bool scoreBelow = anchor.y > 0.5f;
+                float avatarY = scoreBelow ? 28f : -28f;
+                float scoreY = scoreBelow ? -52f : 52f;
+
+                var ring = UiFactory.CreateImage(
+                    "TurnRing", root, UiFactory.CircleSprite, new Color(1f, 0.85f, 0.20f, 0f));
+                UiFactory.SetCenteredRect(ring.rectTransform, new Vector2(0f, avatarY), new Vector2(118f, 118f));
+
+                var avatar = UiFactory.CreateImage("Avatar", root, UiFactory.CircleSprite, SeatAvatarColors[i]);
+                UiFactory.SetCenteredRect(avatar.rectTransform, new Vector2(0f, avatarY), new Vector2(104f, 104f));
+                UiFactory.AddShadow(avatar.gameObject, new Color(0f, 0f, 0f, 0.30f), new Vector2(0f, -4f));
+
+                var label = _ui.CreateText(
+                    "Label", root, $"P{i + 1}", 34, FontStyle.Bold,
+                    Color.black, TextAnchor.MiddleCenter);
+                UiFactory.SetCenteredRect(label.rectTransform, new Vector2(0f, avatarY), new Vector2(100f, 48f));
+
+                var score = _ui.CreateText(
+                    "Score", root, string.Empty, 22, FontStyle.Bold,
+                    Color.white, TextAnchor.MiddleCenter);
+                UiFactory.SetCenteredRect(score.rectTransform, new Vector2(0f, scoreY), new Vector2(160f, 36f));
+                UiFactory.AddDoubleOutline(score.gameObject, new Vector2(2.5f, -2.5f), new Vector2(1.2f, -1.2f));
+
+                seat.Root = root.gameObject;
+                seat.Avatar = avatar;
+                seat.Label = label;
+                seat.Score = score;
+                seat.TurnRing = ring;
+                seat.Root.SetActive(false);
+                _seats[i] = seat;
+            }
+        }
+
+        private void BuildBagHud()
+        {
+            var bagRoot = UiFactory.CreateRect("Bag", _matchRoot.transform);
+            UiFactory.SetAnchoredRect(
+                bagRoot,
+                new Vector2(1f, 0.5f), new Vector2(1f, 0.5f), new Vector2(1f, 0.5f),
+                new Vector2(150f, 150f), new Vector2(-36f, 40f));
+
+            Sprite bagSprite = TileIcons.Bag();
+            Image bagIcon = bagSprite != null
+                ? UiFactory.CreateImage("Icon", bagRoot, bagSprite)
+                : UiFactory.CreateImage("Icon", bagRoot, new Color(0.95f, 0.55f, 0.70f, 1f));
+            bagIcon.preserveAspect = true;
+            UiFactory.SetCenteredRect(bagIcon.rectTransform, new Vector2(0f, 10f), new Vector2(130f, 120f));
+
+            _bagLabel = _ui.CreateText(
+                "Count", bagRoot, "0", 28, FontStyle.Bold,
+                Color.white, TextAnchor.MiddleCenter);
+            UiFactory.SetCenteredRect(_bagLabel.rectTransform, new Vector2(0f, -58f), new Vector2(120f, 36f));
+            UiFactory.AddDoubleOutline(_bagLabel.gameObject, new Vector2(2.5f, -2.5f), new Vector2(1.2f, -1.2f));
+        }
+
         private Button CreateMatchAction(string name, string labelKey, Color color, UnityEngine.Events.UnityAction action, ref float x)
         {
-            var button = _ui.CreateButton(_matchRoot.transform, name, string.Empty, color, Color.Lerp(color, Color.white, 0.25f), () => action(), 20);
-            UiFactory.SetAnchoredRect(button.GetComponent<RectTransform>(), new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(160f, 54f), new Vector2(x, 40f));
+            var button = _ui.CreateButton(
+                _matchRoot.transform, name, string.Empty, color,
+                Color.Lerp(color, Color.white, 0.25f), () => action(), 18);
+            UiFactory.SetAnchoredRect(
+                button.GetComponent<RectTransform>(),
+                new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0.5f, 0f),
+                new Vector2(150f, 46f), new Vector2(x, 230f));
             LocalizedText.Bind(button.GetComponentInChildren<Text>(), labelKey);
-            x += 175f;
+            x += 160f;
             return button;
         }
 
@@ -685,15 +834,6 @@ namespace AMath.UI
             }
 
             RefreshMatch();
-        }
-
-        private static void OpenAiChat()
-        {
-            if (NetworkContext.Services != null
-                && NetworkContext.Services.TryResolve(out IAiEntryPoint assistant))
-            {
-                assistant.OpenChat();
-            }
         }
 
         private void OnCellClicked(int x, int y)
@@ -729,6 +869,7 @@ namespace AMath.UI
                 _matchStatus.text = PlacementPreviewFormatter.LocalizeError(_matchPresenter.LastError);
 
             UpdateTimerAndBag();
+            RefreshPlayerSeats();
 
             // Action buttons only work on your turn; graying them out makes the
             // turn state readable at a glance.
@@ -736,22 +877,6 @@ namespace AMath.UI
             _clearButton.interactable = myTurn && !_exchangeMode;
             _passButton.interactable = myTurn && !_exchangeMode;
             _exchangeButton.interactable = myTurn;
-
-            var scores = new System.Text.StringBuilder();
-            if (_matchPresenter.Players != null)
-            {
-                foreach (PlayerState player in _matchPresenter.Players.Players)
-                {
-                    string mark = player.PlayerId == _matchPresenter.LocalPlayerId ? $" ({_text.GetText("ui.match.you")})" : string.Empty;
-                    string ai = player.IsAi ? " [AI]" : string.Empty;
-                    string line = $"{player.DisplayName}{ai}{mark}: {player.Score}";
-                    if (player.PlayerId == _matchPresenter.CurrentPlayerId)
-                        line = $"<color=#FDA733><b>▶ {line}</b></color>";
-                    scores.AppendLine(line);
-                }
-            }
-
-            _scoreboard.text = scores.ToString();
 
             BoardManager boardManager = null;
             NetworkContext.Services?.TryResolve(out boardManager);
@@ -773,6 +898,65 @@ namespace AMath.UI
 
             RefreshRack();
             RefreshDeclareBar();
+        }
+
+        private void RefreshPlayerSeats()
+        {
+            IReadOnlyList<PlayerState> players = _matchPresenter.Players?.Players;
+            string scorePrefix = _text.GetText("ui.match.score");
+
+            // Local player always sits in the mockup's P1 (bottom-left) seat.
+            var ordered = new List<PlayerState>(VisibleSeatCount);
+            if (players != null)
+            {
+                PlayerState local = null;
+                for (int i = 0; i < players.Count; i++)
+                {
+                    if (players[i].PlayerId == _matchPresenter.LocalPlayerId)
+                    {
+                        local = players[i];
+                        break;
+                    }
+                }
+
+                if (local != null)
+                    ordered.Add(local);
+
+                for (int i = 0; i < players.Count; i++)
+                {
+                    if (local != null && players[i].PlayerId == local.PlayerId)
+                        continue;
+                    if (ordered.Count >= VisibleSeatCount)
+                        break;
+                    ordered.Add(players[i]);
+                }
+            }
+
+            for (int i = 0; i < VisibleSeatCount; i++)
+            {
+                PlayerSeatHud seat = _seats[i];
+                if (seat == null) continue;
+
+                if (i >= ordered.Count)
+                {
+                    seat.Root.SetActive(false);
+                    continue;
+                }
+
+                PlayerState player = ordered[i];
+                seat.Root.SetActive(true);
+
+                bool isLocal = player.PlayerId == _matchPresenter.LocalPlayerId;
+                bool isCurrent = player.PlayerId == _matchPresenter.CurrentPlayerId;
+                string you = isLocal ? $" ({_text.GetText("ui.match.you")})" : string.Empty;
+
+                seat.Label.text = $"P{i + 1}";
+                seat.Score.text = $"{scorePrefix} {player.Score}{you}";
+                seat.Avatar.color = SeatAvatarColors[i];
+                seat.TurnRing.color = isCurrent
+                    ? new Color(1f, 0.85f, 0.20f, 0.95f)
+                    : new Color(1f, 0.85f, 0.20f, 0f);
+            }
         }
 
         /// <summary>
@@ -803,12 +987,32 @@ namespace AMath.UI
 
                 button.gameObject.SetActive(true);
                 button.interactable = myTurn;
-                SetRackButtonColor(button, selected ? UiPalette.Primary : UiPalette.Secondary);
-                _rackLabels[i].text = $"{SymbolOf(tileId)}\n{PointsOf(tileId)}";
+
+                Sprite sprite = TileIcons.ForTile(tileId);
+                Image image = _rackImages[i];
+                Text label = _rackLabels[i];
+                if (sprite != null)
+                {
+                    image.sprite = sprite;
+                    image.preserveAspect = true;
+                    image.color = selected
+                        ? new Color(1f, 0.92f, 0.55f, 1f)
+                        : Color.white;
+                    label.text = string.Empty;
+                }
+                else
+                {
+                    image.sprite = null;
+                    image.preserveAspect = false;
+                    image.color = Color.white;
+                    SetRackButtonColor(button, selected ? UiPalette.Primary : new Color(0.95f, 0.55f, 0.18f, 1f));
+                    label.text = $"{SymbolOf(tileId)}\n{PointsOf(tileId)}";
+                }
+
                 UiFactory.SetCenteredRect(
                     button.GetComponent<RectTransform>(),
                     new Vector2(start + i * RackPitch, 0f),
-                    new Vector2(64f, 72f));
+                    new Vector2(70f, 84f));
             }
         }
 
@@ -817,21 +1021,21 @@ namespace AMath.UI
             while (_rackButtons.Count < required)
             {
                 int index = _rackButtons.Count;
-                var button = _ui.CreateButton(
-                    _rackRoot, $"R{index}", string.Empty,
-                    UiPalette.Secondary, UiPalette.PrimaryHighlight,
-                    () => OnRackClicked(index), 20);
+                Button button = UiFactory.CreateIconButton(
+                    _rackRoot, $"R{index}", null,
+                    new Color(0.95f, 0.55f, 0.18f, 1f),
+                    () => OnRackClicked(index));
 
-                Text label = button.GetComponentInChildren<Text>();
-                if (label != null)
-                {
-                    label.horizontalOverflow = HorizontalWrapMode.Wrap;
-                    label.verticalOverflow = VerticalWrapMode.Overflow;
-                    label.alignment = TextAnchor.MiddleCenter;
-                }
+                var label = _ui.CreateText(
+                    "Label", button.transform, string.Empty, 18, FontStyle.Normal,
+                    Color.white, TextAnchor.MiddleCenter);
+                UiFactory.Stretch(label.rectTransform);
+                label.horizontalOverflow = HorizontalWrapMode.Wrap;
+                label.verticalOverflow = VerticalWrapMode.Overflow;
 
                 _rackButtons.Add(button);
                 _rackLabels.Add(label);
+                _rackImages.Add(button.GetComponent<Image>());
             }
         }
 

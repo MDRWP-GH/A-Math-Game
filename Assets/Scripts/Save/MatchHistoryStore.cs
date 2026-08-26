@@ -2,9 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Text;
 using AMath.Core;
 using AMath.Core.History;
+using AMath.Core.Snapshot;
 using UnityEngine;
 
 namespace AMath.Save
@@ -21,8 +21,13 @@ namespace AMath.Save
         private readonly string _indexPath;
 
         public MatchHistoryStore()
+            : this(Path.Combine(Application.persistentDataPath, "History"))
         {
-            _historyDirectory = Path.Combine(Application.persistentDataPath, "History");
+        }
+
+        public MatchHistoryStore(string historyDirectory)
+        {
+            _historyDirectory = historyDirectory;
             _indexPath = Path.Combine(_historyDirectory, "history_index.json");
             Directory.CreateDirectory(_historyDirectory);
         }
@@ -34,7 +39,13 @@ namespace AMath.Save
             return index.Entries;
         }
 
-        public bool TryArchiveFinishedMatch(SaveFile file, string accountUsername, out MatchHistoryEntry entry, out string error)
+        public bool TryArchiveFinishedMatch(
+            SaveFile file,
+            string accountUsername,
+            string localPersistentGuid,
+            string localDisplayName,
+            out MatchHistoryEntry entry,
+            out string error)
         {
             entry = null;
             error = null;
@@ -60,10 +71,12 @@ namespace AMath.Save
             }
 
             MatchResult result = file.State.Result;
-            PlayerResult winner = result.Standings.Find(r => r.PlayerId == result.WinnerPlayerId);
+            PlayerResult winner = result.Standings?.Find(r => r.PlayerId == result.WinnerPlayerId);
+            PlayerResult local = FindLocalPlayer(file, localPersistentGuid, localDisplayName);
             entry = new MatchHistoryEntry
             {
                 MatchId = matchId,
+                StartedUtcTicks = result.StartedUtcTicks,
                 FinishedUtcTicks = result.EndedUtcTicks > 0 ? result.EndedUtcTicks : DateTime.UtcNow.Ticks,
                 RoomName = file.RoomName,
                 RoomCode = file.RoomCode,
@@ -74,7 +87,10 @@ namespace AMath.Save
                 WinnerScore = winner?.FinalScore ?? 0,
                 AccountUsername = accountUsername,
                 ReplayFileName = replayFileName,
-                StandingsSummary = BuildStandingsSummary(result)
+                LocalPlayerName = local?.DisplayName ?? localDisplayName,
+                LocalPlayerScore = local?.FinalScore ?? 0,
+                HasLocalPlayer = local != null,
+                DidWin = local != null && DidLocalWin(result, local)
             };
 
             MatchHistoryIndex index = LoadIndex();
@@ -161,30 +177,74 @@ namespace AMath.Save
             }
         }
 
+        private static PlayerResult FindLocalPlayer(SaveFile file, string persistentGuid, string displayName)
+        {
+            List<PlayerResult> standings = file.State?.Result?.Standings;
+            if (standings == null || standings.Count == 0)
+                return null;
+
+            int playerId = FindLocalPlayerId(file, persistentGuid);
+            if (playerId >= 0)
+            {
+                foreach (PlayerResult row in standings)
+                {
+                    if (row.PlayerId == playerId)
+                        return row;
+                }
+            }
+
+            if (string.IsNullOrEmpty(displayName))
+                return null;
+
+            foreach (PlayerResult row in standings)
+            {
+                if (string.Equals(row.DisplayName, displayName, StringComparison.OrdinalIgnoreCase))
+                    return row;
+            }
+
+            return null;
+        }
+
+        private static int FindLocalPlayerId(SaveFile file, string persistentGuid)
+        {
+            if (string.IsNullOrEmpty(persistentGuid))
+                return -1;
+
+            if (file.State?.Players != null)
+            {
+                foreach (PlayerSnapshot player in file.State.Players)
+                {
+                    if (player.PersistentGuid == persistentGuid)
+                        return player.PlayerId;
+                }
+            }
+
+            if (file.State?.Config?.Players != null)
+            {
+                foreach (PlayerIdentity player in file.State.Config.Players)
+                {
+                    if (player.PersistentGuid == persistentGuid)
+                        return player.PlayerId;
+                }
+            }
+
+            return -1;
+        }
+
+        private static bool DidLocalWin(MatchResult result, PlayerResult local)
+        {
+            if (result.Format == MatchFormat.Team)
+                return local.TeamId >= 0 && local.TeamId == result.WinnerTeamId;
+
+            return local.PlayerId == result.WinnerPlayerId;
+        }
+
         private static string BuildWinnerLabel(MatchResult result, PlayerResult winner)
         {
             if (result.Format == MatchFormat.Team && result.WinnerTeamId >= 0)
                 return $"Team {result.WinnerTeamId + 1}";
 
             return winner?.DisplayName ?? $"Player #{result.WinnerPlayerId}";
-        }
-
-        private static string BuildStandingsSummary(MatchResult result)
-        {
-            var builder = new StringBuilder();
-            if (result.Format == MatchFormat.Team && result.TeamStandings.Count > 0)
-            {
-                foreach (TeamResult team in result.TeamStandings.OrderByDescending(t => t.TotalScore))
-                    builder.AppendLine($"Team {team.TeamId + 1}: {team.TotalScore}");
-            }
-
-            foreach (PlayerResult row in result.Standings.OrderByDescending(r => r.FinalScore))
-            {
-                string teamSuffix = row.TeamId >= 0 ? $" (T{row.TeamId + 1})" : string.Empty;
-                builder.AppendLine($"{row.DisplayName}{teamSuffix}: {row.FinalScore}");
-            }
-
-            return builder.ToString().TrimEnd();
         }
     }
 }

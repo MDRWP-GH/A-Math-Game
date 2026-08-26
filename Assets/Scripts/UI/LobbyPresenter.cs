@@ -5,6 +5,7 @@ using AMath.Core.Events;
 using AMath.Networking;
 using AMath.Networking.Room;
 using AMath.Networking.RPC;
+using Mirror;
 using UnityEngine;
 
 namespace AMath.UI
@@ -39,6 +40,9 @@ namespace AMath.UI
 
         /// <summary>Room display name.</summary>
         public string RoomName => _session?.RoomName ?? string.Empty;
+
+        /// <summary>Current lobby roster (host first, then join order).</summary>
+        public IReadOnlyList<NetworkPlayer> Members => _members;
 
         /// <summary>
         /// Only the host may start. One human is enough — empty seats up to the
@@ -78,11 +82,50 @@ namespace AMath.UI
 
         private void OnRosterChanged(PlayerRosterChangedEvent evt) => RefreshMembers();
 
-        private void RefreshMembers()
+        /// <summary>Rebuilds the roster from live Mirror connections.</summary>
+        public void RefreshMembers()
         {
             _members.Clear();
-            _members.AddRange(FindObjectsByType<NetworkPlayer>(FindObjectsSortMode.None));
+
+            if (NetworkServer.active)
+                CollectFromServerConnections(_members);
+            else if (NetworkClient.active)
+                CollectFromClientSpawned(_members);
+
+            _members.RemoveAll(static player => player == null);
             MembersChanged?.Invoke(_members);
+        }
+
+        private static void CollectFromServerConnections(List<NetworkPlayer> members)
+        {
+            // Same ordering as RoomManager.StartMatch: host first, then join order.
+            var ordered = new List<NetworkConnectionToClient>(NetworkServer.connections.Values);
+            ordered.Sort(static (a, b) => a.connectionId.CompareTo(b.connectionId));
+
+            if (NetworkServer.localConnection?.identity != null
+                && NetworkServer.localConnection.identity.TryGetComponent(out NetworkPlayer hostPlayer))
+            {
+                members.Add(hostPlayer);
+            }
+
+            foreach (NetworkConnectionToClient conn in ordered)
+            {
+                if (conn.identity != null
+                    && conn.identity.TryGetComponent(out NetworkPlayer player)
+                    && !members.Contains(player))
+                {
+                    members.Add(player);
+                }
+            }
+        }
+
+        private static void CollectFromClientSpawned(List<NetworkPlayer> members)
+        {
+            foreach (NetworkIdentity identity in NetworkClient.spawned.Values)
+            {
+                if (identity != null && identity.TryGetComponent(out NetworkPlayer player))
+                    members.Add(player);
+            }
         }
 
         #endregion

@@ -382,6 +382,45 @@ namespace AMath.UI
             AddOutline(target, Color.black, innerDistance);
         }
 
+        /// <summary>Soft circle sprite for avatar badges (cached).</summary>
+        public static Sprite CircleSprite
+        {
+            get
+            {
+                if (_circleSprite != null)
+                    return _circleSprite;
+
+                const int size = 64;
+                var texture = new Texture2D(size, size, TextureFormat.RGBA32, false)
+                {
+                    filterMode = FilterMode.Bilinear,
+                    wrapMode = TextureWrapMode.Clamp
+                };
+
+                float radius = (size - 1) * 0.5f;
+                float radiusSq = radius * radius;
+                for (int y = 0; y < size; y++)
+                {
+                    for (int x = 0; x < size; x++)
+                    {
+                        float dx = x - radius;
+                        float dy = y - radius;
+                        texture.SetPixel(x, y, dx * dx + dy * dy <= radiusSq ? Color.white : Color.clear);
+                    }
+                }
+
+                texture.Apply(false, true);
+                _circleSprite = Sprite.Create(
+                    texture,
+                    new Rect(0f, 0f, size, size),
+                    new Vector2(0.5f, 0.5f),
+                    100f);
+                return _circleSprite;
+            }
+        }
+
+        private static Sprite _circleSprite;
+
         /// <summary>Creates an icon-only button with the standard hover treatment.</summary>
         public static Button CreateIconButton(
             Transform parent,

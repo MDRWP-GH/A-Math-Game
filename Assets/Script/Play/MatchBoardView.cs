@@ -13,21 +13,19 @@ namespace AMath.UI
     /// The 15x15 match board: builds the cell buttons once, then repaints them
     /// from the authoritative grid plus the local draft.
     ///
-    /// Split out of <see cref="PlaySessionController"/> because it is the one
-    /// part of that screen that touches all 225 cells on every refresh, and
-    /// keeping its colours and premium legend next to the loop that uses them
-    /// makes both easier to reason about.
+    /// Colours follow the in-match mockup — warm wood cells with bright
+    /// premium squares — so the board reads clearly on the forest backdrop.
     /// </summary>
     internal sealed class MatchBoardView
     {
         private const float CellSize = 46f;
         private static readonly Color CellGuide = new(0.98f, 0.84f, 0.18f, 0.95f);
 
-        private static readonly Color CellPlain = new(0.16f, 0.22f, 0.40f, 1f);
-        private static readonly Color CellOccupied = new(0.20f, 0.45f, 0.55f, 1f);
-        private static readonly Color CellDraftValid = new(0.20f, 0.55f, 0.30f, 1f);
-        private static readonly Color CellDraftInvalid = new(0.65f, 0.30f, 0.25f, 1f);
-        private static readonly Color CellHighlight = new(0.25f, 0.35f, 0.55f, 1f);
+        private static readonly Color CellPlain = new(0.55f, 0.38f, 0.22f, 1f);
+        private static readonly Color CellOccupied = new(0.92f, 0.55f, 0.18f, 1f);
+        private static readonly Color CellDraftValid = new(0.28f, 0.72f, 0.38f, 1f);
+        private static readonly Color CellDraftInvalid = new(0.78f, 0.28f, 0.24f, 1f);
+        private static readonly Color CellHighlight = new(0.70f, 0.52f, 0.32f, 1f);
 
         private readonly Button[,] _cells = new Button[GameRules.BoardSize, GameRules.BoardSize];
         private readonly Text[,] _labels = new Text[GameRules.BoardSize, GameRules.BoardSize];
@@ -48,15 +46,24 @@ namespace AMath.UI
                     Button button = ui.CreateButton(
                         parent, $"C{x}_{y}", string.Empty,
                         CellPlain, CellHighlight,
-                        () => onCellClicked(cellX, cellY), 16);
+                        () => onCellClicked(cellX, cellY), 11);
 
                     UiFactory.SetCenteredRect(
                         button.GetComponent<RectTransform>(),
                         new Vector2(origin + x * _cellSize, -origin - y * _cellSize),
                         new Vector2(_cellSize - 2f, _cellSize - 2f));
 
+                    Text label = button.GetComponentInChildren<Text>();
+                    if (label != null)
+                    {
+                        label.horizontalOverflow = HorizontalWrapMode.Wrap;
+                        label.verticalOverflow = VerticalWrapMode.Overflow;
+                        label.alignment = TextAnchor.MiddleCenter;
+                        label.color = Color.white;
+                    }
+
                     _cells[x, y] = button;
-                    _labels[x, y] = button.GetComponentInChildren<Text>();
+                    _labels[x, y] = label;
                 }
             }
         }
@@ -81,17 +88,20 @@ namespace AMath.UI
             {
                 for (int x = 0; x < GameRules.BoardSize; x++)
                 {
-                    ResolveCell(grid, x, y, out string symbol, out Color color);
-                    ApplyDraft(input, x, y, ref symbol, ref color);
+                    ResolveCell(grid, x, y, out string symbol, out Color color, out int fontSize);
+                    ApplyDraft(input, x, y, ref symbol, ref color, ref fontSize);
 
                     _labels[x, y].text = symbol;
+                    _labels[x, y].fontSize = fontSize;
                     _cells[x, y].targetGraphic.color = color;
                 }
             }
         }
 
-        private void ResolveCell(BoardGrid grid, int x, int y, out string symbol, out Color color)
+        private void ResolveCell(
+            BoardGrid grid, int x, int y, out string symbol, out Color color, out int fontSize)
         {
+            fontSize = 18;
             if (grid != null && grid.IsOccupied(x, y))
             {
                 symbol = SymbolOf(grid.CellAt(x, y).EffectiveTileId);
@@ -107,17 +117,34 @@ namespace AMath.UI
             {
                 symbol = PlacementPreviewFormatter.PremiumHint(premium);
                 color = PremiumColor(premium);
+                fontSize = 9;
             }
 
             if (x == GameRules.CenterX && y == GameRules.CenterY)
+            {
                 symbol = "★";
+                fontSize = 20;
+            }
 
             if (_guideCells.Contains(y * GameRules.BoardSize + x))
-                color = CellGuide;
+                color = TintGuide(color, premium);
+        }
+
+        /// <summary>
+        /// Plain guide cells stay gold. Premium cells keep their bonus hue
+        /// and only take a gold wash, so ×2/×3 squares remain readable.
+        /// </summary>
+        private static Color TintGuide(Color baseColor, PremiumType premium)
+        {
+            if (premium == PremiumType.None)
+                return CellGuide;
+
+            return Color.Lerp(baseColor, CellGuide, 0.4f);
         }
 
         private static void ApplyDraft(
-            TurnInputSession input, int x, int y, ref string symbol, ref Color color)
+            TurnInputSession input, int x, int y,
+            ref string symbol, ref Color color, ref int fontSize)
         {
             if (input == null) return;
 
@@ -128,15 +155,16 @@ namespace AMath.UI
 
                 symbol = SymbolOf(placement.EffectiveTileId);
                 color = input.PreviewValidation is { IsValid: true } ? CellDraftValid : CellDraftInvalid;
+                fontSize = 18;
             }
         }
 
         private static Color PremiumColor(PremiumType premium) => premium switch
         {
-            PremiumType.TileX2 => new Color(0.82f, 0.49f, 0.18f, 1f),      // orange — ×2 tile
-            PremiumType.TileX3 => new Color(0.18f, 0.42f, 0.76f, 1f),      // blue — ×3 tile
-            PremiumType.EquationX2 => new Color(0.76f, 0.63f, 0.16f, 1f),  // yellow — ×2 equation
-            PremiumType.EquationX3 => new Color(0.72f, 0.22f, 0.22f, 1f),  // red — ×3 equation
+            PremiumType.TileX2 => new Color(0.95f, 0.55f, 0.18f, 1f),      // orange — ×2 piece
+            PremiumType.TileX3 => new Color(0.28f, 0.62f, 0.88f, 1f),      // blue — ×3 piece
+            PremiumType.EquationX2 => new Color(0.95f, 0.82f, 0.22f, 1f),  // yellow — ×2 equation
+            PremiumType.EquationX3 => new Color(0.88f, 0.28f, 0.28f, 1f),  // red — ×3 equation
             _ => CellPlain
         };
     }

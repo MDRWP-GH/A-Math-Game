@@ -121,10 +121,10 @@ namespace AMath.Gameplay.Board
         /// <summary>Empty-cell premium hint for the board HUD.</summary>
         public static string PremiumHint(PremiumType premium) => premium switch
         {
-            PremiumType.TileX2 => "2T",
-            PremiumType.TileX3 => "3T",
-            PremiumType.EquationX2 => "2E",
-            PremiumType.EquationX3 => "3E",
+            PremiumType.TileX2 => "x2\nPIECE",
+            PremiumType.TileX3 => "x3\nPIECE",
+            PremiumType.EquationX2 => "x2\nWORD",
+            PremiumType.EquationX3 => "x3\nWORD",
             _ => string.Empty
         };
     }

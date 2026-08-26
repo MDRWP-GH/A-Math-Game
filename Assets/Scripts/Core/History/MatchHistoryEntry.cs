@@ -8,6 +8,7 @@ namespace AMath.Core.History
     public sealed class MatchHistoryEntry
     {
         public string MatchId;
+        public long StartedUtcTicks;
         public long FinishedUtcTicks;
         public string RoomName;
         public string RoomCode;
@@ -19,6 +20,12 @@ namespace AMath.Core.History
         public string AccountUsername;
         public string ReplayFileName;
         public string StandingsSummary;
+        public string LocalPlayerName;
+        public int LocalPlayerScore;
+        public bool HasLocalPlayer;
+        public bool DidWin;
+        public List<PlayerResult> Players = new();
+        public List<TeamResult> Teams = new();
     }
 
     [Serializable]

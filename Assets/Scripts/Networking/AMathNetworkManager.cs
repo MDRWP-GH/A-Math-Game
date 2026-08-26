@@ -63,6 +63,7 @@ namespace AMath.Networking
             var identity = (AuthenticatedIdentity)conn.authenticationData;
 
             GameObject playerObject = Instantiate(_runtimePlayerPrefab);
+            playerObject.SetActive(true);
             var player = playerObject.GetComponent<NetworkPlayer>();
 
             // Reconnections resume their original seat; lobby joins are
