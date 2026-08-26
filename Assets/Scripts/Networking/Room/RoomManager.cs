@@ -89,10 +89,10 @@ namespace AMath.Networking.Room
 
         /// <summary>
         /// Host-only: finalizes seats and starts the match. Seat order is host
-        /// first, then join order, then optional scripted AI seats. If there are
-        /// fewer than <see cref="GameRules.MinPlayers"/> humans, AI seats are
-        /// added automatically so a solo host can play. Extra AI opponents can
-        /// be requested via <paramref name="extraAiPlayers"/>.
+        /// first, then join order, then optional scripted AI seats. Missing
+        /// seats are filled with AI (see <see cref="GameRules.PlannedSeatCount"/>),
+        /// so a solo host can play and team mode does not need four humans.
+        /// Extra AI opponents can be requested via <paramref name="extraAiPlayers"/>.
         /// </summary>
         public bool StartMatch(MatchFormat format = MatchFormat.Individual, int extraAiPlayers = 0)
         {
@@ -109,24 +109,20 @@ namespace AMath.Networking.Room
                 return false;
             }
 
-            int aiCount = Math.Max(0, extraAiPlayers);
-            if (members.Count + aiCount < GameRules.MinPlayers)
-                aiCount = GameRules.MinPlayers - members.Count;
+            // Shared with the lobby's "can start" gate so the two never disagree.
+            int totalSeats = GameRules.PlannedSeatCount(format, members.Count, extraAiPlayers);
+            int aiCount = totalSeats - members.Count;
 
-            if (members.Count + aiCount > GameRules.MaxPlayers)
+            if (totalSeats > GameRules.MaxPlayers)
             {
                 Debug.LogWarning($"[Room] Too many seats (max {GameRules.MaxPlayers}).");
                 return false;
             }
 
-            int totalSeats = members.Count + aiCount;
-            if (format == MatchFormat.Team)
+            if (format == MatchFormat.Team && !GameRules.IsValidTeamRoster(totalSeats))
             {
-                if (totalSeats < GameRules.MinTeamMatchPlayers || totalSeats % GameRules.TeamCount != 0)
-                {
-                    Debug.LogWarning("[Room] Team matches need an even number of at least four players.");
-                    return false;
-                }
+                Debug.LogWarning("[Room] Team matches need an even number of at least four players.");
+                return false;
             }
 
             var config = new MatchConfig

@@ -45,5 +45,34 @@ namespace AMath.Core
 
         /// <summary>Number of teams in team mode.</summary>
         public const int TeamCount = 2;
+
+        /// <summary>
+        /// True when <paramref name="seatCount"/> can be split into equal teams.
+        /// The lobby uses this to explain why "start" is unavailable instead of
+        /// letting the host press it and have the host silently refuse.
+        /// </summary>
+        public static bool IsValidTeamRoster(int seatCount) =>
+            seatCount >= MinTeamMatchPlayers
+            && seatCount <= MaxPlayers
+            && seatCount % TeamCount == 0;
+
+        /// <summary>
+        /// Seats a match will actually have. Missing seats are filled with AI,
+        /// so a solo host can play and team mode does not require four humans.
+        /// The lobby and the host must agree on this number, otherwise the
+        /// lobby offers a "start" the host then refuses.
+        /// </summary>
+        public static int PlannedSeatCount(MatchFormat format, int humanCount, int extraAiPlayers = 0)
+        {
+            int seats = humanCount + (extraAiPlayers > 0 ? extraAiPlayers : 0);
+            int minimum = format == MatchFormat.Team ? MinTeamMatchPlayers : MinPlayers;
+            if (seats < minimum)
+                seats = minimum;
+
+            if (format == MatchFormat.Team && seats % TeamCount != 0)
+                seats++;
+
+            return seats;
+        }
     }
 }

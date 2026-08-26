@@ -251,7 +251,7 @@ namespace AMath.Bootstrap
             _services.Register(_networkManager);
             _services.Register(_networkGameState);
             _networkManager.Configure(bus, playerManager, gameManager, session);
-            _authenticator.Configure(session, playerManager, gameManager);
+            _authenticator.Configure(session, playerManager, gameManager, bus);
 
             bus.Subscribe<HostStartedEvent>(_ => CopySessionToSaves(session, saveManager));
             bus.Subscribe<ClientConnectedEvent>(_ => CopySessionToSaves(session, saveManager));

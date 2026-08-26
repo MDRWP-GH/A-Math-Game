@@ -174,6 +174,16 @@ namespace AMath.Managers
         public void EndMatchManually()
         {
             if (Phase == MatchPhase.Finished) return;
+
+            // No match has been dealt yet, so there are no scores to settle and
+            // no winner to name. Producing a result here would show the players
+            // a defeat screen for a game they never started.
+            if (Config == null || Phase == MatchPhase.Lobby)
+            {
+                AbandonSession();
+                return;
+            }
+
             EndMatch(MatchEndReason.EndedManually, finisherPlayerId: -1);
         }
 
@@ -324,6 +334,16 @@ namespace AMath.Managers
 
         private void EndMatch(MatchEndReason reason, int finisherPlayerId)
         {
+            // Only a live match can end. Scoring from any other phase would
+            // mutate racks and announce a winner for a match that was never
+            // dealt, which every peer would render as a final scoreboard.
+            if (Config == null || (Phase != MatchPhase.Playing && Phase != MatchPhase.Paused))
+            {
+                UnityEngine.Debug.LogWarning(
+                    $"[Match] Ignoring end request (reason {reason}) from phase {Phase}.");
+                return;
+            }
+
             // Leftover-tile adjustment: everyone loses their remaining tile
             // points; a player who went out additionally gains everyone else's.
             int forfeited = 0;

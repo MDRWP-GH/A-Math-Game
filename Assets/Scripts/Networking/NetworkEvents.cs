@@ -16,6 +16,17 @@ namespace AMath.Networking
     public struct ClientConnectedEvent { }
 
     /// <summary>
+    /// The host refused this client at the door (version, room code, capacity,
+    /// identity clash, match already running). The reason is host-authored
+    /// English text meant to be shown verbatim — it explains failures the UI
+    /// cannot deduce on its own.
+    /// </summary>
+    public struct ConnectionRejectedEvent
+    {
+        public string Reason;
+    }
+
+    /// <summary>
     /// The local client lost its connection to the host. Triggers the
     /// reconnect grace window (then leave + fresh join on failure).
     /// </summary>

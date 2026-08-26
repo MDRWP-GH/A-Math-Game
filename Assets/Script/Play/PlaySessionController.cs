@@ -51,6 +51,9 @@ namespace AMath.UI
 
         private const int VisibleSeatCount = 4;
 
+        /// <summary>How long a browser notice survives the ~1 Hz discovery refresh.</summary>
+        private const float BrowserNoticeSeconds = 8f;
+
         private static readonly Color TimerWarning = new(0.95f, 0.35f, 0.30f, 1f);
 
         private static readonly Color[] SeatAvatarColors =
@@ -144,6 +147,7 @@ namespace AMath.UI
         private Text _resultMeta;
         private Text _resultBody;
         private Text _recoveryStatus;
+        private Button _recoveryEndButton;
 
         private ScreenId _screen = ScreenId.None;
         private IEventBus _eventBus;
@@ -151,11 +155,20 @@ namespace AMath.UI
         private InputAction _cancelAction;
         private int _settingsClosedFrame = -1;
 
+        /// <summary>
+        /// Why the last session ended, shown on the browser screen. Discovery
+        /// rewrites the status line about once a second, so the notice holds
+        /// its place for a while instead of flashing past unread.
+        /// </summary>
+        private string _browserNotice;
+        private float _browserNoticeUntil;
+
         // Stored delegates so OnDestroy can unsubscribe exactly what was registered.
         private Action<HostStartedEvent> _onHostStarted;
         private Action<ClientConnectedEvent> _onClientConnected;
         private Action<MatchStartedEvent> _onMatchStarted;
         private Action<HostStoppedEvent> _onHostStopped;
+        private Action<ConnectionRejectedEvent> _onConnectionRejected;
         private Action<string> _onBrowserError;
         private Action<IReadOnlyList<NetworkPlayer>> _onMembersChanged;
         private Action<string> _onMatchError;
@@ -229,7 +242,11 @@ namespace AMath.UI
             BuildRecovery();
             BuildPause();
 
-            _onBrowserError = msg => _browserStatus.text = _text.GetText(msg);
+            _onBrowserError = msg =>
+            {
+                SetBrowserNotice(_text.GetText(msg));
+                UpdateBrowserStatus(string.Empty);
+            };
             _onMembersChanged = _ => RefreshLobby();
             _onMatchError = msg =>
             {
@@ -239,10 +256,15 @@ namespace AMath.UI
             _onResultChanged = _ => ShowResult();
             _onRecoveryFinished = ok =>
             {
-                if (_recoveryRoot != null)
-                    _recoveryRoot.SetActive(false);
-                if (!ok)
-                    ShowBrowser();
+                HideRecovery();
+                if (ok) return;
+
+                // A rejected join already put the host's own explanation on the
+                // browser; the generic message must not replace it.
+                if (_screen == ScreenId.Browser) return;
+
+                SetBrowserNotice(_text.GetText("ui.play.connection_lost"));
+                ShowBrowser();
             };
 
             _browserPresenter.RoomsChanged += RefreshRoomList;
@@ -272,10 +294,23 @@ namespace AMath.UI
                 };
                 _onMatchStarted = _ => ShowMatch();
                 _onHostStopped = _ => ReturnToMenu();
+
+                // The host's refusal text explains things the client cannot
+                // deduce (wrong version, duplicate identity, room full), so it
+                // is shown verbatim instead of a generic "could not join".
+                _onConnectionRejected = evt =>
+                {
+                    SetBrowserNotice(string.IsNullOrEmpty(evt.Reason)
+                        ? _text.GetText("ui.play.err_join")
+                        : evt.Reason);
+                    ShowBrowser();
+                };
+
                 _eventBus.Subscribe(_onHostStarted);
                 _eventBus.Subscribe(_onClientConnected);
                 _eventBus.Subscribe(_onMatchStarted);
                 _eventBus.Subscribe(_onHostStopped);
+                _eventBus.Subscribe(_onConnectionRejected);
             }
         }
 
@@ -311,6 +346,7 @@ namespace AMath.UI
                 _eventBus.Unsubscribe(_onClientConnected);
                 _eventBus.Unsubscribe(_onMatchStarted);
                 _eventBus.Unsubscribe(_onHostStopped);
+                _eventBus.Unsubscribe(_onConnectionRejected);
             }
         }
 
@@ -366,7 +402,7 @@ namespace AMath.UI
             {
                 case ScreenId.Browser:
                     if (_browserRoot.activeSelf && _browserPresenter != null)
-                        _browserStatus.text = _text.GetText(_browserPresenter.NoRoomsFound ? "ui.play.no_rooms" : "ui.play.searching");
+                        UpdateBrowserStatus(_text.GetText(_browserPresenter.NoRoomsFound ? "ui.play.no_rooms" : "ui.play.searching"));
                     break;
                 case ScreenId.Lobby:
                     RefreshLobby();
@@ -388,9 +424,49 @@ namespace AMath.UI
         private void ShowBrowser()
         {
             _screen = ScreenId.Browser;
+            HideRecovery();
             SetActiveScreens(browser: true);
             _browserPresenter.StartSearching();
-            _browserStatus.text = _text.GetText("ui.play.searching");
+            UpdateBrowserStatus(_text.GetText("ui.play.searching"));
+        }
+
+        /// <summary>Shows <paramref name="message"/> on the browser for a few seconds.</summary>
+        private void SetBrowserNotice(string message)
+        {
+            _browserNotice = message;
+            _browserNoticeUntil = Time.unscaledTime + BrowserNoticeSeconds;
+        }
+
+        private void ClearBrowserNotice()
+        {
+            _browserNotice = null;
+            _browserNoticeUntil = 0f;
+        }
+
+        /// <summary>A new attempt is under way, so the previous verdict is stale.</summary>
+        private void ShowConnectingStatus()
+        {
+            ClearBrowserNotice();
+            if (_browserStatus != null)
+                _browserStatus.text = _text.GetText("ui.play.connecting");
+        }
+
+        /// <summary>
+        /// Writes the browser status line, letting an active notice win over
+        /// the routine "searching…" / "no rooms" text.
+        /// </summary>
+        private void UpdateBrowserStatus(string fallback)
+        {
+            if (_browserStatus == null) return;
+
+            if (!string.IsNullOrEmpty(_browserNotice) && Time.unscaledTime < _browserNoticeUntil)
+            {
+                _browserStatus.text = _browserNotice;
+                return;
+            }
+
+            ClearBrowserNotice();
+            _browserStatus.text = fallback;
         }
 
         private void ShowLobby()
@@ -413,9 +489,18 @@ namespace AMath.UI
         private void ShowResult()
         {
             _screen = ScreenId.Result;
+            // The recovery overlay covers the whole screen and swallows every
+            // click, so it must never outlive the screen it was shown over.
+            HideRecovery();
             SetActiveScreens(result: true);
             _pauseRoot.SetActive(false);
             RefreshResult();
+        }
+
+        private void HideRecovery()
+        {
+            if (_recoveryRoot != null)
+                _recoveryRoot.SetActive(false);
         }
 
         private void SetActiveScreens(bool browser = false, bool lobby = false, bool match = false, bool result = false)
@@ -430,8 +515,9 @@ namespace AMath.UI
         {
             _browserPresenter?.StopSearching();
             SetActiveScreens();
-            _recoveryRoot.SetActive(false);
+            HideRecovery();
             _pauseRoot.SetActive(false);
+            ClearBrowserNotice();
             _screen = ScreenId.None;
             if (_mainMenu != null)
             {
@@ -456,7 +542,7 @@ namespace AMath.UI
 
             var createButton = _ui.CreateButton(panel, "Create", string.Empty, UiPalette.Primary, UiPalette.PrimaryHighlight, () =>
             {
-                _browserStatus.text = _text.GetText("ui.play.connecting");
+                ShowConnectingStatus();
                 _browserPresenter.CreateRoom(_roomNameField.text, GameRules.MaxPlayers);
             });
             UiFactory.SetCenteredRect(createButton.GetComponent<RectTransform>(), new Vector2(0f, 140f), new Vector2(520f, 70f));
@@ -469,7 +555,7 @@ namespace AMath.UI
 
             var joinButton = _ui.CreateButton(panel, "JoinCodeBtn", string.Empty, UiPalette.Secondary, UiPalette.SecondaryHighlight, () =>
             {
-                _browserStatus.text = _text.GetText("ui.play.connecting");
+                ShowConnectingStatus();
                 _browserPresenter.JoinByCode(_joinCodeField.text);
             });
             UiFactory.SetCenteredRect(joinButton.GetComponent<RectTransform>(), new Vector2(0f, -30f), new Vector2(520f, 64f));
@@ -497,11 +583,11 @@ namespace AMath.UI
 
             if (rooms == null || rooms.Count == 0)
             {
-                _browserStatus.text = _text.GetText(_browserPresenter.NoRoomsFound ? "ui.play.no_rooms" : "ui.play.searching");
+                UpdateBrowserStatus(_text.GetText(_browserPresenter.NoRoomsFound ? "ui.play.no_rooms" : "ui.play.searching"));
                 return;
             }
 
-            _browserStatus.text = string.Empty;
+            UpdateBrowserStatus(string.Empty);
             float y = 80f;
             foreach (RoomInfo room in rooms)
             {
@@ -509,7 +595,7 @@ namespace AMath.UI
                 string label = $"{room.Advertisement.RoomName}  [{room.Advertisement.RoomCode}]  {room.Advertisement.CurrentPlayers}/{room.Advertisement.MaxPlayers}";
                 var button = _ui.CreateButton(_roomListRoot, "Room", label, UiPalette.Secondary, UiPalette.SecondaryHighlight, () =>
                 {
-                    _browserStatus.text = _text.GetText("ui.play.connecting");
+                    ShowConnectingStatus();
                     _browserPresenter.JoinRoom(captured);
                 }, fontSize: 22);
                 UiFactory.SetCenteredRect(button.GetComponent<RectTransform>(), new Vector2(0f, y), new Vector2(540f, 52f));
@@ -569,10 +655,14 @@ namespace AMath.UI
 
         private void SetMatchFormat(MatchFormat format)
         {
-            if (_lobbyPresenter == null || !_lobbyPresenter.CanStartMatch)
+            // Gated on hosting, not on "can start": team mode is chosen exactly
+            // when the roster does not satisfy it yet, and tying the choice to
+            // startability made the whole lobby list vanish on every switch.
+            if (_lobbyPresenter == null || !_lobbyPresenter.IsHost)
                 return;
 
             _lobbyPresenter.SelectedFormat = format;
+            _lobbyPresenter.RefreshMembers();
             RefreshLobby();
         }
 
@@ -607,31 +697,42 @@ namespace AMath.UI
                 if (format == MatchFormat.Team)
                     badges += $"   <color=#8FD694>[{_text.GetText("ui.play.team_badge")} {index % GameRules.TeamCount + 1}]</color>";
 
-                var label = _ui.CreateText("Name", card.transform, player.DisplayName + badges, 26, FontStyle.Bold, UiPalette.LightText, TextAnchor.MiddleLeft);
+                string displayName = string.IsNullOrEmpty(player.DisplayName) && isYou
+                    ? LocalIdentity.DisplayName
+                    : player.DisplayName;
+                var label = _ui.CreateText("Name", card.transform, displayName + badges, 26, FontStyle.Bold, UiPalette.LightText, TextAnchor.MiddleLeft);
+                label.supportRichText = true;
                 UiFactory.SetStretchRect(label.rectTransform, 24f, 0f, 24f, 0f);
 
                 y -= 64f;
             }
 
-            bool hostControlsFormat = _lobbyPresenter.CanStartMatch;
+            bool weAreHost = _lobbyPresenter.IsHost;
             if (_formatIndividualButton != null)
-                _formatIndividualButton.interactable = hostControlsFormat;
+                _formatIndividualButton.interactable = weAreHost;
             if (_formatTeamButton != null)
-                _formatTeamButton.interactable = hostControlsFormat;
+                _formatTeamButton.interactable = weAreHost;
 
             HighlightFormatButton(_formatIndividualButton, format == MatchFormat.Individual);
             HighlightFormatButton(_formatTeamButton, format == MatchFormat.Team);
 
-            _lobbyStatus.text = _lobbyPresenter.CanStartMatch
-                ? (format == MatchFormat.Team
+            // Guests wait; hosts are told exactly what is missing, so a
+            // greyed-out start button never looks like a broken one.
+            string blockedReason = _lobbyPresenter.StartBlockedReason;
+            if (!weAreHost)
+                _lobbyStatus.text = _text.GetText("ui.play.waiting_host");
+            else if (blockedReason != null)
+                _lobbyStatus.text = _text.GetText(blockedReason);
+            else
+                _lobbyStatus.text = format == MatchFormat.Team
                     ? _text.GetText("ui.play.team_hint")
-                    : string.Empty)
-                : _text.GetText("ui.play.waiting_host");
+                    : string.Empty;
+
             var start = _lobbyRoot.transform.Find("Panel/StartMatch")?.GetComponent<Button>();
             if (start != null)
             {
-                start.interactable = _lobbyPresenter.CanStartMatch;
-                start.gameObject.SetActive(_lobbyPresenter.CanStartMatch || !NetworkClient.active || NetworkServer.active);
+                start.interactable = blockedReason == null;
+                start.gameObject.SetActive(weAreHost);
             }
         }
 
@@ -1330,17 +1431,33 @@ namespace AMath.UI
             _recoveryStatus.horizontalOverflow = HorizontalWrapMode.Wrap;
             UiFactory.SetCenteredRect(_recoveryStatus.rectTransform, new Vector2(0f, 20f), new Vector2(560f, 120f));
 
-            var waitButton = _ui.CreateButton(card.transform, "Wait", string.Empty, UiPalette.Secondary, UiPalette.SecondaryHighlight, () => { });
-            UiFactory.SetCenteredRect(waitButton.GetComponent<RectTransform>(), new Vector2(0f, -90f), new Vector2(420f, 64f));
-            LocalizedText.Bind(waitButton.GetComponentInChildren<Text>(), "ui.recovery.wait");
-
-            var endButton = _ui.CreateButton(card.transform, "End", string.Empty, UiPalette.Quit, UiPalette.QuitHighlight, () =>
+            var leaveButton = _ui.CreateButton(card.transform, "Leave", string.Empty, UiPalette.Secondary, UiPalette.SecondaryHighlight, () =>
             {
+                _recoveryPresenter.LeaveRoom();
+                SetBrowserNotice(_text.GetText("ui.play.connection_lost"));
+                ShowBrowser();
+            });
+            UiFactory.SetCenteredRect(leaveButton.GetComponent<RectTransform>(), new Vector2(0f, -90f), new Vector2(420f, 64f));
+            LocalizedText.Bind(leaveButton.GetComponentInChildren<Text>(), "ui.recovery.leave");
+
+            _recoveryEndButton = _ui.CreateButton(card.transform, "End", string.Empty, UiPalette.Quit, UiPalette.QuitHighlight, () =>
+            {
+                // Without a running match there is nothing to settle, and
+                // "ending" one would publish an empty result that reads as a
+                // defeat. Leaving is the only sensible action from a lobby.
+                if (!_recoveryPresenter.MatchWasRunning)
+                {
+                    _recoveryPresenter.LeaveRoom();
+                    SetBrowserNotice(_text.GetText("ui.play.connection_lost"));
+                    ShowBrowser();
+                    return;
+                }
+
                 _recoveryPresenter.EndMatchNow();
                 ShowResult();
             });
-            UiFactory.SetCenteredRect(endButton.GetComponent<RectTransform>(), new Vector2(0f, -170f), new Vector2(420f, 64f));
-            LocalizedText.Bind(endButton.GetComponentInChildren<Text>(), "ui.recovery.end");
+            UiFactory.SetCenteredRect(_recoveryEndButton.GetComponent<RectTransform>(), new Vector2(0f, -170f), new Vector2(420f, 64f));
+            LocalizedText.Bind(_recoveryEndButton.GetComponentInChildren<Text>(), "ui.recovery.end");
 
             _recoveryRoot.SetActive(false);
         }
@@ -1357,6 +1474,9 @@ namespace AMath.UI
                 _ => "ui.recovery.grace"
             };
             _recoveryStatus.text = $"{_text.GetText(key)}\n({elapsed:0}s)";
+
+            if (_recoveryEndButton != null)
+                _recoveryEndButton.gameObject.SetActive(_recoveryPresenter.MatchWasRunning);
         }
 
         #endregion

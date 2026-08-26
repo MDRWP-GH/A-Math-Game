@@ -3,6 +3,7 @@ using AMath.Core;
 using AMath.Core.Events;
 using AMath.Networking.Discovery;
 using AMath.Networking.Room;
+using Mirror;
 using UnityEngine;
 
 namespace AMath.Networking.HostMigration
@@ -18,10 +19,13 @@ namespace AMath.Networking.HostMigration
         #region Constants
 
         /// <summary>Seconds to wait / retry reconnect before giving up.</summary>
-        public const float GraceSeconds = 5f;
+        public const float GraceSeconds = 10f;
 
         /// <summary>Maximum automatic seat-token reconnect attempts in one recovery cycle.</summary>
-        public const int MaxReconnectAttempts = 1;
+        public const int MaxReconnectAttempts = 3;
+
+        /// <summary>Seconds between reconnect attempts (and between readiness re-checks).</summary>
+        private const float RetryBackoffSeconds = 1f;
 
         #endregion
 
@@ -132,7 +136,8 @@ namespace AMath.Networking.HostMigration
 
             if (_discovery.TryResolveRoomCode(_targetRoomCode, out RoomInfo room)
                 && _reconnectAttempts < MaxReconnectAttempts
-                && _elapsed >= _nextReconnectAttempt)
+                && _elapsed >= _nextReconnectAttempt
+                && CanAttemptReconnect())
             {
                 Reconnect(room);
                 return;
@@ -167,6 +172,21 @@ namespace AMath.Networking.HostMigration
                 OnReconnectFailed();
         }
 
+        /// <summary>
+        /// Mirror raises the disconnect callback before it clears the client
+        /// state, so <see cref="RoomManager.JoinRoom"/> would still see an
+        /// active session and refuse. Wait for the teardown instead of burning
+        /// an attempt on it.
+        /// </summary>
+        private bool CanAttemptReconnect()
+        {
+            if (!NetworkClient.active && !NetworkServer.active)
+                return true;
+
+            _nextReconnectAttempt = _elapsed + RetryBackoffSeconds;
+            return false;
+        }
+
         private void OnClientConnected(ClientConnectedEvent _)
         {
             if (_phase != RecoveryPhase.Reconnecting) return;
@@ -188,9 +208,9 @@ namespace AMath.Networking.HostMigration
             }
 
             _discovery.StartSearching();
-            _nextReconnectAttempt = _elapsed + 1f;
+            _nextReconnectAttempt = _elapsed + RetryBackoffSeconds;
             Debug.LogWarning(
-                $"[Reconnect] Attempt {_reconnectAttempts} failed; retrying discovery in 1s.");
+                $"[Reconnect] Attempt {_reconnectAttempts} failed; retrying discovery in {RetryBackoffSeconds:0.#}s.");
             SetPhase(RecoveryPhase.Searching);
         }
 

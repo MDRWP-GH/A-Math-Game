@@ -12,18 +12,13 @@ pushd "%~dp0"
 "%CSC%" /nologo /target:winexe /optimize+ /out:uninstall.exe /reference:System.Windows.Forms.dll /reference:System.Drawing.dll Uninstall.cs AppInfo.cs
 if errorlevel 1 exit /b 1
 
-"%CSC%" /nologo /target:winexe /optimize+ /out:Setup.exe /reference:System.Windows.Forms.dll /reference:System.Drawing.dll Setup.cs AppInfo.cs
+"%CSC%" /nologo /target:winexe /optimize+ /out:Setup.exe /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.IO.Compression.dll Setup.cs PackedPayload.cs AppInfo.cs
 if errorlevel 1 exit /b 1
 
-echo Built:
+echo Built stubs:
 echo   %CD%\uninstall.exe
 echo   %CD%\Setup.exe
-
-if exist "%~dp0..\Build\Windows\A-Math.exe" (
-  copy /Y uninstall.exe "%~dp0..\Build\Windows\uninstall.exe" > nul
-  copy /Y Setup.exe "%~dp0..\Build\Windows\Setup.exe" > nul
-  echo Copied into Build\Windows
-)
+echo Unity Windows player builds pack the game into Setup.exe automatically.
 
 popd
 endlocal

@@ -7,8 +7,8 @@ namespace AMath.UI
 {
     /// <summary>
     /// Presenter for the "connection lost" overlay shown while reconnect /
-    /// fresh-join runs. The player may keep waiting (automatic) or end the
-    /// match now from the local backup save.
+    /// fresh-join runs. Reconnecting is automatic; the player may leave the
+    /// room, or — mid-match only — end it now from the local backup save.
     /// </summary>
     public sealed class ConnectionLostPresenter : MonoBehaviour
     {
@@ -26,6 +26,17 @@ namespace AMath.UI
 
         private Core.Events.IEventBus _eventBus;
         private ReconnectionManager _reconnection;
+
+        #endregion
+
+        #region Properties
+
+        /// <summary>
+        /// True when a real match was running when the link dropped. Without a
+        /// match there are no results to show, so the view must offer "leave"
+        /// rather than "end the match".
+        /// </summary>
+        public bool MatchWasRunning => _reconnection is { MatchWasRunning: true };
 
         #endregion
 
@@ -86,6 +97,9 @@ namespace AMath.UI
 
         /// <summary>Player chose to stop waiting and finish the match from the local backup.</summary>
         public void EndMatchNow() => _reconnection.EndMatchNow();
+
+        /// <summary>Player gave up on the room and wants to go back to the browser.</summary>
+        public void LeaveRoom() => _reconnection.LeaveRoomNow();
 
         #endregion
     }

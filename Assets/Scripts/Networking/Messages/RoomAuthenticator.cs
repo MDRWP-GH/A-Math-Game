@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using System.Security.Cryptography;
+using AMath.Core.Events;
 using AMath.Core.StateMachines;
 using AMath.Gameplay.Players;
 using AMath.Managers;
@@ -46,6 +47,7 @@ namespace AMath.Networking.Messages
         private RoomSession _session;
         private PlayerManager _playerManager;
         private GameManager _gameManager;
+        private IEventBus _eventBus;
 
         /// <summary>
         /// Tokens handed out to each GUID during this hosting session. Absent
@@ -56,12 +58,20 @@ namespace AMath.Networking.Messages
         /// </summary>
         private readonly Dictionary<string, string> _issuedTokens = new();
 
+        /// <summary>Scratch buffer: eviction must not mutate the connection dictionary while iterating it.</summary>
+        private static readonly List<NetworkConnectionToClient> _staleConnections = new();
+
         /// <summary>Injects domain dependencies. Must be called before hosting.</summary>
-        public void Configure(RoomSession session, PlayerManager playerManager, GameManager gameManager)
+        public void Configure(
+            RoomSession session,
+            PlayerManager playerManager,
+            GameManager gameManager,
+            IEventBus eventBus)
         {
             _session = session;
             _playerManager = playerManager;
             _gameManager = gameManager;
+            _eventBus = eventBus;
         }
 
         #endregion
@@ -86,7 +96,7 @@ namespace AMath.Networking.Messages
 
         private void OnAuthRequest(NetworkConnectionToClient conn, AuthRequestMessage message)
         {
-            string rejection = Evaluate(message, out AuthenticatedIdentity identity);
+            string rejection = Evaluate(conn, message, out AuthenticatedIdentity identity);
             if (rejection == null)
             {
                 // Rotate on every accepted connection: a token sniffed off the
@@ -100,6 +110,10 @@ namespace AMath.Networking.Messages
             }
             else
             {
+                Debug.LogWarning(
+                    $"[Auth] Rejected connection {conn.connectionId} " +
+                    $"(name '{message.DisplayName}', guid '{message.PersistentGuid}', " +
+                    $"room '{message.RoomCode}' vs host '{_session.RoomCode}'): {rejection}");
                 conn.Send(new AuthResponseMessage { Approved = false, Reason = rejection });
                 // Give the transport a moment to flush the reason before closing.
                 StartCoroutine(DelayedReject(conn));
@@ -107,7 +121,10 @@ namespace AMath.Networking.Messages
         }
 
         /// <summary>Returns null when accepted, otherwise the rejection reason.</summary>
-        private string Evaluate(AuthRequestMessage message, out AuthenticatedIdentity identity)
+        private string Evaluate(
+            NetworkConnectionToClient conn,
+            AuthRequestMessage message,
+            out AuthenticatedIdentity identity)
         {
             identity = null;
 
@@ -130,19 +147,25 @@ namespace AMath.Networking.Messages
             if (!string.Equals(message.RoomCode, _session.RoomCode, System.StringComparison.OrdinalIgnoreCase))
                 return "Wrong room code.";
 
-            // Duplicate GUID = already connected from another (or the same) machine.
-            foreach (NetworkConnectionToClient existing in NetworkServer.connections.Values)
-            {
-                if (existing.authenticationData is AuthenticatedIdentity other
-                    && other.PersistentGuid == message.PersistentGuid)
-                    return "This player is already connected.";
-            }
+            // The host occupies a seat through its own local connection, which
+            // can never be evicted without tearing down the room. Two copies of
+            // the same install share one PlayerPrefs GUID, so say so plainly
+            // instead of reporting a generic "already connected".
+            if (conn != NetworkServer.localConnection
+                && NetworkServer.localConnection?.authenticationData is AuthenticatedIdentity hostIdentity
+                && hostIdentity.PersistentGuid == message.PersistentGuid)
+                return "This identity is already used by the host (same installation).";
 
             // Finished matches are not resumable, so treat them like the lobby
             // instead of letting a stale client reconnect into a closed match.
             bool matchRunning = _gameManager.Config != null
                 && _gameManager.Phase != MatchPhase.Lobby
                 && _gameManager.Phase != MatchPhase.Finished;
+
+            // The seat check runs BEFORE the duplicate-GUID handling: a client
+            // that dropped is still in NetworkServer.connections until the
+            // transport times it out, so treating "same GUID" as a hard
+            // rejection would make every reconnect fail.
             if (matchRunning)
             {
                 // Mid-match, only players who already own a seat may (re)join.
@@ -157,6 +180,10 @@ namespace AMath.Networking.Messages
                     && !FixedTimeEquals(expectedToken, message.ReconnectToken))
                     return "Reconnection token does not match this seat.";
 
+                // The token proved ownership, so the older connection for this
+                // GUID is a leftover of the same player and is dropped.
+                DisconnectStaleConnections(conn, message.PersistentGuid);
+
                 identity = new AuthenticatedIdentity
                 {
                     PersistentGuid = message.PersistentGuid,
@@ -167,9 +194,14 @@ namespace AMath.Networking.Messages
                 return null;
             }
 
+            // In the lobby a seat holds no state worth protecting, so the newest
+            // connection wins and the stale one is evicted.
+            int evicted = DisconnectStaleConnections(conn, message.PersistentGuid);
+
             // The pending connection is already counted in NetworkServer.connections,
-            // so "full" means the count would EXCEED the seat limit.
-            if (NetworkServer.connections.Count > _session.MaxPlayers)
+            // so "full" means the count would EXCEED the seat limit. Connections
+            // we just evicted are still listed until the transport removes them.
+            if (NetworkServer.connections.Count - evicted > _session.MaxPlayers)
                 return "Room is full.";
 
             identity = new AuthenticatedIdentity
@@ -178,6 +210,32 @@ namespace AMath.Networking.Messages
                 DisplayName = message.DisplayName
             };
             return null;
+        }
+
+        /// <summary>
+        /// Drops every other connection that claims <paramref name="persistentGuid"/>
+        /// and returns how many were dropped. The host identifies a player by
+        /// GUID, so two live connections sharing one would fight over the seat.
+        /// </summary>
+        private static int DisconnectStaleConnections(NetworkConnectionToClient conn, string persistentGuid)
+        {
+            _staleConnections.Clear();
+            foreach (NetworkConnectionToClient existing in NetworkServer.connections.Values)
+            {
+                if (existing == conn || existing == NetworkServer.localConnection) continue;
+                if (existing.authenticationData is AuthenticatedIdentity other
+                    && other.PersistentGuid == persistentGuid)
+                    _staleConnections.Add(existing);
+            }
+
+            foreach (NetworkConnectionToClient stale in _staleConnections)
+            {
+                Debug.LogWarning(
+                    $"[Auth] Evicting stale connection {stale.connectionId} for guid '{persistentGuid}'.");
+                stale.Disconnect();
+            }
+
+            return _staleConnections.Count;
         }
 
         private static bool IsAiSeatGuid(string persistentGuid) =>
@@ -253,6 +311,11 @@ namespace AMath.Networking.Messages
             else
             {
                 Debug.LogWarning($"[Auth] Rejected by host: {message.Reason}");
+
+                // Published before ClientReject so the reason is already known
+                // when the resulting disconnect reaches the recovery pipeline,
+                // which must not mistake a refused join for a lost connection.
+                _eventBus?.Publish(new ConnectionRejectedEvent { Reason = message.Reason });
                 ClientReject();
             }
         }

@@ -171,6 +171,10 @@ namespace AMath.UI.Localization
             ["ui.play.err_create"] = "สร้างห้องไม่สำเร็จ",
             ["ui.play.err_join"] = "เข้าห้องไม่สำเร็จ",
             ["ui.play.err_not_joinable"] = "ห้องนี้เข้าไม่ได้ในขณะนี้",
+            ["ui.play.connection_lost"] = "การเชื่อมต่อขาดหาย — กลับมาที่หน้าค้นหาห้อง",
+            ["ui.play.need_host"] = "เฉพาะเจ้าของห้องเท่านั้นที่เริ่มแมตช์ได้",
+            ["ui.play.need_players"] = "รอผู้เล่นเข้าห้อง…",
+            ["ui.play.need_even_teams"] = "โหมดทีมต้องมีที่นั่งเป็นเลขคู่ อย่างน้อย 4 ที่นั่ง",
 
             // Match HUD
             ["ui.match.confirm"] = "ยืนยันการวาง",
@@ -246,6 +250,7 @@ namespace AMath.UI.Localization
             // Recovery
             ["ui.recovery.title"] = "การเชื่อมต่อขาดหาย",
             ["ui.recovery.wait"] = "รอต่อ",
+            ["ui.recovery.leave"] = "ออกจากห้อง",
             ["ui.recovery.end"] = "จบจากเซฟสำรอง",
             ["ui.recovery.grace"] = "กำลังเชื่อมต่อใหม่…",
             ["ui.recovery.search"] = "กำลังค้นหาห้องในเครือข่าย…",
@@ -394,6 +399,10 @@ namespace AMath.UI.Localization
             ["ui.play.err_create"] = "Could not create the room",
             ["ui.play.err_join"] = "Could not join the room",
             ["ui.play.err_not_joinable"] = "That room cannot be joined right now",
+            ["ui.play.connection_lost"] = "Connection lost — back to the room list",
+            ["ui.play.need_host"] = "Only the host can start the match",
+            ["ui.play.need_players"] = "Waiting for players to join…",
+            ["ui.play.need_even_teams"] = "Team mode needs an even number of seats, at least 4",
 
             // Match HUD
             ["ui.match.confirm"] = "Confirm Place",
@@ -469,6 +478,7 @@ namespace AMath.UI.Localization
             // Recovery
             ["ui.recovery.title"] = "Connection Lost",
             ["ui.recovery.wait"] = "Keep Waiting",
+            ["ui.recovery.leave"] = "Leave Room",
             ["ui.recovery.end"] = "End From Backup Save",
             ["ui.recovery.grace"] = "Reconnecting…",
             ["ui.recovery.search"] = "Searching the LAN for the room…",

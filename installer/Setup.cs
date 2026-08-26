@@ -37,8 +37,8 @@ internal sealed class SetupForm : Form
 
         var body = new Label();
         body.Text = I18n.T(
-            "Copies the game to this computer, creates shortcuts, and adds uninstall.exe so you can remove it later.",
-            "คัดลอกเกมลงเครื่อง สร้างทางลัด และใส่ uninstall.exe เพื่อถอนการติดตั้งภายหลัง");
+            "Installs the game on this computer, creates shortcuts, and adds uninstall.exe so you can remove it later.",
+            "ติดตั้งเกมลงเครื่อง สร้างทางลัด และใส่ uninstall.exe เพื่อถอนการติดตั้งภายหลัง");
         body.ForeColor = Theme.MutedText;
         body.AutoSize = false;
         body.SetBounds(28, 68, 504, 48);
@@ -119,14 +119,13 @@ internal sealed class SetupForm : Form
             return;
 
         string sourceDir = Path.GetFullPath(AppDomain.CurrentDomain.BaseDirectory);
-        string sourceExe = Path.Combine(sourceDir, AppInfo.ExeName);
-        if (!File.Exists(sourceExe))
+        if (!PackedPayload.HasPayload() && !File.Exists(Path.Combine(sourceDir, AppInfo.ExeName)))
         {
             MessageBox.Show(
                 this,
                 I18n.T(
-                    "Place Setup.exe in the same folder as " + AppInfo.ExeName + ".",
-                    "วาง Setup.exe ไว้ในโฟลเดอร์เดียวกับ " + AppInfo.ExeName),
+                    "This Setup.exe has no game files. Build a Windows player from Unity to create the installer.",
+                    "Setup.exe นี้ไม่มีไฟล์เกมในตัว ให้ Build เกม Windows จาก Unity เพื่อสร้างตัวติดตั้ง"),
                 AppInfo.ProductName,
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Warning);
@@ -222,25 +221,47 @@ internal static class Installer
 
         Directory.CreateDirectory(destDir);
 
-        bool sameDir = string.Equals(sourceDir, destDir, StringComparison.OrdinalIgnoreCase);
-        if (!sameDir)
+        if (PackedPayload.HasPayload())
         {
-            if (destDir.StartsWith(sourceDir + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException(I18n.T(
-                    "Choose a folder outside the game build folder.",
-                    "เลือกโฟลเดอร์ที่อยู่นอกโฟลเดอร์บิลด์ของเกม"));
+            report(I18n.T("Extracting files…", "กำลังแตกไฟล์…"));
+            PackedPayload.ExtractTo(destDir, report);
+        }
+        else
+        {
+            bool sameDir = string.Equals(sourceDir, destDir, StringComparison.OrdinalIgnoreCase);
+            if (!sameDir)
+            {
+                if (destDir.StartsWith(sourceDir + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException(I18n.T(
+                        "Choose a folder outside the game build folder.",
+                        "เลือกโฟลเดอร์ที่อยู่นอกโฟลเดอร์บิลด์ของเกม"));
 
-            report(I18n.T("Copying files…", "กำลังคัดลอกไฟล์…"));
-            CopyDirectory(sourceDir, destDir);
+                report(I18n.T("Copying files…", "กำลังคัดลอกไฟล์…"));
+                CopyDirectory(sourceDir, destDir);
+            }
         }
 
         string gameExe = Path.Combine(destDir, AppInfo.ExeName);
+        if (!File.Exists(gameExe))
+        {
+            throw new InvalidOperationException(I18n.T(
+                "The installer did not contain " + AppInfo.ExeName + ".",
+                "ตัวติดตั้งไม่มีไฟล์ " + AppInfo.ExeName));
+        }
+
         string uninstallExe = Path.Combine(destDir, AppInfo.UninstallExeName);
         if (!File.Exists(uninstallExe))
         {
             string bundled = Path.Combine(sourceDir, AppInfo.UninstallExeName);
             if (File.Exists(bundled))
                 File.Copy(bundled, uninstallExe, true);
+        }
+
+        if (!File.Exists(uninstallExe))
+        {
+            throw new InvalidOperationException(I18n.T(
+                "The installer did not contain " + AppInfo.UninstallExeName + ".",
+                "ตัวติดตั้งไม่มีไฟล์ " + AppInfo.UninstallExeName));
         }
 
         report(I18n.T("Creating shortcuts…", "กำลังสร้างทางลัด…"));
@@ -258,7 +279,10 @@ internal static class Installer
         Directory.CreateDirectory(dest);
         foreach (string file in Directory.GetFiles(source))
         {
-            File.Copy(file, Path.Combine(dest, Path.GetFileName(file)), true);
+            string name = Path.GetFileName(file);
+            if (string.Equals(name, AppInfo.SetupExeName, StringComparison.OrdinalIgnoreCase))
+                continue;
+            File.Copy(file, Path.Combine(dest, name), true);
         }
 
         foreach (string dir in Directory.GetDirectories(source))

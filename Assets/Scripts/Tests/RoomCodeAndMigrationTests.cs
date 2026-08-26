@@ -78,10 +78,13 @@ namespace AMath.Tests
         }
 
         [Test]
-        public void ReconnectGrace_IsFiveSeconds()
+        public void ReconnectGrace_AllowsSeveralAttemptsWithinTheWindow()
         {
-            Assert.AreEqual(5f, HostMigrationManager.GraceSeconds);
-            Assert.AreEqual(1, HostMigrationManager.MaxReconnectAttempts);
+            Assert.AreEqual(10f, HostMigrationManager.GraceSeconds);
+
+            // One attempt is not enough: the first try usually lands while
+            // Mirror is still tearing the old client down.
+            Assert.Greater(HostMigrationManager.MaxReconnectAttempts, 1);
         }
 
         #endregion

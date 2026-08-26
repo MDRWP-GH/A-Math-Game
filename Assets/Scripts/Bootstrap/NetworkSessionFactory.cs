@@ -79,20 +79,31 @@ namespace AMath.Bootstrap
 
         private static GameObject CreatePlayerPrefab()
         {
-            var prefab = new GameObject("NetworkPlayerPrefab");
-            prefab.AddComponent<NetworkIdentity>();
+            var prefab = CreateInactiveNetworkPrefab("NetworkPlayerPrefab");
             prefab.AddComponent<NetworkPlayer>();
-            prefab.SetActive(false);
-            Object.DontDestroyOnLoad(prefab);
             return prefab;
         }
 
         private static GameObject CreateNetworkBehaviourPrefab<T>(string name) where T : NetworkBehaviour
         {
-            var prefab = new GameObject(name);
-            prefab.AddComponent<NetworkIdentity>();
+            var prefab = CreateInactiveNetworkPrefab(name);
             prefab.AddComponent<T>();
+            return prefab;
+        }
+
+        /// <summary>
+        /// Runtime Mirror templates must stay inactive until a live copy is
+        /// spawned. <see cref="NetworkIdentity.Awake"/> sets the serialized
+        /// <c>hasSpawned</c> flag; if that runs on the template, every
+        /// Instantiate copies the flag and the clone destroys itself as a
+        /// "scene object spawned twice" — which is why lobby names vanished
+        /// on builds (the editor resets the flag in OnValidate).
+        /// </summary>
+        private static GameObject CreateInactiveNetworkPrefab(string name)
+        {
+            var prefab = new GameObject(name);
             prefab.SetActive(false);
+            prefab.AddComponent<NetworkIdentity>();
             Object.DontDestroyOnLoad(prefab);
             return prefab;
         }

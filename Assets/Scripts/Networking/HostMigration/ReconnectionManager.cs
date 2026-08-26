@@ -13,7 +13,7 @@ namespace AMath.Networking.HostMigration
 {
     /// <summary>
     /// Orchestrates Minecraft-style disconnect handling:
-    ///  - client loses host: pause/backup (mid-match), wait ~5s to reconnect,
+    ///  - client loses host: pause/backup (mid-match), retry for a grace window,
     ///    then leave and try a fresh join if the room is still advertised;
     ///  - host loses network: dissolve the waiting room and play room;
     ///  - host pauses while seats are empty and auto-resumes when all return.
@@ -24,6 +24,16 @@ namespace AMath.Networking.HostMigration
 
         /// <summary>Seconds to search for the room after leave before giving up.</summary>
         private const float FreshJoinSeconds = 5f;
+
+        /// <summary>Extra fresh-join windows granted when an attempt drops mid-connect.</summary>
+        private const int MaxFreshJoinRetries = 2;
+
+        /// <summary>
+        /// Hard ceiling on a whole recovery cycle. The blocking "connection
+        /// lost" overlay is visible for its entire duration, so no combination
+        /// of grace, retry and fresh-join windows may outlive this.
+        /// </summary>
+        private const float MaxRecoverySeconds = 30f;
 
         /// <summary>
         /// Consecutive discovery broadcast failures (~1 Hz) before the host
@@ -47,9 +57,24 @@ namespace AMath.Networking.HostMigration
 
         private bool _freshJoining;
         private float _freshJoinElapsed;
+        private int _freshJoinRetries;
         private string _freshJoinRoomCode;
         private string _savedReconnectToken;
         private bool _matchWasRunningAtDisconnect;
+        private string _rejectionReason;
+        private bool _connectedSinceJoin;
+        private float _recoveryElapsed;
+
+        #endregion
+
+        #region Properties
+
+        /// <summary>
+        /// True when a match (not a lobby) was running at the moment the
+        /// connection dropped. The UI needs this to decide whether ending the
+        /// session should show match results at all.
+        /// </summary>
+        public bool MatchWasRunning => _matchWasRunningAtDisconnect;
 
         #endregion
 
@@ -80,14 +105,29 @@ namespace AMath.Networking.HostMigration
             _eventBus.Subscribe<PlayerConnectionChangedEvent>(OnPlayerConnectionChanged);
             _eventBus.Subscribe<HostMigrationCompletedEvent>(OnMigrationCompleted);
             _eventBus.Subscribe<ClientConnectedEvent>(OnClientConnected);
+            _eventBus.Subscribe<ConnectionRejectedEvent>(OnConnectionRejected);
         }
 
         #endregion
 
         #region Connection loss (client side)
 
+        private void OnConnectionRejected(ConnectionRejectedEvent evt)
+        {
+            // Consumed by the disconnect that always follows a rejection.
+            _rejectionReason = string.IsNullOrEmpty(evt.Reason) ? "Rejected by host." : evt.Reason;
+        }
+
         private void OnClientDisconnected(ClientDisconnectedEvent evt)
         {
+            // Both flags describe the attempt that just ended, so they are
+            // consumed here unconditionally — leaving either set would let a
+            // stale verdict decide the next disconnect.
+            string rejection = _rejectionReason;
+            bool wasConnected = _connectedSinceJoin;
+            _rejectionReason = null;
+            _connectedSinceJoin = false;
+
             // The host's own local client also raises this when hosting stops;
             // recovery is only for clients that lost their server.
             if (NetworkServer.active) return;
@@ -96,9 +136,30 @@ namespace AMath.Networking.HostMigration
             // stopping) — nothing to recover.
             if (!_session.IsActive) return;
 
-            // Fresh-join attempt failed to stay connected; keep searching.
-            if (_freshJoining)
+            // A refusal at the door is deterministic: retrying produces the same
+            // verdict, so end the session immediately instead of parking the
+            // player behind the blocking recovery overlay.
+            if (rejection != null)
+            {
+                Debug.LogWarning($"[Reconnect] Host refused the connection ({rejection}); not recovering.");
+                _migrationManager.CancelRecovery();
+                FinishDissolved();
                 return;
+            }
+
+            // Fresh-join attempt dropped mid-connect; grant another window
+            // instead of silently waiting out the current one.
+            if (_freshJoining)
+            {
+                if (_freshJoinRetries < MaxFreshJoinRetries)
+                {
+                    _freshJoinRetries++;
+                    _freshJoinElapsed = 0f;
+                    Debug.LogWarning($"[Reconnect] Fresh join dropped; retry {_freshJoinRetries}.");
+                }
+
+                return;
+            }
 
             if (_migrationManager.Phase == RecoveryPhase.Reconnecting)
             {
@@ -111,15 +172,32 @@ namespace AMath.Networking.HostMigration
                 && _migrationManager.Phase != RecoveryPhase.Recovered)
                 return;
 
-            _matchWasRunningAtDisconnect = evt.MatchWasRunning;
-            Debug.LogWarning("[Reconnect] Connection to host lost — starting reconnect grace.");
-
-            if (evt.MatchWasRunning)
+            // The connection never completed, so there is no session to restore
+            // — this is a failed join (unreachable host, timeout), not a loss.
+            if (!wasConnected)
             {
-                _saveManager.SaveNow();
-                _stateMachine.TransitionTo(MatchPhase.Paused);
+                Debug.LogWarning("[Reconnect] Join never completed; returning to the room browser.");
+                FinishDissolved();
+                return;
             }
 
+            // A lobby holds no state to restore, and migration re-hosts from a
+            // match snapshot that does not exist yet, so the room code will
+            // never come back. Waiting would only stall the player.
+            if (!evt.MatchWasRunning)
+            {
+                _matchWasRunningAtDisconnect = false;
+                Debug.LogWarning("[Reconnect] Lost the host while in the lobby — dissolving the room.");
+                FinishDissolved();
+                return;
+            }
+
+            _matchWasRunningAtDisconnect = true;
+            _recoveryElapsed = 0f;
+            Debug.LogWarning("[Reconnect] Connection to host lost — starting reconnect grace.");
+
+            _saveManager.SaveNow();
+            _stateMachine.TransitionTo(MatchPhase.Paused);
             _migrationManager.BeginRecovery();
         }
 
@@ -171,6 +249,9 @@ namespace AMath.Networking.HostMigration
 
         private void OnClientConnected(ClientConnectedEvent _)
         {
+            _connectedSinceJoin = true;
+            _rejectionReason = null;
+
             if (!_freshJoining) return;
 
             Debug.Log("[Reconnect] Fresh join succeeded.");
@@ -180,13 +261,46 @@ namespace AMath.Networking.HostMigration
 
         /// <summary>
         /// Player chose not to wait: finish the match right now from local
-        /// state (scores settled exactly like a normal ending).
+        /// state (scores settled exactly like a normal ending). In the lobby
+        /// there is nothing to settle, so this only tears the session down.
         /// </summary>
         public void EndMatchNow()
         {
-            ClearFreshJoinState();
-            _migrationManager.CancelRecovery();
+            AbortRecovery();
             _gameManager.EndMatchManually();
+        }
+
+        /// <summary>
+        /// Stops every recovery activity and guarantees a terminal recovery
+        /// state reaches the UI. <see cref="HostMigrationManager.CancelRecovery"/>
+        /// stays silent when it is already idle (which it is during fresh-join),
+        /// so the blocking overlay would otherwise never be told to close.
+        /// </summary>
+        public void AbortRecovery()
+        {
+            ClearFreshJoinState();
+            _discovery.StopSearching();
+            _migrationManager.CancelRecovery();
+            _recoveryElapsed = 0f;
+            _eventBus.Publish(new RecoveryStateChangedEvent
+            {
+                Phase = RecoveryPhase.Idle,
+                ElapsedSeconds = 0f
+            });
+        }
+
+        /// <summary>Player gave up waiting and wants out of the room entirely.</summary>
+        public void LeaveRoomNow()
+        {
+            AbortRecovery();
+
+            if (_session.IsActive)
+                _roomManager.LeaveRoom();
+
+            if (_gameManager.Config != null && _gameManager.Phase != MatchPhase.Lobby)
+                _gameManager.AbandonSession();
+
+            _matchWasRunningAtDisconnect = false;
         }
 
         #endregion
@@ -247,7 +361,34 @@ namespace AMath.Networking.HostMigration
         public void Tick(float deltaTime)
         {
             TickHostNetworkWatch();
+            TickRecoveryDeadline(deltaTime);
             TickFreshJoin(deltaTime);
+        }
+
+        /// <summary>
+        /// Backstop for the blocking recovery overlay: however the grace,
+        /// retry and fresh-join windows chain together, recovery ends here.
+        /// </summary>
+        private void TickRecoveryDeadline(float deltaTime)
+        {
+            bool recovering = _freshJoining
+                || (_migrationManager.Phase != RecoveryPhase.Idle
+                    && _migrationManager.Phase != RecoveryPhase.Recovered);
+
+            if (!recovering)
+            {
+                _recoveryElapsed = 0f;
+                return;
+            }
+
+            _recoveryElapsed += deltaTime;
+            if (_recoveryElapsed < MaxRecoverySeconds)
+                return;
+
+            Debug.LogWarning(
+                $"[Reconnect] Recovery exceeded {MaxRecoverySeconds:0}s — dissolving the room.");
+            _migrationManager.CancelRecovery();
+            FinishDissolved();
         }
 
         private void TickHostNetworkWatch()
@@ -312,6 +453,7 @@ namespace AMath.Networking.HostMigration
         {
             ClearFreshJoinState();
             _discovery.StopSearching();
+            _recoveryElapsed = 0f;
             if (_session.IsActive)
                 _roomManager.LeaveRoom();
 
@@ -319,9 +461,12 @@ namespace AMath.Networking.HostMigration
                 || (_gameManager.Config != null && _gameManager.Phase != MatchPhase.Lobby))
                 _gameManager.AbandonSession();
 
+            bool matchWasRunning = _matchWasRunningAtDisconnect;
+            _matchWasRunningAtDisconnect = false;
+
             _eventBus.Publish(new RoomDissolvedEvent
             {
-                Reason = _matchWasRunningAtDisconnect
+                Reason = matchWasRunning
                     ? RoomDissolveReason.ReconnectFailed
                     : RoomDissolveReason.LobbyDisconnect
             });
@@ -332,6 +477,7 @@ namespace AMath.Networking.HostMigration
         {
             _freshJoining = false;
             _freshJoinElapsed = 0f;
+            _freshJoinRetries = 0;
             _freshJoinRoomCode = null;
             _savedReconnectToken = null;
         }
@@ -347,6 +493,7 @@ namespace AMath.Networking.HostMigration
             _eventBus.Unsubscribe<PlayerConnectionChangedEvent>(OnPlayerConnectionChanged);
             _eventBus.Unsubscribe<HostMigrationCompletedEvent>(OnMigrationCompleted);
             _eventBus.Unsubscribe<ClientConnectedEvent>(OnClientConnected);
+            _eventBus.Unsubscribe<ConnectionRejectedEvent>(OnConnectionRejected);
         }
 
         #endregion

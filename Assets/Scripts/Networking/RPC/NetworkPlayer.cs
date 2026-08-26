@@ -40,7 +40,7 @@ namespace AMath.Networking.RPC
         private int _playerId = -1;
 
         /// <summary>Display name shown in lobby and match UI.</summary>
-        [SyncVar]
+        [SyncVar(hook = nameof(OnDisplayNameChanged))]
         private string _displayName;
 
         /// <summary>Persistent identity GUID (used to rebuild seating after migration).</summary>
@@ -121,6 +121,7 @@ namespace AMath.Networking.RPC
         public override void OnStartClient()
         {
             ResolveServices();
+            NotifyRosterChanged();
         }
 
         public override void OnStartLocalPlayer()
@@ -129,11 +130,19 @@ namespace AMath.Networking.RPC
                 _playerManager.LocalPlayerId = _playerId;
 
             _eventBus.Subscribe<LocalCommandRequestedEvent>(OnLocalCommandRequested);
+            NotifyRosterChanged();
         }
 
         public override void OnStopLocalPlayer()
         {
             _eventBus?.Unsubscribe<LocalCommandRequestedEvent>(OnLocalCommandRequested);
+        }
+
+        private void OnDestroy()
+        {
+            // Unspawn removes this identity from NetworkClient.spawned after
+            // OnStopClient, so refresh here once the object is actually gone.
+            _eventBus?.Publish(new PlayerRosterChangedEvent());
         }
 
         private void ResolveServices()
@@ -148,6 +157,14 @@ namespace AMath.Networking.RPC
         {
             if (isLocalPlayer && newId >= 0)
                 _playerManager.LocalPlayerId = newId;
+        }
+
+        private void OnDisplayNameChanged(string _, string __) => NotifyRosterChanged();
+
+        private void NotifyRosterChanged()
+        {
+            ResolveServices();
+            _eventBus?.Publish(new PlayerRosterChangedEvent());
         }
 
         #endregion
