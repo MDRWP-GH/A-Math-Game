@@ -51,10 +51,8 @@ namespace AMath.UI
         private const float SliderHeight = 40f;
         private const float SliderHandleSize = 28f;
         private const float GuiScaleValueWidth = 96f;
+        private const float CaretSize = 22f;
 
-        private static readonly Color PanelColor = new Color(0.05f, 0.05f, 0.07f, 0.58f);
-        private static readonly Color FieldColor = new Color(0.12f, 0.12f, 0.14f, 0.92f);
-        private static readonly Color FieldBorder = new Color(0f, 0f, 0f, 0.85f);
         private static readonly Color SliderTrack = new Color(1f, 1f, 1f, 0.95f);
         private static readonly Color SliderHandle = new Color(0.82f, 0.84f, 0.88f, 1f);
         private static readonly Color MarkerFallback = new Color(0.35f, 0.78f, 1f, 1f);
@@ -85,6 +83,9 @@ namespace AMath.UI
         private InputAction _cancelAction;
         private int _activeTab = GeneralTab;
 
+        /// <summary>Shared by every option row, so only one list can be open at a time.</summary>
+        private UiDropdown _dropdown;
+
         /// <summary>Raised when the player leaves the settings screen.</summary>
         public event Action Closed;
 
@@ -107,7 +108,8 @@ namespace AMath.UI
                 return;
             }
 
-            _screen.SetActive(true);
+            var fade = OverlayFade.Ensure(_screen);
+            fade.FadeIn();
             RefreshAll();
             ShowTab(_activeTab);
             UiFactory.Select(_tabButtons[_activeTab]);
@@ -120,8 +122,11 @@ namespace AMath.UI
                 return;
             }
 
+            _dropdown?.Close();
             GameSettings.Flush();
-            _screen.SetActive(false);
+            // Instant hide so the main menu can reclaim focus without waiting on
+            // the fade; the fade-in on Open still softens the next visit.
+            OverlayFade.Ensure(_screen).HideInstant();
             Closed?.Invoke();
         }
 
@@ -144,10 +149,20 @@ namespace AMath.UI
 
         private void Update()
         {
-            if (IsOpen && WasCancelPressed())
+            if (!IsOpen || !WasCancelPressed())
             {
-                Close();
+                return;
             }
+
+            // An open option list is a layer over the page, so Cancel dismisses
+            // it first rather than closing the whole screen from underneath it.
+            if (_dropdown != null && _dropdown.IsOpen)
+            {
+                _dropdown.Close();
+                return;
+            }
+
+            Close();
         }
 
         private void BuildScreen()
@@ -160,23 +175,19 @@ namespace AMath.UI
                 "Main Menu Backgrounds",
                 UiPalette.Background);
 
-            var panel = UiFactory.CreateImage("Panel", _screen.transform, PanelColor);
-            panel.raycastTarget = true;
+            var panel = UiFactory.CreateGlassPanel(_screen.transform, "Panel", UiPalette.Glass);
             UiFactory.SetStretchRect(panel.rectTransform, PanelLeft, PanelTop, PanelRight, PanelBottom);
 
-            var title = _ui.CreateText(
-                "Title",
+            var title = _ui.CreateOutlinedTitle(
                 _screen.transform,
+                "Title",
                 string.Empty,
                 72,
-                FontStyle.Normal,
-                Color.white,
                 TextAnchor.UpperLeft);
             UiFactory.SetTopLeftRect(
                 title.rectTransform,
                 new Vector2(TitleLeft, TitleTop),
                 new Vector2(TitleWidth, TitleHeight));
-            UiFactory.AddDoubleOutline(title.gameObject, new Vector2(3f, -3f), new Vector2(1.5f, -1.5f));
             LocalizedText.Bind(title, "ui.settings.title");
 
             BuildNavigation(_screen.transform);
@@ -184,9 +195,18 @@ namespace AMath.UI
             var rows = UiFactory.CreateRect("Rows", _screen.transform);
             UiFactory.SetStretchRect(rows, RowsLeft, BodyTop, RowsRight, RowsBottom);
 
+            // Created before the pages so the rows can reference it, but moved to
+            // the end of the canvas afterwards: option lists have to draw over
+            // the page they belong to.
+            var dropdownLayer = UiFactory.CreateRect("Dropdown Layer", _screen.transform);
+            UiFactory.Stretch(dropdownLayer);
+            _dropdown = new UiDropdown(_ui, dropdownLayer);
+
             _pages[GeneralTab] = BuildGeneralPage(rows);
             _pages[DisplayTab] = BuildDisplayPage(rows);
             _pages[AudioTab] = BuildAudioPage(rows);
+
+            dropdownLayer.SetAsLastSibling();
 
             ShowTab(GeneralTab);
         }
@@ -256,6 +276,7 @@ namespace AMath.UI
                 TextAnchor.MiddleLeft);
             UiFactory.SetStretchRect(label.rectTransform, TabTextLeftPad, 0f, 12f, 0f);
             UiFactory.AddDoubleOutline(label.gameObject, new Vector2(3f, -3f), new Vector2(1.5f, -1.5f));
+            MenuButtonFeedback.Attach(button, label);
 
             return button;
         }
@@ -287,7 +308,7 @@ namespace AMath.UI
                 () => GameSettings.PlayerName,
                 value => GameSettings.PlayerName = value);
 
-            AddOptionRow(
+            AddDropdownRow(
                 page.transform,
                 "ui.settings.language",
                 () => GameSettings.LanguageLabels.Length,
@@ -302,7 +323,7 @@ namespace AMath.UI
         {
             var page = CreatePage(parent, "Display Page");
 
-            _pageFocus[DisplayTab] = AddOptionRow(
+            _pageFocus[DisplayTab] = AddDropdownRow(
                 page.transform,
                 "ui.settings.view_mode",
                 () => ViewModeKeys.Length,
@@ -310,7 +331,7 @@ namespace AMath.UI
                 index => DisplaySettings.SetViewMode((ViewMode)index),
                 index => Localization.UiLocalizationProvider.Shared.GetText(ViewModeKeys[index]));
 
-            AddOptionRow(
+            AddDropdownRow(
                 page.transform,
                 "ui.settings.resolution",
                 () => DisplaySettings.AvailableSizes.Count,
@@ -356,6 +377,9 @@ namespace AMath.UI
 
         private void ShowTab(int index)
         {
+            // Otherwise a list opened on one page keeps hovering over the next.
+            _dropdown?.Close();
+
             _activeTab = Mathf.Clamp(index, 0, _pages.Length - 1);
 
             for (var i = 0; i < _pages.Length; i++)
@@ -402,9 +426,11 @@ namespace AMath.UI
         }
 
         /// <summary>
-        /// Label + value text only (mockup has no arrow buttons). Click cycles the option.
+        /// Label + current value; clicking opens a list of every option so the
+        /// player can jump straight to the one they want instead of clicking
+        /// through all the options in between to reach it.
         /// </summary>
-        private Selectable AddOptionRow(
+        private Selectable AddDropdownRow(
             Transform page,
             string label,
             Func<int> countProvider,
@@ -449,20 +475,22 @@ namespace AMath.UI
                 FontStyle.Normal,
                 Color.white,
                 TextAnchor.MiddleLeft);
-            UiFactory.Stretch(valueText.rectTransform);
+            UiFactory.SetStretchRect(valueText.rectTransform, 0f, 0f, CaretSize + 12f, 0f);
             UiFactory.AddDoubleOutline(valueText.gameObject, new Vector2(3f, -3f), new Vector2(1.5f, -1.5f));
 
-            void Step(int direction)
-            {
-                var count = countProvider();
-                if (count <= 0)
-                {
-                    return;
-                }
-
-                applyIndex((indexProvider() + direction + count) % count);
-                Refresh();
-            }
+            var caret = UiFactory.CreateImage(
+                "Caret",
+                buttonObject.transform,
+                UiDropdown.CaretSprite,
+                UiPalette.LightText);
+            caret.preserveAspect = true;
+            UiFactory.SetAnchoredRect(
+                caret.rectTransform,
+                new Vector2(1f, 0.5f),
+                new Vector2(1f, 0.5f),
+                new Vector2(1f, 0.5f),
+                new Vector2(CaretSize, CaretSize),
+                new Vector2(-4f, 0f));
 
             void Refresh()
             {
@@ -471,7 +499,17 @@ namespace AMath.UI
                 UiText.Set(valueText, value, _ui.Font);
             }
 
-            button.onClick.AddListener(() => Step(1));
+            button.onClick.AddListener(() => _dropdown?.Open(
+                button,
+                countProvider(),
+                indexProvider(),
+                formatIndex,
+                index =>
+                {
+                    applyIndex(index);
+                    Refresh();
+                }));
+
             _refreshers.Add(Refresh);
             Refresh();
             return button;
@@ -596,7 +634,7 @@ namespace AMath.UI
             var control = CreateRow(page, label);
             UiFactory.AddHorizontalLayout(control.gameObject, 0f);
 
-            var border = UiFactory.CreateImage("Field Border", control, FieldBorder);
+            var border = UiFactory.CreateImage("Field Border", control, UiPalette.FieldBorder);
             UiFactory.SetLayoutSize(border.gameObject, FieldWidth, FieldHeight);
 
             var fieldObject = new GameObject(
@@ -608,7 +646,7 @@ namespace AMath.UI
             UiFactory.SetStretchRect(fieldObject.GetComponent<RectTransform>(), 2f, 2f, 2f, 2f);
 
             var background = fieldObject.GetComponent<Image>();
-            background.color = FieldColor;
+            background.color = UiPalette.Field;
 
             var text = _ui.CreateText(
                 "Text",
@@ -642,11 +680,11 @@ namespace AMath.UI
             field.text = getValue();
             field.colors = new ColorBlock
             {
-                normalColor = FieldColor,
-                highlightedColor = FieldColor,
-                pressedColor = FieldColor,
-                selectedColor = FieldColor,
-                disabledColor = FieldColor,
+                normalColor = UiPalette.Field,
+                highlightedColor = UiPalette.Field,
+                pressedColor = UiPalette.Field,
+                selectedColor = UiPalette.Field,
+                disabledColor = UiPalette.Field,
                 colorMultiplier = 1f,
                 fadeDuration = 0f
             };

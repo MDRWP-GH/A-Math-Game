@@ -124,6 +124,7 @@ namespace AMath.Networking.RPC
                 NetworkContext.Services.RegisterOrReplace(this);
 
             _eventBus.Subscribe<MatchStartedEvent>(OnServerMatchStarted);
+            _eventBus.Subscribe<MatchRestoredEvent>(OnServerMatchRestored);
             _eventBus.Subscribe<TurnStartedEvent>(OnServerTurnStarted);
             _eventBus.Subscribe<TurnResolvedEvent>(OnServerTurnResolved);
             _eventBus.Subscribe<MatchPhaseChangedEvent>(OnServerPhaseChanged);
@@ -145,6 +146,7 @@ namespace AMath.Networking.RPC
             if (_eventBus == null) return;
 
             _eventBus.Unsubscribe<MatchStartedEvent>(OnServerMatchStarted);
+            _eventBus.Unsubscribe<MatchRestoredEvent>(OnServerMatchRestored);
             _eventBus.Unsubscribe<TurnStartedEvent>(OnServerTurnStarted);
             _eventBus.Unsubscribe<TurnResolvedEvent>(OnServerTurnResolved);
             _eventBus.Unsubscribe<MatchPhaseChangedEvent>(OnServerPhaseChanged);
@@ -177,6 +179,17 @@ namespace AMath.Networking.RPC
             _bagCount = _gameManager.BagCount;
             RebuildScores();
             RpcStartMatch(evt.Config);
+        }
+
+        /// <summary>
+        /// A host that adopted a match from a snapshot still owes clients the
+        /// replicated headers, but not <see cref="RpcStartMatch"/>: clients get
+        /// restored state through <see cref="ServerSendFullStateTo"/>, and
+        /// telling them to start a fresh match would discard it.
+        /// </summary>
+        private void OnServerMatchRestored(MatchRestoredEvent _)
+        {
+            ServerSeedFromGameState(_gameManager.CaptureSnapshot());
         }
 
         private void OnServerTurnStarted(TurnStartedEvent evt)
@@ -391,7 +404,13 @@ namespace AMath.Networking.RPC
         private void OnPhaseSynced(byte _, byte next)
         {
             if (isServer) return;
-            _stateMachine.TransitionTo((MatchPhase)next);
+
+            // Adopted, not requested: the host has already decided this phase, so
+            // running it through the live transition table would reject the legal
+            // jumps replication produces — a rematch (Finished -> Playing) or a
+            // hook that lands before RpcStartMatch (Lobby -> Playing) — and leave
+            // the client stuck one phase behind the match it is in.
+            _stateMachine.RestoreTo((MatchPhase)next);
         }
 
         #endregion

@@ -31,7 +31,12 @@ namespace AMath.Core
         /// <summary>Default per-turn time limit in seconds. Host authoritative.</summary>
         public const int DefaultTurnSeconds = 60;
 
-        /// <summary>Consecutive pass/exchange turns (per player) that end the match.</summary>
+        /// <summary>
+        /// Full rounds of consecutive pass/exchange turns that end the match.
+        /// The match ends once <c>playerCount * this</c> turns in a row have all
+        /// been passes or exchanges — two complete times around the table, not
+        /// two passes from one player.
+        /// </summary>
         public const int ConsecutivePassRoundsToEnd = 2;
 
         /// <summary>Supported player range for a room.</summary>

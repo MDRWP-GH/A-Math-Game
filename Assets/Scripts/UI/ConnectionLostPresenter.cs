@@ -44,6 +44,14 @@ namespace AMath.UI
 
         private void Start()
         {
+            // This component can be created before the composition root has
+            // registered anything, so resolving is attempted rather than assumed.
+            if (NetworkContext.Services == null)
+            {
+                Debug.LogWarning("[UI] Connection-lost presenter started before services existed.");
+                return;
+            }
+
             _eventBus = NetworkContext.Services.Resolve<Core.Events.IEventBus>();
             _reconnection = NetworkContext.Services.Resolve<ReconnectionManager>();
 
@@ -96,10 +104,10 @@ namespace AMath.UI
         #region View commands
 
         /// <summary>Player chose to stop waiting and finish the match from the local backup.</summary>
-        public void EndMatchNow() => _reconnection.EndMatchNow();
+        public void EndMatchNow() => _reconnection?.EndMatchNow();
 
         /// <summary>Player gave up on the room and wants to go back to the browser.</summary>
-        public void LeaveRoom() => _reconnection.LeaveRoomNow();
+        public void LeaveRoom() => _reconnection?.LeaveRoomNow();
 
         #endregion
     }

@@ -13,6 +13,10 @@ namespace AMath.Core.Snapshot
         public string DisplayName;
         public int Score;
         public bool IsAi;
+        /// <summary>Team index in team matches; otherwise -1.</summary>
+        public int TeamId = -1;
+        /// <summary>Index into <see cref="PlayerColorPalette"/> for this player's colour.</summary>
+        public byte ColorId;
         public List<byte> Rack = new();
     }
 

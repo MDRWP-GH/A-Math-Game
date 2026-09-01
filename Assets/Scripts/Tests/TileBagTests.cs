@@ -53,10 +53,28 @@ namespace AMath.Tests
 
             var returned = new List<byte> { rack[0], rack[1], rack[2] };
             var drawn = new List<byte>();
-            bag.Exchange(returned, drawn, rng);
+            Assert.IsTrue(bag.Exchange(returned, drawn, rng));
 
             Assert.AreEqual(3, drawn.Count);
             Assert.AreEqual(92, bag.Count); // 100 - 8 drawn - 3 taken + 3 returned
+        }
+
+        [Test]
+        public void Exchange_MoreTilesThanTheBagHolds_FailsInsteadOfThrowing()
+        {
+            var rng = new DeterministicRandom(5);
+            var bag = new TileBag();
+            bag.Reset(rng);
+
+            var everything = new List<byte>();
+            bag.Draw(98, everything);
+            Assert.AreEqual(2, bag.Count);
+
+            var returned = new List<byte> { everything[0], everything[1], everything[2] };
+            var drawn = new List<byte>();
+
+            Assert.IsFalse(bag.Exchange(returned, drawn, rng));
+            Assert.AreEqual(2, bag.Count, "A failed exchange must leave the bag untouched.");
         }
     }
 }

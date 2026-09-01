@@ -144,6 +144,12 @@ namespace AMath.Gameplay.Board
         {
             error = null;
 
+            if (rack == null)
+            {
+                error = "You do not own those tiles.";
+                return false;
+            }
+
             // Multiset containment: the request may not use more copies of a
             // tile than the rack actually holds. This blocks tile spawning.
             Span<int> needed = stackalloc int[AMathTileSet.TileTypeCount];
@@ -159,7 +165,18 @@ namespace AMath.Gameplay.Board
 
             Span<int> owned = stackalloc int[AMathTileSet.TileTypeCount];
             for (int i = 0; i < rack.Count; i++)
+            {
+                // A rack is host state rather than request data, but a corrupt
+                // snapshot or a bad restore must fail this command rather than
+                // throw an index error out of the middle of it.
+                if (!AMathTileSet.IsValidTileId(rack[i]))
+                {
+                    error = "Rack contains an unknown tile id.";
+                    return false;
+                }
+
                 owned[rack[i]]++;
+            }
 
             for (int id = 0; id < AMathTileSet.TileTypeCount; id++)
             {

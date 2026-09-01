@@ -14,9 +14,8 @@ namespace AMath.UI
     {
         private const int PageCount = 4;
 
-        private static readonly Color PanelColor = new Color(0.05f, 0.05f, 0.07f, 0.62f);
-
         private readonly GameObject _root;
+        private readonly OverlayFade _fade;
         private readonly Text _heading;
         private readonly Text _body;
         private readonly Text _pageLabel;
@@ -36,6 +35,7 @@ namespace AMath.UI
         {
             _root = UiFactory.CreateRect("How To Play Overlay", canvasTransform).gameObject;
             UiFactory.Stretch(_root.GetComponent<RectTransform>());
+            _fade = OverlayFade.Ensure(_root);
 
             // Full-screen catcher so clicks do not fall through to the main menu.
             var catcher = UiFactory.CreateImage("Catcher", _root.transform, new Color(0f, 0f, 0f, 0.01f));
@@ -47,20 +47,16 @@ namespace AMath.UI
                 "Main Menu Backgrounds",
                 UiPalette.Background);
 
-            var panel = UiFactory.CreateImage("Panel", _root.transform, PanelColor);
-            panel.raycastTarget = true;
+            var panel = UiFactory.CreateGlassPanel(_root.transform, "Panel", UiPalette.Glass);
             UiFactory.SetStretchRect(panel.rectTransform, 72f, 128f, 72f, 64f);
 
-            var title = ui.CreateText(
-                "Title",
+            var title = ui.CreateOutlinedTitle(
                 _root.transform,
+                "Title",
                 string.Empty,
                 68,
-                FontStyle.Normal,
-                Color.white,
                 TextAnchor.UpperLeft);
             UiFactory.SetTopLeftRect(title.rectTransform, new Vector2(72f, 28f), new Vector2(720f, 88f));
-            UiFactory.AddDoubleOutline(title.gameObject, new Vector2(3f, -3f), new Vector2(1.5f, -1.5f));
             LocalizedText.Bind(title, "ui.help.title");
 
             _heading = ui.CreateText(
@@ -80,11 +76,11 @@ namespace AMath.UI
                 string.Empty,
                 28,
                 FontStyle.Normal,
-                Color.white,
+                UiPalette.LightText,
                 TextAnchor.UpperLeft);
             _body.horizontalOverflow = HorizontalWrapMode.Wrap;
             _body.verticalOverflow = VerticalWrapMode.Overflow;
-            _body.lineSpacing = 1.05f;
+            _body.lineSpacing = 1.12f;
             // Leave room at the bottom for Exit / arrows, and for the equipment icon row.
             UiFactory.SetStretchRect(_body.rectTransform, 48f, 100f, 48f, 180f);
 
@@ -112,7 +108,7 @@ namespace AMath.UI
                 panel.transform,
                 "Prev",
                 GameImages.LoadIcon("left"),
-                new Color(0.98f, 0.58f, 0.16f, 1f),
+                UiPalette.Primary,
                 () => ShowPage(_page - 1));
             UiFactory.SetAnchoredRect(
                 _prevButton.GetComponent<RectTransform>(),
@@ -143,7 +139,7 @@ namespace AMath.UI
                 panel.transform,
                 "Next",
                 GameImages.LoadIcon("right"),
-                new Color(0.98f, 0.58f, 0.16f, 1f),
+                UiPalette.Primary,
                 () => ShowPage(_page + 1));
             UiFactory.SetAnchoredRect(
                 _nextButton.GetComponent<RectTransform>(),
@@ -159,7 +155,7 @@ namespace AMath.UI
 
         public void Open()
         {
-            _root.SetActive(true);
+            _fade.FadeIn();
             ShowPage(0);
             UiFactory.Select(_nextButton.gameObject.activeSelf ? _nextButton : _closeButton);
         }
@@ -171,7 +167,7 @@ namespace AMath.UI
                 return;
             }
 
-            _root.SetActive(false);
+            _fade.FadeOut();
             Closed?.Invoke();
         }
 

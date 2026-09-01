@@ -1,3 +1,4 @@
+using AMath.Core;
 using AMath.Core.Events;
 using AMath.Core.StateMachines;
 using AMath.Gameplay.Players;
@@ -66,13 +67,20 @@ namespace AMath.Networking
             playerObject.SetActive(true);
             var player = playerObject.GetComponent<NetworkPlayer>();
 
+            // A returning player keeps the colour their seat already holds;
+            // everyone else gets a random free one to change in the lobby.
+            byte colorId = identity.IsReconnection
+                ? _playerManager.GetById(identity.ExistingPlayerId)?.ColorId ?? PlayerColorPalette.FallbackId
+                : NetworkPlayer.ServerPickFreeColor();
+
             // Reconnections resume their original seat; lobby joins are
             // unseated (-1) until the host starts the match and assigns seats.
             player.ServerInitialize(
                 identity.IsReconnection ? identity.ExistingPlayerId : -1,
                 identity.DisplayName,
                 identity.PersistentGuid,
-                isHost: conn == NetworkServer.localConnection);
+                isHost: conn == NetworkServer.localConnection,
+                colorId: colorId);
 
             NetworkServer.AddPlayerForConnection(conn, playerObject, RuntimePlayerAssetId);
 

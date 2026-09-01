@@ -44,7 +44,8 @@ namespace AMath.Replay
 
         private void OnMatchStarted(MatchStartedEvent evt)
         {
-            // Fresh log per match. (A restore overwrites this via ImportJson.)
+            // Fresh log per match. Restores publish MatchRestoredEvent instead,
+            // precisely so the history they carry survives.
             Log = new ReplayLog { Config = evt.Config };
         }
 

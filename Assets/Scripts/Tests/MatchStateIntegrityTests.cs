@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using AMath.Core;
 using AMath.Core.Assistance;
@@ -153,14 +154,32 @@ namespace AMath.Tests
             Assert.IsNull(players.GetById(-1));
         }
 
+        /// <summary>
+        /// Rack writes feed the lockstep engine, so a seat that does not exist is
+        /// a bug in this process. Absorbing it silently is what lets peers drift
+        /// apart without anything reporting a problem.
+        /// </summary>
         [Test]
-        public void RackOperationsForAnUnknownSeat_DoNotThrow()
+        public void RackOperationsForAnUnknownSeat_AreRejected()
         {
             var players = new PlayerManager(new EventBus());
             players.Setup(TwoPlayerConfig(1));
 
-            Assert.DoesNotThrow(() => players.AddToRack(99, new List<byte> { 1 }));
-            Assert.DoesNotThrow(() => players.RemoveFromRack(99, new List<byte> { 1 }));
+            Assert.Throws<InvalidOperationException>(() => players.AddToRack(99, new List<byte> { 1 }));
+            Assert.Throws<InvalidOperationException>(() => players.RemoveFromRack(99, new List<byte> { 1 }));
+        }
+
+        [Test]
+        public void RemovingATileTheRackDoesNotHold_IsRejected()
+        {
+            var players = new PlayerManager(new EventBus());
+            players.Setup(TwoPlayerConfig(1));
+            players.AddToRack(0, new List<byte> { 1, 2, 3 });
+
+            // Silently ignoring this would leave the tile on the rack while the
+            // command that "spent" it went on to place it on the board.
+            Assert.Throws<InvalidOperationException>(
+                () => players.RemoveFromRack(0, new List<byte> { 1, 9 }));
         }
 
         [Test]

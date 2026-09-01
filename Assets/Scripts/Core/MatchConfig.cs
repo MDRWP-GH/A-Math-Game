@@ -31,6 +31,13 @@ namespace AMath.Core
         /// Unused (-1) in individual matches.
         /// </summary>
         public int TeamId = -1;
+
+        /// <summary>
+        /// Index into <see cref="PlayerColorPalette"/> for this player's chosen
+        /// colour. Chosen in the lobby and frozen here at match start, so a
+        /// replay shows the colours the players actually had.
+        /// </summary>
+        public byte ColorId;
     }
 
     /// <summary>

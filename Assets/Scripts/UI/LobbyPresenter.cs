@@ -99,6 +99,42 @@ namespace AMath.UI
             }
         }
 
+        /// <summary>Colour the local player currently holds.</summary>
+        public byte LocalColorId => LocalMember?.ColorId ?? PlayerColorPalette.FallbackId;
+
+        /// <summary>
+        /// True when someone other than the local player already holds this
+        /// colour, so the picker can grey it out instead of letting the player
+        /// tap a swatch the host will refuse.
+        /// </summary>
+        public bool IsColorTaken(byte colorId)
+        {
+            NetworkPlayer local = LocalMember;
+            foreach (NetworkPlayer member in _members)
+            {
+                if (member == null || member == local) continue;
+                if (member.ColorId == colorId) return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>Asks the host for a colour on behalf of the local player.</summary>
+        public void RequestColor(byte colorId) => LocalMember?.RequestColor(colorId);
+
+        private NetworkPlayer LocalMember
+        {
+            get
+            {
+                foreach (NetworkPlayer member in _members)
+                {
+                    if (member != null && member.isLocalPlayer) return member;
+                }
+
+                return null;
+            }
+        }
+
         /// <summary>Match format selected by the host in the lobby.</summary>
         public MatchFormat SelectedFormat
         {
@@ -196,6 +232,7 @@ namespace AMath.UI
                     hash = (hash * 31) + (player.DisplayName?.GetHashCode() ?? 0);
                     hash = (hash * 31) + player.PlayerId;
                     hash = (hash * 31) + (player.IsHost ? 1 : 0);
+                    hash = (hash * 31) + player.ColorId;
                 }
 
                 return hash;

@@ -534,7 +534,9 @@ namespace AMath.Managers
                 snapshot.CurrentPlayerId,
                 snapshot.ConsecutivePasses);
 
-            _eventBus.Publish(new MatchStartedEvent { Config = Config });
+            // Not MatchStartedEvent: this match already has a history, and
+            // listeners that reset themselves per match would discard it.
+            _eventBus.Publish(new MatchRestoredEvent { Config = Config });
             _stateMachine.RestoreTo(enterPhase ?? (MatchPhase)snapshot.Phase);
         }
 

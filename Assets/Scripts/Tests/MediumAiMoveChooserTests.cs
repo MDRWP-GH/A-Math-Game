@@ -44,6 +44,68 @@ namespace AMath.Tests
             Assert.IsInstanceOf<PassTurnCommand>(emptyBag);
         }
 
+        /// <summary>
+        /// The bug this covers: mapping rejected every occupied cell, so once the
+        /// centre was taken the AI could not continue an existing equation and
+        /// fell through to exchange/pass for the rest of the match.
+        /// </summary>
+        [Test]
+        public void Choose_MidGame_HooksOntoATileAlreadyOnTheBoard()
+        {
+            var board = new BoardManager();
+            Place(board, tileId: 2, x: 7, y: 7);
+
+            var chooser = new MediumAiMoveChooser();
+
+            // Only one 2 in hand: the second 2 of "2+2=4" has to be the board's.
+            var rack = new List<byte> { Plus, 2, EqualsSign, 4, Times, Minus, Divide, Plus };
+
+            IGameCommand command = chooser.Choose(board, rack, bagCount: 40, choiceSeed: 7);
+
+            Assert.IsInstanceOf<PlaceTilesCommand>(
+                command,
+                "AI should hook onto the board tile instead of exchanging.");
+
+            var place = (PlaceTilesCommand)command;
+            PlacementValidation validation = board.Validate(rack, place.Placements);
+            Assert.IsTrue(validation.IsValid, validation.Error);
+
+            foreach (TilePlacement p in place.Placements)
+                Assert.IsFalse(board.Grid.IsOccupied(p.X, p.Y), "AI must not overwrite a placed tile.");
+        }
+
+        [Test]
+        public void Choose_MidGame_NeverProposesAnInvalidPlacement()
+        {
+            var board = new BoardManager();
+            Place(board, tileId: 3, x: 7, y: 7);
+            Place(board, tileId: EqualsSign, x: 8, y: 7);
+            Place(board, tileId: 3, x: 9, y: 7);
+
+            var chooser = new MediumAiMoveChooser();
+            var rack = new List<byte> { 1, 2, Plus, EqualsSign, 5, 6, Minus, 4 };
+
+            for (int seed = 0; seed < 12; seed++)
+            {
+                IGameCommand command = chooser.Choose(board, rack, bagCount: 30, seed);
+                if (command is not PlaceTilesCommand place) continue;
+
+                PlacementValidation validation = board.Validate(rack, place.Placements);
+                Assert.IsTrue(validation.IsValid, $"seed {seed}: {validation.Error}");
+            }
+        }
+
+        private static void Place(BoardManager board, byte tileId, byte x, byte y)
+        {
+            board.Grid.Place(new TilePlacement
+            {
+                TileId = tileId,
+                X = x,
+                Y = y,
+                DeclaredAs = TilePlacement.NoDeclaration
+            });
+        }
+
         [Test]
         public void Choose_MediumBand_IsDeterministicForSameSeed()
         {

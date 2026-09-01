@@ -1,5 +1,4 @@
 using AMath.Art;
-using AMath.Core.Accounts;
 using AMath.UI.Localization;
 using AMath.UI.Tutorial;
 using UnityEngine;
@@ -14,7 +13,8 @@ namespace AMath.UI
     /// <summary>
     /// Builds and owns the first A-Math menu at runtime. Keeping it code-driven makes the
     /// starter scene safe to reuse while the game screens are still being developed.
-    /// Layout matches the main-menu mockup: background art, title, and four text buttons.
+    /// Layout matches the main-menu mockup: background art, title, and the text buttons,
+    /// which fade in one after another whenever the menu is shown.
     /// </summary>
     public sealed class MainMenuController : MonoBehaviour
     {
@@ -31,14 +31,12 @@ namespace AMath.UI
         private Button _historyButton;
         private Button _tutorialButton;
         private Button _helpButton;
-        private Button _accountButton;
         private Button _settingsButton;
         private Button _quitButton;
-        private Text _sessionLabel;
         private SettingsMenuController _settingsMenu;
-        private AccountOverlay _accountOverlay;
         private MatchHistoryOverlay _historyOverlay;
         private InputAction _cancelAction;
+        private MenuEntranceAnimator _entrance;
 
         private void Awake()
         {
@@ -50,27 +48,43 @@ namespace AMath.UI
 
         private void Start()
         {
-            RefreshSessionLabel();
             UiFactory.Select(_startButton);
         }
 
         private void OnEnable()
         {
-            RefreshSessionLabel();
             if (_startButton != null)
             {
                 UiFactory.Select(_startButton);
             }
+
+            PlayEntranceAnimation();
         }
 
         private void Update()
         {
-            if (_helpOverlay != null && _helpOverlay.IsOpen && WasCancelPressed())
-                _helpOverlay.Close();
-            if (_accountOverlay != null && _accountOverlay.IsOpen && WasCancelPressed())
-                _accountOverlay.Close();
-            if (_historyOverlay != null && _historyOverlay.IsOpen && WasCancelPressed())
+            bool cancelPressed = WasCancelPressed();
+
+            // Cancel doubles as "skip the intro" so the menu never feels like it
+            // is holding the player up.
+            if (cancelPressed && _entrance != null && _entrance.IsPlaying)
+            {
+                _entrance.Skip();
+                return;
+            }
+
+            if (!cancelPressed)
+                return;
+
+            // Topmost first, one layer per press: the replay reader sits above the
+            // history list, so Cancel steps back through them instead of closing
+            // the list out from under a reader that stays on screen.
+            if (_historyOverlay != null && _historyOverlay.IsReplayOpen)
+                _historyOverlay.CloseReplay();
+            else if (_historyOverlay != null && _historyOverlay.IsOpen)
                 _historyOverlay.Close();
+            else if (_helpOverlay != null && _helpOverlay.IsOpen)
+                _helpOverlay.Close();
         }
 
         private void BuildMenu()
@@ -83,14 +97,11 @@ namespace AMath.UI
                 "Main Menu Backgrounds",
                 UiPalette.Background);
 
-            var title = _ui.CreateText(
-                "Title",
+            var title = _ui.CreateOutlinedTitle(
                 canvas.transform,
+                "Title",
                 string.Empty,
-                78,
-                FontStyle.Normal,
-                Color.white,
-                TextAnchor.MiddleCenter);
+                78);
             title.font = GameFonts.JainiPurva;
             UiFactory.SetAnchoredRect(
                 title.rectTransform,
@@ -99,131 +110,28 @@ namespace AMath.UI
                 new Vector2(0.5f, 1f),
                 new Vector2(980f, 110f),
                 new Vector2(0f, -72f));
-            UiFactory.AddDoubleOutline(title.gameObject, new Vector2(4f, -4f), new Vector2(2f, -2f));
             LocalizedText.Bind(title, "ui.menu.title");
 
-            _sessionLabel = _ui.CreateText(
-                "Session",
-                canvas.transform,
-                string.Empty,
-                24,
-                FontStyle.Italic,
-                UiPalette.MutedText,
-                TextAnchor.MiddleCenter);
-            UiFactory.SetAnchoredRect(
-                _sessionLabel.rectTransform,
-                new Vector2(0.5f, 1f),
-                new Vector2(0.5f, 1f),
-                new Vector2(0.5f, 1f),
-                new Vector2(980f, 40f),
-                new Vector2(0f, -150f));
-
             const float buttonWidth = 520f;
-            const float buttonHeight = 72f;
-            const int buttonFontSize = 46;
+            const float buttonHeight = 64f;
+            const float buttonPitch = 70f;
+            const float firstButtonY = 168f;
+            const int buttonFontSize = 44;
 
-            _startButton = _ui.CreateTextMenuButton(
-                canvas.transform,
-                "Start Button",
-                string.Empty,
-                buttonFontSize,
-                StartGame);
-            UiFactory.SetCenteredRect(
-                _startButton.GetComponent<RectTransform>(),
-                new Vector2(0f, 170f),
-                new Vector2(buttonWidth, buttonHeight));
-            LocalizedText.Bind(_startButton.GetComponentInChildren<Text>(), "ui.menu.start");
-
-            _historyButton = _ui.CreateTextMenuButton(
-                canvas.transform,
-                "History Button",
-                string.Empty,
-                buttonFontSize,
-                OpenHistory);
-            UiFactory.SetCenteredRect(
-                _historyButton.GetComponent<RectTransform>(),
-                new Vector2(0f, 94f),
-                new Vector2(buttonWidth, buttonHeight));
-            LocalizedText.Bind(_historyButton.GetComponentInChildren<Text>(), "ui.menu.history");
-
-            _tutorialButton = _ui.CreateTextMenuButton(
-                canvas.transform,
-                "Tutorial Button",
-                string.Empty,
-                buttonFontSize,
-                OpenTutorial);
-            UiFactory.SetCenteredRect(
-                _tutorialButton.GetComponent<RectTransform>(),
-                new Vector2(0f, 18f),
-                new Vector2(buttonWidth, buttonHeight));
+            _startButton = PlaceMenuButton(canvas.transform, "Start Button", firstButtonY, buttonWidth, buttonHeight, buttonFontSize, StartGame, "ui.menu.start");
+            _historyButton = PlaceMenuButton(canvas.transform, "History Button", firstButtonY - buttonPitch, buttonWidth, buttonHeight, buttonFontSize, OpenHistory, "ui.menu.history");
+            _tutorialButton = PlaceMenuButton(canvas.transform, "Tutorial Button", firstButtonY - buttonPitch * 2f, buttonWidth, buttonHeight, buttonFontSize, OpenTutorial, null);
             ConfigureTutorialButton();
 
-            _helpButton = _ui.CreateTextMenuButton(
-                canvas.transform,
-                "How To Play Button",
-                string.Empty,
-                buttonFontSize,
-                OpenHelp);
-            UiFactory.SetCenteredRect(
-                _helpButton.GetComponent<RectTransform>(),
-                new Vector2(0f, -58f),
-                new Vector2(buttonWidth, buttonHeight));
-            LocalizedText.Bind(_helpButton.GetComponentInChildren<Text>(), "ui.menu.help");
-
-            _accountButton = _ui.CreateTextMenuButton(
-                canvas.transform,
-                "Account Button",
-                string.Empty,
-                buttonFontSize,
-                OpenAccount);
-            UiFactory.SetCenteredRect(
-                _accountButton.GetComponent<RectTransform>(),
-                new Vector2(0f, -134f),
-                new Vector2(buttonWidth, buttonHeight));
-            LocalizedText.Bind(_accountButton.GetComponentInChildren<Text>(), "ui.menu.account");
-
-            _settingsButton = _ui.CreateTextMenuButton(
-                canvas.transform,
-                "Settings Button",
-                string.Empty,
-                buttonFontSize,
-                OpenSettings);
-            UiFactory.SetCenteredRect(
-                _settingsButton.GetComponent<RectTransform>(),
-                new Vector2(0f, -210f),
-                new Vector2(buttonWidth, buttonHeight));
-            LocalizedText.Bind(_settingsButton.GetComponentInChildren<Text>(), "ui.menu.settings");
-
-            _quitButton = _ui.CreateTextMenuButton(
-                canvas.transform,
-                "Exit Button",
-                string.Empty,
-                buttonFontSize,
-                QuitGame);
-            UiFactory.SetCenteredRect(
-                _quitButton.GetComponent<RectTransform>(),
-                new Vector2(0f, -286f),
-                new Vector2(buttonWidth, buttonHeight));
-            LocalizedText.Bind(_quitButton.GetComponentInChildren<Text>(), "ui.menu.quit");
+            _helpButton = PlaceMenuButton(canvas.transform, "How To Play Button", firstButtonY - buttonPitch * 3f, buttonWidth, buttonHeight, buttonFontSize, OpenHelp, "ui.menu.help");
+            _settingsButton = PlaceMenuButton(canvas.transform, "Settings Button", firstButtonY - buttonPitch * 4f, buttonWidth, buttonHeight, buttonFontSize, OpenSettings, "ui.menu.settings");
+            _quitButton = PlaceMenuButton(canvas.transform, "Exit Button", firstButtonY - buttonPitch * 5f, buttonWidth, buttonHeight, buttonFontSize, QuitGame, "ui.menu.quit");
 
             ConfigureMenuNavigation();
+            BuildEntranceAnimation(title);
             BuildHelpOverlay(canvas.transform);
-            BuildAccountOverlay(canvas.transform);
             BuildHistoryOverlay(canvas.transform);
             BuildSettingsMenu();
-            RefreshSessionLabel();
-        }
-
-        private void RefreshSessionLabel()
-        {
-            if (_sessionLabel == null)
-                return;
-
-            _sessionLabel.text = UserAccountStore.IsSignedIn
-                ? string.Format(
-                    UiLocalizationProvider.Shared.GetText("ui.menu.signed_in"),
-                    UserAccountStore.SessionDisplayName)
-                : UiLocalizationProvider.Shared.GetText("ui.menu.signed_out");
         }
 
         private void StartGame()
@@ -261,11 +169,6 @@ namespace AMath.UI
             _helpOverlay.Open();
         }
 
-        private void OpenAccount()
-        {
-            _accountOverlay.Open();
-        }
-
         private void OpenHistory()
         {
             _historyOverlay.Open();
@@ -288,6 +191,31 @@ namespace AMath.UI
         {
             _menuCanvas.SetActive(true);
             UiFactory.Select(_settingsButton);
+            // Returning from settings should feel like the menu arriving again,
+            // not a hard cut back onto a static list.
+            if (_entrance != null)
+            {
+                _entrance.Configure(0.22f, 0.05f, 0f);
+                PlayEntranceAnimation();
+                _entrance.Configure(0.34f, 0.08f, 0.05f);
+            }
+        }
+
+        private Button PlaceMenuButton(
+            Transform parent,
+            string name,
+            float y,
+            float width,
+            float height,
+            int fontSize,
+            System.Action onClick,
+            string localizationKey)
+        {
+            var button = _ui.CreateTextMenuButton(parent, name, string.Empty, fontSize, onClick);
+            UiFactory.SetCenteredRect(button.GetComponent<RectTransform>(), new Vector2(0f, y), new Vector2(width, height));
+            if (localizationKey != null)
+                LocalizedText.Bind(button.GetComponentInChildren<Text>(), localizationKey);
+            return button;
         }
 
         private void QuitGame()
@@ -311,11 +239,27 @@ namespace AMath.UI
             _helpOverlay.Closed += CloseHelp;
         }
 
-        private void BuildAccountOverlay(Transform canvasTransform)
+        /// <summary>
+        /// The title and the menu entries fade up in reading order, so entering
+        /// the screen reads as the menu arriving rather than a hard cut.
+        /// </summary>
+        private void BuildEntranceAnimation(Text title)
         {
-            _accountOverlay = new AccountOverlay(_ui, canvasTransform, UiLocalizationProvider.Shared);
-            _accountOverlay.SignedIn += RefreshSessionLabel;
-            _accountOverlay.Closed += () => UiFactory.Select(_accountButton);
+            _entrance = gameObject.AddComponent<MenuEntranceAnimator>();
+            _entrance.SetTargets(
+                title,
+                _startButton,
+                _historyButton,
+                _tutorialButton,
+                _helpButton,
+                _settingsButton,
+                _quitButton);
+        }
+
+        private void PlayEntranceAnimation()
+        {
+            if (_entrance != null)
+                _entrance.Play();
         }
 
         private void BuildHistoryOverlay(Transform canvasTransform)
@@ -329,9 +273,8 @@ namespace AMath.UI
             UiFactory.SetVerticalNavigation(_startButton, _quitButton, _historyButton);
             UiFactory.SetVerticalNavigation(_historyButton, _startButton, _tutorialButton);
             UiFactory.SetVerticalNavigation(_tutorialButton, _historyButton, _helpButton);
-            UiFactory.SetVerticalNavigation(_helpButton, _tutorialButton, _accountButton);
-            UiFactory.SetVerticalNavigation(_accountButton, _helpButton, _settingsButton);
-            UiFactory.SetVerticalNavigation(_settingsButton, _accountButton, _quitButton);
+            UiFactory.SetVerticalNavigation(_helpButton, _tutorialButton, _settingsButton);
+            UiFactory.SetVerticalNavigation(_settingsButton, _helpButton, _quitButton);
             UiFactory.SetVerticalNavigation(_quitButton, _settingsButton, _startButton);
         }
 

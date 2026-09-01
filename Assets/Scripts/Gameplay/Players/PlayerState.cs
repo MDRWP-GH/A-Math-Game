@@ -35,13 +35,23 @@ namespace AMath.Gameplay.Players
         /// <summary>Team index in team matches; otherwise -1.</summary>
         public int TeamId { get; }
 
-        public PlayerState(int playerId, string persistentGuid, string displayName, bool isAi = false, int teamId = -1)
+        /// <summary>Index into <see cref="PlayerColorPalette"/> for this player's colour.</summary>
+        public byte ColorId { get; }
+
+        public PlayerState(
+            int playerId,
+            string persistentGuid,
+            string displayName,
+            bool isAi = false,
+            int teamId = -1,
+            byte colorId = PlayerColorPalette.FallbackId)
         {
             PlayerId = playerId;
             PersistentGuid = persistentGuid;
             DisplayName = displayName;
             IsAi = isAi;
             TeamId = teamId;
+            ColorId = colorId;
         }
     }
 }

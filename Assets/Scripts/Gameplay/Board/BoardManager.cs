@@ -33,10 +33,22 @@ namespace AMath.Gameplay.Board
 
         /// <summary>
         /// Commits a *previously validated* placement and returns the score.
-        /// Must only be called with the validation produced for this exact request.
+        /// Must only be called with the validation produced for this exact
+        /// request; anything else is rejected rather than written, because a
+        /// board that takes an unvalidated write corrupts the tile count and
+        /// the occupancy invariant every peer's state is compared against.
         /// </summary>
         public int Commit(PlacementValidation validation, IReadOnlyList<TilePlacement> placements)
         {
+            if (validation == null || !validation.IsValid || placements == null)
+                throw new System.InvalidOperationException("Commit requires a successful validation.");
+
+            for (int i = 0; i < placements.Count; i++)
+            {
+                if (Grid.IsOccupied(placements[i].X, placements[i].Y))
+                    throw new System.InvalidOperationException("Commit would overwrite an occupied cell.");
+            }
+
             int score = _scoreCalculator.Calculate(validation.Lines, placements.Count);
             for (int i = 0; i < placements.Count; i++)
             {

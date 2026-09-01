@@ -58,6 +58,7 @@ namespace AMath.Networking.Messages
                 writer.WriteString(player.DisplayName);
                 writer.WriteBool(player.IsAi);
                 writer.WriteInt(player.TeamId);
+                writer.WriteByte(player.ColorId);
             }
         }
 
@@ -80,7 +81,8 @@ namespace AMath.Networking.Messages
                     PersistentGuid = reader.ReadString(),
                     DisplayName = reader.ReadString(),
                     IsAi = reader.ReadBool(),
-                    TeamId = reader.ReadInt()
+                    TeamId = reader.ReadInt(),
+                    ColorId = reader.ReadByte()
                 });
             }
 

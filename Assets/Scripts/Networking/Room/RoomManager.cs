@@ -32,6 +32,10 @@ namespace AMath.Networking.Room
         private readonly GameManager _gameManager;
         private readonly AMathNetworkManager _networkManager;
 
+        // Kept so Dispose can unsubscribe the exact delegates that were registered.
+        private readonly Action<PlayerRosterChangedEvent> _onRosterChanged;
+        private readonly Action<MatchPhaseChangedEvent> _onPhaseChanged;
+
         #endregion
 
         #region Construction
@@ -49,9 +53,12 @@ namespace AMath.Networking.Room
             _gameManager = gameManager;
             _networkManager = networkManager;
 
-            // Keep the advertised payload current without polling.
-            _eventBus.Subscribe<PlayerRosterChangedEvent>(_ => RefreshAdvertisement());
-            _eventBus.Subscribe<MatchPhaseChangedEvent>(_ => RefreshAdvertisement());
+            // Keep the advertised payload current without polling. The handlers
+            // are stored so Dispose can unsubscribe the exact same delegates.
+            _onRosterChanged = _ => RefreshAdvertisement();
+            _onPhaseChanged = _ => RefreshAdvertisement();
+            _eventBus.Subscribe(_onRosterChanged);
+            _eventBus.Subscribe(_onPhaseChanged);
         }
 
         #endregion
@@ -69,7 +76,7 @@ namespace AMath.Networking.Room
 
             maxPlayers = Mathf.Clamp(maxPlayers, GameRules.MinPlayers, GameRules.MaxPlayers);
 
-            _session.RoomName = string.IsNullOrWhiteSpace(roomName) ? "A-Math Room" : roomName.Trim();
+            _session.RoomName = string.IsNullOrWhiteSpace(roomName) ? RoomSession.DefaultRoomName : roomName.Trim();
             _session.RoomCode = RoomCodeGenerator.Generate();
             _session.MaxPlayers = maxPlayers;
             _session.Port = port;
@@ -133,29 +140,41 @@ namespace AMath.Networking.Room
                 Format = format
             };
 
+            // Colours the players picked in the lobby are frozen into the config
+            // here, and AI seats take whatever is left so no two seats clash.
+            var takenColors = new HashSet<byte>();
+
             for (int seat = 0; seat < members.Count; seat++)
             {
                 members[seat].ServerAssignSeat(seat);
+                byte colorId = members[seat].ColorId;
+                takenColors.Add(colorId);
+
                 config.Players.Add(new PlayerIdentity
                 {
                     PlayerId = seat,
                     PersistentGuid = members[seat].PersistentGuid,
                     DisplayName = members[seat].DisplayName,
                     IsAi = false,
-                    TeamId = format == MatchFormat.Team ? seat % GameRules.TeamCount : -1
+                    TeamId = format == MatchFormat.Team ? seat % GameRules.TeamCount : -1,
+                    ColorId = colorId
                 });
             }
 
             for (int i = 0; i < aiCount; i++)
             {
                 int seat = members.Count + i;
+                byte colorId = PlayerColorPalette.FirstUnused(takenColors.Contains, config.RandomSeed + seat);
+                takenColors.Add(colorId);
+
                 config.Players.Add(new PlayerIdentity
                 {
                     PlayerId = seat,
                     PersistentGuid = $"ai:{config.RandomSeed}:{seat}",
                     DisplayName = aiCount == 1 ? "AI" : $"AI {i + 1}",
                     IsAi = true,
-                    TeamId = format == MatchFormat.Team ? seat % GameRules.TeamCount : -1
+                    TeamId = format == MatchFormat.Team ? seat % GameRules.TeamCount : -1,
+                    ColorId = colorId
                 });
             }
 
@@ -260,6 +279,9 @@ namespace AMath.Networking.Room
         /// Joins by user-entered code. The code is only a lookup key into the
         /// discovery registry; when no broadcast with that code has been seen,
         /// the join fails with a clear reason.
+        ///
+        /// <paramref name="error"/> is a localization key, not prose: the UI
+        /// runs it through the text provider like every other failure reason.
         /// </summary>
         public bool JoinByCode(string code, out string error)
         {
@@ -267,13 +289,13 @@ namespace AMath.Networking.Room
 
             if (!RoomCodeGenerator.IsValidFormat(code))
             {
-                error = "Invalid room code format.";
+                error = "ui.play.err_code_format";
                 return false;
             }
 
             if (!_discovery.TryResolveRoomCode(code, out RoomInfo room))
             {
-                error = "No room with that code was found on this network.";
+                error = "ui.play.err_code_not_found";
                 return false;
             }
 
@@ -303,7 +325,12 @@ namespace AMath.Networking.Room
         }
 
         /// <inheritdoc />
-        public void Dispose() => _discovery.StopAdvertising();
+        public void Dispose()
+        {
+            _eventBus.Unsubscribe(_onRosterChanged);
+            _eventBus.Unsubscribe(_onPhaseChanged);
+            _discovery.StopAdvertising();
+        }
 
         #endregion
 

@@ -70,17 +70,21 @@ namespace AMath.Core.Commands
 
             try
             {
-                switch (type)
+                IGameCommand command = type switch
                 {
-                    case CommandType.PlaceTiles:
-                        return ReadPlaceTiles(reader);
-                    case CommandType.ExchangeTiles:
-                        return ReadExchange(reader);
-                    case CommandType.PassTurn:
-                        return new PassTurnCommand { WasTimeout = reader.ReadBoolean() };
-                    default:
-                        throw new InvalidDataException($"Unknown command type {type}.");
-                }
+                    CommandType.PlaceTiles => ReadPlaceTiles(reader),
+                    CommandType.ExchangeTiles => ReadExchange(reader),
+                    CommandType.PassTurn => new PassTurnCommand { WasTimeout = reader.ReadBoolean() },
+                    _ => throw new InvalidDataException($"Unknown command type {type}.")
+                };
+
+                // Trailing bytes mean the payload does not describe exactly this
+                // command. Accepting the prefix would let a crafted request smuggle
+                // data past validation, so the whole payload is rejected.
+                if (stream.Position != stream.Length)
+                    throw new InvalidDataException("Command payload has trailing bytes.");
+
+                return command;
             }
             catch (EndOfStreamException)
             {

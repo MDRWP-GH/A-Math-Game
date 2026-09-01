@@ -65,10 +65,12 @@ namespace AMath.UI.Tutorial
             UiFactory.SetCenteredRect(boardRoot, new Vector2(0f, 55f), new Vector2(530f, 530f));
             _boardView = new MatchBoardView(_ui, boardRoot, OnCellClicked, CellSize);
 
+            var guideTint = UiPalette.CellGuide;
+            guideTint.a = 0.18f;
             var boardHighlight = UiFactory.CreateImage(
                 "Demo Board Highlight",
                 boardRoot,
-                new Color(0.98f, 0.84f, 0.18f, 0.18f));
+                guideTint);
             UiFactory.Stretch(boardHighlight.rectTransform);
             BoardHighlight = boardHighlight.gameObject;
             BoardHighlight.SetActive(false);
@@ -79,9 +81,9 @@ namespace AMath.UI.Tutorial
                 new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0.5f, 0f),
                 new Vector2(720f, 78f), new Vector2(0f, 210f));
 
-            _confirmButton = _ui.CreateButton(
+            _confirmButton = _ui.CreateAccentButton(
                 canvas, "Confirm", string.Empty,
-                UiPalette.Primary, UiPalette.PrimaryHighlight,
+                UiPalette.Success, UiPalette.SuccessHighlight,
                 () => Confirm(), 20);
             UiFactory.SetAnchoredRect(
                 _confirmButton.GetComponent<RectTransform>(),
@@ -89,7 +91,7 @@ namespace AMath.UI.Tutorial
                 new Vector2(180f, 48f), new Vector2(-100f, 155f));
             _confirmButton.GetComponentInChildren<Text>().text = _text.GetText("tutorial.ui.confirm");
 
-            _clearButton = _ui.CreateButton(
+            _clearButton = _ui.CreateAccentButton(
                 canvas, "Clear", string.Empty,
                 UiPalette.Secondary, UiPalette.SecondaryHighlight,
                 () => ClearDraft(), 20);
@@ -174,7 +176,7 @@ namespace AMath.UI.Tutorial
                 bool guide = needed.Contains(i);
                 button.gameObject.SetActive(true);
                 button.interactable = myTurn;
-                Color color = selected ? UiPalette.Primary : guide ? new Color(0.98f, 0.84f, 0.18f, 1f) : UiPalette.Secondary;
+                Color color = selected ? UiPalette.Primary : guide ? UiPalette.CellGuide : UiPalette.Secondary;
                 ColorBlock colors = button.colors;
                 colors.normalColor = color;
                 colors.pressedColor = Color.Lerp(color, Color.black, 0.16f);

@@ -17,7 +17,6 @@ namespace AMath.Core.History
         public int TurnCount;
         public string WinnerLabel;
         public int WinnerScore;
-        public string AccountUsername;
         public string ReplayFileName;
         public string StandingsSummary;
         public string LocalPlayerName;

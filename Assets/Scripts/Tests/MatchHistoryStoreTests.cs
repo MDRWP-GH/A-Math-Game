@@ -45,7 +45,7 @@ namespace AMath.Tests
             file.State.Players.Add(new PlayerSnapshot { PlayerId = 1, PersistentGuid = "guid-ben", DisplayName = "Ben", Score = 41 });
 
             Assert.IsTrue(
-                _store.TryArchiveFinishedMatch(file, "ann", "guid-ann", "Ann", out MatchHistoryEntry entry, out string error),
+                _store.TryArchiveFinishedMatch(file, "guid-ann", "Ann", out MatchHistoryEntry entry, out string error),
                 error);
             Assert.AreEqual(MatchFormat.Individual, entry.Format);
             Assert.AreEqual(724, entry.DurationSeconds);
@@ -77,7 +77,7 @@ namespace AMath.Tests
             file.State.Players.Add(new PlayerSnapshot { PlayerId = 1, PersistentGuid = "guid-ben", DisplayName = "Ben" });
 
             Assert.IsTrue(
-                _store.TryArchiveFinishedMatch(file, "ben", "guid-ben", "Ben", out MatchHistoryEntry entry, out string error),
+                _store.TryArchiveFinishedMatch(file, "guid-ben", "Ben", out MatchHistoryEntry entry, out string error),
                 error);
             Assert.IsTrue(entry.HasLocalPlayer);
             Assert.IsFalse(entry.DidWin);
@@ -101,7 +101,7 @@ namespace AMath.Tests
             file.State.Players.Add(new PlayerSnapshot { PlayerId = 0, PersistentGuid = "guid-a", DisplayName = "A" });
 
             Assert.IsTrue(
-                _store.TryArchiveFinishedMatch(file, "a", "guid-a", "A", out MatchHistoryEntry entry, out string error),
+                _store.TryArchiveFinishedMatch(file, "guid-a", "A", out MatchHistoryEntry entry, out string error),
                 error);
             Assert.AreEqual(MatchFormat.Team, entry.Format);
             Assert.IsTrue(entry.HasLocalPlayer);

@@ -460,7 +460,8 @@ namespace AMath.UI
         }
 
         /// <summary>
-        /// Text-only menu button: invisible hit box, white label with black outline.
+        /// Text-only menu button: invisible hit box, white label with black outline
+        /// and soft hover / press feedback.
         /// </summary>
         public Button CreateTextMenuButton(Transform parent, string name, string label, int fontSize, Action onClick)
         {
@@ -489,8 +490,79 @@ namespace AMath.UI
             Stretch(buttonText.rectTransform);
             AddOutline(buttonText.gameObject, Color.black, new Vector2(3.5f, -3.5f));
             AddOutline(buttonText.gameObject, Color.black, new Vector2(1.5f, -1.5f));
+            MenuButtonFeedback.Attach(button, buttonText);
 
             return button;
+        }
+
+        /// <summary>
+        /// Small pill accent used for Back / Play style actions on mockup screens.
+        /// </summary>
+        public Button CreateAccentButton(
+            Transform parent,
+            string name,
+            string label,
+            Color normalColor,
+            Color highlightedColor,
+            Action onClick,
+            int fontSize = 28)
+        {
+            var button = CreateButton(parent, name, label, normalColor, highlightedColor, onClick, fontSize);
+            AddOutline(button.GetComponentInChildren<Text>().gameObject, Color.black, new Vector2(2f, -2f));
+            return button;
+        }
+
+        /// <summary>Large outlined title shared by menu / overlay screens.</summary>
+        public Text CreateOutlinedTitle(
+            Transform parent,
+            string name,
+            string value,
+            int fontSize,
+            TextAnchor alignment = TextAnchor.MiddleCenter,
+            Color? color = null)
+        {
+            var title = CreateText(name, parent, value, fontSize, FontStyle.Normal, color ?? Color.white, alignment);
+            AddDoubleOutline(title.gameObject, new Vector2(4f, -4f), new Vector2(2f, -2f));
+            return title;
+        }
+
+        /// <summary>Translucent glass panel with a soft drop shadow.</summary>
+        public static Image CreateGlassPanel(Transform parent, string name, Color? color = null)
+        {
+            var panel = CreateImage(name, parent, color ?? UiPalette.Glass);
+            panel.raycastTarget = true;
+            AddShadow(panel.gameObject, new Color(0f, 0f, 0f, 0.35f), new Vector2(0f, -8f));
+            return panel;
+        }
+
+        /// <summary>
+        /// Full-screen overlay root: dim catcher, optional glass card, and a fade helper.
+        /// </summary>
+        public static OverlayShell CreateOverlayShell(
+            Transform parent,
+            string name,
+            bool includeGlassCard = true,
+            Vector2? cardSize = null,
+            Color? glassColor = null)
+        {
+            var root = CreateRect(name, parent).gameObject;
+            Stretch(root.GetComponent<RectTransform>());
+
+            var catcher = CreateImage("Catcher", root.transform, UiPalette.Overlay);
+            catcher.raycastTarget = true;
+            Stretch(catcher.rectTransform);
+
+            Image card = null;
+            if (includeGlassCard)
+            {
+                card = CreateGlassPanel(root.transform, "Panel", glassColor ?? UiPalette.GlassStrong);
+                SetCenteredRect(card.rectTransform, Vector2.zero, cardSize ?? new Vector2(900f, 720f));
+            }
+
+            var fade = OverlayFade.Ensure(root);
+            root.SetActive(false);
+
+            return new OverlayShell(root, catcher, card, fade);
         }
 
         public static void SetVerticalNavigation(Selectable selectable, Selectable up, Selectable down)

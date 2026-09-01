@@ -14,8 +14,22 @@ namespace AMath.Core.Events
         public MatchPhase Current;
     }
 
-    /// <summary>A match started (or restarted after restore) on this peer.</summary>
+    /// <summary>A fresh match started on this peer, with an empty history.</summary>
     public struct MatchStartedEvent
+    {
+        public MatchConfig Config;
+    }
+
+    /// <summary>
+    /// An in-progress match was adopted from a snapshot (save load, host
+    /// migration, reconnection resync).
+    ///
+    /// Deliberately distinct from <see cref="MatchStartedEvent"/>: a restore
+    /// keeps everything the match already accumulated, so listeners that reset
+    /// per-match state — the replay log above all — must not treat it as a new
+    /// match and throw that history away.
+    /// </summary>
+    public struct MatchRestoredEvent
     {
         public MatchConfig Config;
     }

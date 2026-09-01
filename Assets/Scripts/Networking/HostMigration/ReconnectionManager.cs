@@ -16,7 +16,8 @@ namespace AMath.Networking.HostMigration
     ///  - client loses host: pause/backup (mid-match), retry for a grace window,
     ///    then leave and try a fresh join if the room is still advertised;
     ///  - host loses network: dissolve the waiting room and play room;
-    ///  - host pauses while seats are empty and auto-resumes when all return.
+    ///  - host pauses while seats are empty, and resumes either when all
+    ///    return or once the wait window expires.
     /// </summary>
     public sealed class ReconnectionManager : ITickable, System.IDisposable
     {
@@ -41,6 +42,13 @@ namespace AMath.Networking.HostMigration
         /// </summary>
         private const int HostBroadcastFailureLimit = 3;
 
+        /// <summary>
+        /// Seconds the host holds a match paused for missing seats before
+        /// playing on without them. A player who never returns must not be
+        /// able to freeze the table for everyone still at it.
+        /// </summary>
+        private const float HostPauseSeconds = 45f;
+
         #endregion
 
         #region Fields
@@ -64,6 +72,7 @@ namespace AMath.Networking.HostMigration
         private string _rejectionReason;
         private bool _connectedSinceJoin;
         private float _recoveryElapsed;
+        private float _hostPauseElapsed;
 
         #endregion
 
@@ -75,6 +84,20 @@ namespace AMath.Networking.HostMigration
         /// session should show match results at all.
         /// </summary>
         public bool MatchWasRunning => _matchWasRunningAtDisconnect;
+
+        /// <summary>
+        /// Seconds left before the host plays on without the missing players,
+        /// or zero when no match is waiting. The HUD shows this so a pause
+        /// never looks like a hang.
+        /// </summary>
+        public float HostPauseSecondsRemaining =>
+            IsHostWaitingForPlayers ? Mathf.Max(0f, HostPauseSeconds - _hostPauseElapsed) : 0f;
+
+        /// <summary>True while the host holds a real match paused for absent seats.</summary>
+        public bool IsHostWaitingForPlayers =>
+            NetworkServer.active
+            && _stateMachine.CurrentPhase == MatchPhase.Paused
+            && _gameManager.Config != null;
 
         #endregion
 
@@ -361,8 +384,33 @@ namespace AMath.Networking.HostMigration
         public void Tick(float deltaTime)
         {
             TickHostNetworkWatch();
+            TickHostPauseDeadline(deltaTime);
             TickRecoveryDeadline(deltaTime);
             TickFreshJoin(deltaTime);
+        }
+
+        /// <summary>
+        /// Backstop for the host-side pause. The turn timer only runs while
+        /// Playing, so a seat that never comes back would otherwise hold the
+        /// match forever. After the window the match plays on and the absent
+        /// players' turns time out into passes, which the match can end on.
+        /// </summary>
+        private void TickHostPauseDeadline(float deltaTime)
+        {
+            if (!IsHostWaitingForPlayers)
+            {
+                _hostPauseElapsed = 0f;
+                return;
+            }
+
+            _hostPauseElapsed += deltaTime;
+            if (_hostPauseElapsed < HostPauseSeconds)
+                return;
+
+            _hostPauseElapsed = 0f;
+            Debug.LogWarning(
+                $"[Reconnect] Missing players did not return within {HostPauseSeconds:0}s — resuming without them.");
+            ForceResume();
         }
 
         /// <summary>

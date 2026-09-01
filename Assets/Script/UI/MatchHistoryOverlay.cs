@@ -17,14 +17,17 @@ namespace AMath.UI
         private readonly UiFactory _ui;
         private readonly ILocalizedTextProvider _text;
         private readonly MatchHistoryStore _historyStore;
-        private readonly GameObject _root;
+        private readonly OverlayShell _shell;
         private readonly Transform _listRoot;
         private readonly Text _status;
         private readonly MatchReplayOverlay _replayOverlay;
 
         public event Action Closed;
 
-        public bool IsOpen => _root.activeSelf;
+        public bool IsOpen => _shell.IsOpen;
+
+        /// <summary>True while the replay reader launched from this list is up.</summary>
+        public bool IsReplayOpen => _replayOverlay.IsOpen;
 
         public MatchHistoryOverlay(UiFactory ui, Transform canvasTransform, ILocalizedTextProvider text)
         {
@@ -33,22 +36,19 @@ namespace AMath.UI
             _historyStore = new MatchHistoryStore();
             _replayOverlay = new MatchReplayOverlay(ui, canvasTransform, text);
 
-            _root = UiFactory.CreateRect("History Overlay", canvasTransform).gameObject;
-            UiFactory.Stretch(_root.GetComponent<RectTransform>());
+            _shell = UiFactory.CreateOverlayShell(
+                canvasTransform,
+                "History Overlay",
+                includeGlassCard: true,
+                cardSize: new Vector2(920f, 740f),
+                glassColor: UiPalette.GlassStrong);
+            var panel = _shell.Card.transform;
 
-            var catcher = UiFactory.CreateImage("Catcher", _root.transform, new Color(0f, 0f, 0f, 0.45f));
-            catcher.raycastTarget = true;
-            UiFactory.Stretch(catcher.rectTransform);
-
-            var panel = UiFactory.CreateImage("Panel", _root.transform, new Color(0.05f, 0.05f, 0.07f, 0.92f));
-            panel.raycastTarget = true;
-            UiFactory.SetCenteredRect(panel.rectTransform, Vector2.zero, new Vector2(900f, 720f));
-
-            var title = _ui.CreateText("Title", panel.transform, string.Empty, 52, FontStyle.Bold, Color.white, TextAnchor.MiddleCenter);
+            var title = _ui.CreateOutlinedTitle(panel, "Title", string.Empty, 52);
             UiFactory.SetCenteredRect(title.rectTransform, new Vector2(0f, 300f), new Vector2(760f, 70f));
             LocalizedText.Bind(title, "ui.history.title");
 
-            var viewport = UiFactory.CreateImage("Viewport", panel.transform, new Color(1f, 1f, 1f, 0.04f));
+            var viewport = UiFactory.CreateImage("Viewport", panel, UiPalette.GlassRow);
             viewport.raycastTarget = true;
             UiFactory.SetCenteredRect(viewport.rectTransform, new Vector2(0f, -10f), new Vector2(780f, 500f));
             viewport.gameObject.AddComponent<RectMask2D>();
@@ -73,27 +73,32 @@ namespace AMath.UI
             scroll.movementType = ScrollRect.MovementType.Clamped;
             scroll.scrollSensitivity = 28f;
 
-            _status = _ui.CreateText("Status", panel.transform, string.Empty, 24, FontStyle.Italic, UiPalette.MutedText, TextAnchor.MiddleCenter);
+            _status = _ui.CreateText("Status", panel, string.Empty, 24, FontStyle.Italic, UiPalette.MutedText, TextAnchor.MiddleCenter);
             UiFactory.SetCenteredRect(_status.rectTransform, new Vector2(0f, -280f), new Vector2(760f, 40f));
 
-            var close = _ui.CreateButton(panel.transform, "Close", string.Empty, UiPalette.Quit, UiPalette.QuitHighlight, Close);
+            var close = _ui.CreateTextMenuButton(panel, "Close", string.Empty, 36, Close);
             UiFactory.SetCenteredRect(close.GetComponent<RectTransform>(), new Vector2(0f, -340f), new Vector2(280f, 60f));
             LocalizedText.Bind(close.GetComponentInChildren<Text>(), "ui.history.close");
-
-            _root.SetActive(false);
         }
 
         public void Open()
         {
-            _root.SetActive(true);
+            _shell.Open();
             RefreshList();
         }
 
         public void Close()
         {
-            _root.SetActive(false);
+            // The replay reader lives on the same canvas as this list rather than
+            // inside it, so closing the list has to take it along or it is left
+            // covering the screen with nothing behind it.
+            _replayOverlay.Close();
+            _shell.Close();
             Closed?.Invoke();
         }
+
+        /// <summary>Closes the replay reader only, returning to the list.</summary>
+        public void CloseReplay() => _replayOverlay.Close();
 
         private void RefreshList()
         {
@@ -115,14 +120,18 @@ namespace AMath.UI
                 int lineCount = 1 + CountLines(label);
                 float height = Mathf.Max(88f, 28f + lineCount * 24f);
 
-                var button = _ui.CreateButton(_listRoot, "Entry", label, UiPalette.Secondary, UiPalette.SecondaryHighlight,
-                    () => _replayOverlay.Open(captured.MatchId), 22);
+                var row = UiFactory.CreateGlassPanel(_listRoot, "Entry", UiPalette.GlassRow);
+                UiFactory.SetLayoutSize(row.gameObject, 0f, height, 1f);
+
+                var button = _ui.CreateFlatButton(
+                    row.transform, "Open", label, 22, TextAnchor.UpperLeft,
+                    () => _replayOverlay.Open(captured.MatchId));
+                UiFactory.Stretch(button.GetComponent<RectTransform>());
                 var text = button.GetComponentInChildren<Text>();
-                text.alignment = TextAnchor.UpperLeft;
+                text.color = Color.white;
                 text.horizontalOverflow = HorizontalWrapMode.Wrap;
                 text.verticalOverflow = VerticalWrapMode.Overflow;
                 UiFactory.SetStretchRect(text.rectTransform, 18f, 10f, 18f, 10f);
-                UiFactory.SetLayoutSize(button.gameObject, 0f, height, 1f);
             }
         }
 

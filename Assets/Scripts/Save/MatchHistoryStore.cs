@@ -41,7 +41,6 @@ namespace AMath.Save
 
         public bool TryArchiveFinishedMatch(
             SaveFile file,
-            string accountUsername,
             string localPersistentGuid,
             string localDisplayName,
             out MatchHistoryEntry entry,
@@ -85,13 +84,19 @@ namespace AMath.Save
                 TurnCount = file.Replay.Events?.Count ?? 0,
                 WinnerLabel = BuildWinnerLabel(result, winner),
                 WinnerScore = winner?.FinalScore ?? 0,
-                AccountUsername = accountUsername,
                 ReplayFileName = replayFileName,
                 LocalPlayerName = local?.DisplayName ?? localDisplayName,
                 LocalPlayerScore = local?.FinalScore ?? 0,
                 HasLocalPlayer = local != null,
                 DidWin = local != null && DidLocalWin(result, local)
             };
+
+            // Copied into the index so the browser can list final standings
+            // without loading (and parsing) every archived replay file.
+            if (result.Standings != null)
+                entry.Players.AddRange(result.Standings);
+            if (result.TeamStandings != null)
+                entry.Teams.AddRange(result.TeamStandings);
 
             MatchHistoryIndex index = LoadIndex();
             index.Entries.Insert(0, entry);
@@ -108,6 +113,10 @@ namespace AMath.Save
             }
             catch (Exception ex)
             {
+                // Without an index entry the replay is unreachable, so it is
+                // dropped rather than left behind as an orphan file.
+                TryDeleteReplay(replayFileName);
+                entry = null;
                 error = ex.Message;
                 return false;
             }

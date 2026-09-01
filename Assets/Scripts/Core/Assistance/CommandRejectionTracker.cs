@@ -19,6 +19,7 @@ namespace AMath.Core.Assistance
             _eventBus.Subscribe<CommandRejectedEvent>(OnRejected);
             _eventBus.Subscribe<TurnResolvedEvent>(OnTurnResolved);
             _eventBus.Subscribe<MatchStartedEvent>(OnMatchStarted);
+            _eventBus.Subscribe<MatchRestoredEvent>(OnMatchRestored);
         }
 
         /// <inheritdoc />
@@ -30,12 +31,16 @@ namespace AMath.Core.Assistance
 
         private void OnMatchStarted(MatchStartedEvent _) => LastRejectionReason = null;
 
+        // A rejection from before a resync describes a board that no longer exists.
+        private void OnMatchRestored(MatchRestoredEvent _) => LastRejectionReason = null;
+
         /// <inheritdoc />
         public void Dispose()
         {
             _eventBus.Unsubscribe<CommandRejectedEvent>(OnRejected);
             _eventBus.Unsubscribe<TurnResolvedEvent>(OnTurnResolved);
             _eventBus.Unsubscribe<MatchStartedEvent>(OnMatchStarted);
+            _eventBus.Unsubscribe<MatchRestoredEvent>(OnMatchRestored);
         }
     }
 }

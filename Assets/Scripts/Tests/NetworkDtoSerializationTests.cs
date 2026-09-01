@@ -1,7 +1,9 @@
+using System.Collections.Generic;
 using AMath.Core;
 using AMath.Networking.Messages;
 using Mirror;
 using NUnit.Framework;
+using UnityEngine;
 
 namespace AMath.Tests
 {
@@ -99,6 +101,75 @@ namespace AMath.Tests
             Assert.AreEqual(MatchFormat.Team, restored.Format);
             Assert.AreEqual(0, restored.Players[0].TeamId);
             Assert.AreEqual(1, restored.Players[1].TeamId);
+        }
+
+        [Test]
+        public void MatchConfig_RoundTrip_PreservesPlayerColors()
+        {
+            var config = new MatchConfig
+            {
+                RandomSeed = 7,
+                TurnSeconds = 60,
+                GameVersion = "2.1.0",
+                Players =
+                {
+                    new PlayerIdentity { PlayerId = 0, PersistentGuid = "a", DisplayName = "A", ColorId = 0 },
+                    new PlayerIdentity { PlayerId = 1, PersistentGuid = "b", DisplayName = "B", ColorId = 7 },
+                    // Highest valid id: an off-by-one in the palette bounds would
+                    // silently repaint this seat instead of failing.
+                    new PlayerIdentity
+                    {
+                        PlayerId = 2,
+                        PersistentGuid = "c",
+                        DisplayName = "C",
+                        ColorId = (byte)(PlayerColorPalette.Count - 1)
+                    }
+                }
+            };
+
+            MatchConfig restored = RoundTrip(config);
+
+            Assert.AreEqual(3, restored.Players.Count);
+            for (int i = 0; i < config.Players.Count; i++)
+            {
+                Assert.AreEqual(
+                    config.Players[i].ColorId,
+                    restored.Players[i].ColorId,
+                    $"ColorId lost for seat {i}");
+            }
+        }
+
+        [Test]
+        public void PlayerColorPalette_HasThirteenDistinctColors()
+        {
+            Assert.AreEqual(13, PlayerColorPalette.Count);
+            Assert.IsFalse(PlayerColorPalette.IsValid((byte)PlayerColorPalette.Count));
+
+            var seen = new HashSet<Color32>();
+            for (byte id = 0; id < PlayerColorPalette.Count; id++)
+            {
+                Assert.IsTrue(PlayerColorPalette.IsValid(id));
+                Assert.IsTrue(seen.Add(PlayerColorPalette.ColorOf(id)), $"Colour {id} is a duplicate");
+                Assert.IsNotEmpty(PlayerColorPalette.NameKeyOf(id));
+            }
+        }
+
+        [Test]
+        public void FirstUnused_SkipsTakenColorsAndWraps()
+        {
+            var taken = new HashSet<byte> { 0, 1, 2 };
+
+            // Starts inside the taken run, so it has to walk past all three.
+            Assert.AreEqual(3, PlayerColorPalette.FirstUnused(taken.Contains, 0));
+
+            // Starts at the end of the palette and must wrap to find a free slot.
+            var allButFour = new HashSet<byte>();
+            for (byte id = 0; id < PlayerColorPalette.Count; id++)
+            {
+                if (id != 4) allButFour.Add(id);
+            }
+
+            Assert.AreEqual(4, PlayerColorPalette.FirstUnused(allButFour.Contains, PlayerColorPalette.Count - 1));
         }
 
         private static MatchConfig RoundTrip(MatchConfig config)

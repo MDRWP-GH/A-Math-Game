@@ -1,5 +1,4 @@
 using AMath.Core;
-using AMath.Core.Accounts;
 using AMath.Core.Events;
 using AMath.Core.StateMachines;
 using AMath.Gameplay.Board;
@@ -11,20 +10,6 @@ namespace AMath.Tests
 {
     public sealed class ExtendedFeatureTests
     {
-        [Test]
-        public void UserAccountStore_RegisterSignInAndSignOut()
-        {
-            UserAccountStore.SignOut();
-            string user = "user_" + System.Guid.NewGuid().ToString("N")[..8];
-            Assert.IsTrue(UserAccountStore.Register(user, "password", "Display", out string registerError), registerError);
-            Assert.IsTrue(UserAccountStore.IsSignedIn);
-
-            UserAccountStore.SignOut();
-            Assert.IsFalse(UserAccountStore.IsSignedIn);
-            Assert.IsTrue(UserAccountStore.SignIn(user, "password", out string loginError), loginError);
-            Assert.AreEqual("Display", UserAccountStore.SessionDisplayName);
-        }
-
         [Test]
         public void EndMatch_TeamMode_AggregatesTeamScores()
         {

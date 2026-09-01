@@ -64,11 +64,19 @@ namespace AMath.Gameplay.Board
 
         #region Queries
 
-        /// <summary>Point value of a tile. Blank is always worth 0.</summary>
-        public static int PointsOf(byte tileId) => Points[tileId];
+        /// <summary>True for a byte that names a real tile.</summary>
+        public static bool IsValidTileId(byte tileId) => tileId < TileTypeCount;
+
+        /// <summary>
+        /// Point value of a tile. Blank is always worth 0, and so is anything
+        /// outside the set: a corrupt id reaching end-of-match scoring or the
+        /// HUD must not take the match down with an index error. Validation is
+        /// the place that rejects such ids, not the lookup tables.
+        /// </summary>
+        public static int PointsOf(byte tileId) => IsValidTileId(tileId) ? Points[tileId] : 0;
 
         /// <summary>Human-readable symbol (UI / replay text).</summary>
-        public static string SymbolOf(byte tileId) => Symbols[tileId];
+        public static string SymbolOf(byte tileId) => IsValidTileId(tileId) ? Symbols[tileId] : "?";
 
         /// <summary>Short label for rack/HUD: symbol plus official face points.</summary>
         public static string SymbolWithPoints(byte tileId) =>

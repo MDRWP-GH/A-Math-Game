@@ -124,7 +124,9 @@ namespace AMath.Gameplay
             }
 
             _drawBuffer.Clear();
-            _tileBag.Exchange(command.TileIds, _drawBuffer, rng);
+            if (!_tileBag.Exchange(command.TileIds, _drawBuffer, rng))
+                return Fail("Not enough tiles left in the bag to exchange.");
+
             _playerManager.RemoveFromRack(player.PlayerId, command.TileIds);
             _playerManager.AddToRack(player.PlayerId, _drawBuffer);
 

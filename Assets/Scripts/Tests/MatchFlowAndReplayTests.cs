@@ -175,5 +175,45 @@ namespace AMath.Tests
                 JsonUtility.ToJson(live.Game.CaptureSnapshot()),
                 JsonUtility.ToJson(migrated.Game.CaptureSnapshot()));
         }
+
+        /// <summary>
+        /// The bug this covers: restore published MatchStartedEvent, which made
+        /// ReplayManager throw away the log for a match that was still going.
+        /// </summary>
+        [Test]
+        public void SnapshotRestore_KeepsTheReplayLogItAlreadyHas()
+        {
+            Rig live = CreateRig();
+            live.Game.StartMatch(TwoPlayerConfig(4242));
+
+            for (int i = 0; i < 2; i++)
+                Assert.IsTrue(live.Game.SubmitCommand(live.Turns.CurrentPlayerId, new PassTurnCommand(), out _).Success);
+
+            int recordedTurns = live.Replay.Log.Events.Count;
+            Assert.AreEqual(2, recordedTurns);
+
+            // A resync restores the same match into the same peer; the turns it
+            // already recorded are still part of that match.
+            string json = JsonUtility.ToJson(live.Game.CaptureSnapshot());
+            live.Game.RestoreSnapshot(JsonUtility.FromJson<GameStateSnapshot>(json));
+
+            Assert.AreEqual(
+                recordedTurns,
+                live.Replay.Log.Events.Count,
+                "Restoring a match must not clear its replay log.");
+        }
+
+        [Test]
+        public void StartMatch_StillClearsTheReplayLog()
+        {
+            Rig rig = CreateRig();
+            rig.Game.StartMatch(TwoPlayerConfig(11));
+            Assert.IsTrue(rig.Game.SubmitCommand(rig.Turns.CurrentPlayerId, new PassTurnCommand(), out _).Success);
+            Assert.AreEqual(1, rig.Replay.Log.Events.Count);
+
+            rig.Game.StartMatch(TwoPlayerConfig(12));
+
+            Assert.AreEqual(0, rig.Replay.Log.Events.Count, "A new match starts from an empty log.");
+        }
     }
 }

@@ -1,6 +1,8 @@
 using System;
+using AMath.Core;
 using AMath.Core.Commands;
 using AMath.Core.Events;
+using AMath.Core.StateMachines;
 using AMath.Gameplay.Players;
 using AMath.Managers;
 using Mirror;
@@ -51,6 +53,13 @@ namespace AMath.Networking.RPC
         [SyncVar]
         private bool _isHost;
 
+        /// <summary>
+        /// Index into <see cref="PlayerColorPalette"/>. Assigned randomly by the
+        /// host on join and changeable by the owner while in the lobby.
+        /// </summary>
+        [SyncVar(hook = nameof(OnColorIdChanged))]
+        private byte _colorId;
+
         #endregion
 
         #region Fields
@@ -76,19 +85,59 @@ namespace AMath.Networking.RPC
         /// <summary>True when this connection is the room host.</summary>
         public bool IsHost => _isHost;
 
+        /// <summary>Index into <see cref="PlayerColorPalette"/> for this player's colour.</summary>
+        public byte ColorId => _colorId;
+
         #endregion
 
         #region Server initialization
 
         /// <summary>Server-only: sets identity before the object is spawned.</summary>
         [Server]
-        public void ServerInitialize(int playerId, string displayName, string persistentGuid, bool isHost = false)
+        public void ServerInitialize(
+            int playerId,
+            string displayName,
+            string persistentGuid,
+            bool isHost = false,
+            byte colorId = PlayerColorPalette.FallbackId)
         {
             _playerId = playerId;
             _displayName = displayName;
             _persistentGuid = persistentGuid;
             _isHost = isHost;
+            _colorId = colorId;
         }
+
+        /// <summary>
+        /// Server-only: true when a player other than <paramref name="except"/>
+        /// already holds <paramref name="colorId"/>. Reads the live connection
+        /// list rather than a cached roster, so a colour freed by someone
+        /// leaving becomes available again immediately.
+        /// </summary>
+        [Server]
+        public static bool ServerIsColorTaken(byte colorId, NetworkPlayer except)
+        {
+            foreach (NetworkConnectionToClient connection in NetworkServer.connections.Values)
+            {
+                if (connection?.identity == null) continue;
+                if (!connection.identity.TryGetComponent(out NetworkPlayer other)) continue;
+                if (other == except) continue;
+                if (other._colorId == colorId) return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Server-only: a free colour, starting the search at a random point so
+        /// joining players get an arbitrary colour rather than always the first
+        /// unused one.
+        /// </summary>
+        [Server]
+        public static byte ServerPickFreeColor() =>
+            PlayerColorPalette.FirstUnused(
+                candidate => ServerIsColorTaken(candidate, null),
+                UnityEngine.Random.Range(0, PlayerColorPalette.Count));
 
         /// <summary>Server-only: updates the replicated host badge after migration.</summary>
         [Server]
@@ -161,10 +210,50 @@ namespace AMath.Networking.RPC
 
         private void OnDisplayNameChanged(string _, string __) => NotifyRosterChanged();
 
+        private void OnColorIdChanged(byte _, byte __) => NotifyRosterChanged();
+
         private void NotifyRosterChanged()
         {
             ResolveServices();
             _eventBus?.Publish(new PlayerRosterChangedEvent());
+        }
+
+        #endregion
+
+        #region Colour channel (client -> host)
+
+        /// <summary>
+        /// Asks the host for a colour. Only meaningful for the local player;
+        /// the host decides whether the request is allowed.
+        /// </summary>
+        public void RequestColor(byte colorId)
+        {
+            if (!isLocalPlayer) return;
+            CmdRequestColor(colorId);
+        }
+
+        /// <summary>
+        /// Host-side colour change. Silently ignored rather than reported when
+        /// refused: the lobby already hides taken colours, so a rejection here
+        /// only happens when two players tapped the same swatch at once, and an
+        /// error popup for that would be noise.
+        /// </summary>
+        [Command]
+        private void CmdRequestColor(byte colorId)
+        {
+            if (!PlayerColorPalette.IsValid(colorId)) return;
+
+            // Colours are frozen into MatchConfig at match start, so allowing a
+            // change afterwards would leave the HUD disagreeing with the replay.
+            if (_gameManager != null && _gameManager.Phase != MatchPhase.Lobby) return;
+
+            if (ServerIsColorTaken(colorId, this)) return;
+
+            _colorId = colorId;
+
+            // Mirror skips SyncVar hooks on the machine that assigns the value,
+            // so the host refreshes its own lobby list explicitly.
+            NotifyRosterChanged();
         }
 
         #endregion

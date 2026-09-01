@@ -6,6 +6,7 @@ using AMath.Gameplay.Interaction;
 using AMath.Gameplay.Players;
 using AMath.Managers;
 using AMath.Networking;
+using AMath.Networking.HostMigration;
 using AMath.Networking.RPC;
 using AMath.Networking.Room;
 using UnityEngine;
@@ -28,6 +29,7 @@ namespace AMath.UI
         private TurnInputSession _turnInput;
         private RoomManager _roomManager;
         private NetworkGameState _networkGameState;
+        private ReconnectionManager _reconnection;
         private string _lastError;
 
         // Kept so OnDestroy can unsubscribe the exact delegates that were registered.
@@ -48,6 +50,18 @@ namespace AMath.UI
         public PlayerManager Players => _playerManager;
         public GameManager Game => _gameManager;
         public string LastError => _lastError;
+
+        /// <summary>
+        /// True while the match is held for players who dropped out. The HUD
+        /// says so instead of leaving a frozen board with no explanation.
+        /// </summary>
+        public bool IsWaitingForPlayers => Phase == MatchPhase.Paused;
+
+        /// <summary>
+        /// Seconds until the host plays on without the missing players, or zero
+        /// when this peer cannot know (only the host runs the countdown).
+        /// </summary>
+        public float WaitingSecondsRemaining => _reconnection?.HostPauseSecondsRemaining ?? 0f;
 
         public bool IsMyTurnReady
         {
@@ -76,6 +90,7 @@ namespace AMath.UI
             _turnInput = NetworkContext.Services.Resolve<TurnInputSession>();
             _roomManager = NetworkContext.Services.Resolve<RoomManager>();
             NetworkContext.Services.TryResolve(out _networkGameState);
+            NetworkContext.Services.TryResolve(out _reconnection);
 
             _onTurnStarted = _ => Raise();
             _onTurnResolved = _ => { _lastError = null; Raise(); };
@@ -168,6 +183,12 @@ namespace AMath.UI
         }
 
         public void LeaveRoom() => _roomManager?.LeaveRoom();
+
+        /// <summary>
+        /// Host override: stop waiting for the missing players and play on now.
+        /// Ignored on clients, which have no authority over the phase.
+        /// </summary>
+        public void ResumeWithoutMissingPlayers() => _reconnection?.ForceResume();
 
         private void Raise() => StateChanged?.Invoke();
     }

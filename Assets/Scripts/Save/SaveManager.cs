@@ -95,10 +95,8 @@ namespace AMath.Save
                 Replay = _replayManager.Log
             };
 
-            string account = Core.Accounts.UserAccountStore.SessionUsername;
             if (!_historyStore.TryArchiveFinishedMatch(
                     file,
-                    account,
                     LocalIdentity.PersistentGuid,
                     LocalIdentity.DisplayName,
                     out _,

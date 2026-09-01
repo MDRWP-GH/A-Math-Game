@@ -19,13 +19,6 @@ namespace AMath.UI
     internal sealed class MatchBoardView
     {
         private const float CellSize = 46f;
-        private static readonly Color CellGuide = new(0.98f, 0.84f, 0.18f, 0.95f);
-
-        private static readonly Color CellPlain = new(0.55f, 0.38f, 0.22f, 1f);
-        private static readonly Color CellOccupied = new(0.92f, 0.55f, 0.18f, 1f);
-        private static readonly Color CellDraftValid = new(0.28f, 0.72f, 0.38f, 1f);
-        private static readonly Color CellDraftInvalid = new(0.78f, 0.28f, 0.24f, 1f);
-        private static readonly Color CellHighlight = new(0.70f, 0.52f, 0.32f, 1f);
 
         private readonly Button[,] _cells = new Button[GameRules.BoardSize, GameRules.BoardSize];
         private readonly Text[,] _labels = new Text[GameRules.BoardSize, GameRules.BoardSize];
@@ -45,7 +38,7 @@ namespace AMath.UI
                     int cellY = y;
                     Button button = ui.CreateButton(
                         parent, $"C{x}_{y}", string.Empty,
-                        CellPlain, CellHighlight,
+                        UiPalette.CellPlain, UiPalette.CellHighlight,
                         () => onCellClicked(cellX, cellY), 11);
 
                     UiFactory.SetCenteredRect(
@@ -105,12 +98,12 @@ namespace AMath.UI
             if (grid != null && grid.IsOccupied(x, y))
             {
                 symbol = SymbolOf(grid.CellAt(x, y).EffectiveTileId);
-                color = CellOccupied;
+                color = UiPalette.CellOccupied;
                 return;
             }
 
             symbol = string.Empty;
-            color = CellPlain;
+            color = UiPalette.CellPlain;
 
             PremiumType premium = BoardGrid.PremiumAt(x, y);
             if (premium != PremiumType.None)
@@ -137,9 +130,9 @@ namespace AMath.UI
         private static Color TintGuide(Color baseColor, PremiumType premium)
         {
             if (premium == PremiumType.None)
-                return CellGuide;
+                return UiPalette.CellGuide;
 
-            return Color.Lerp(baseColor, CellGuide, 0.4f);
+            return Color.Lerp(baseColor, UiPalette.CellGuide, 0.4f);
         }
 
         private static void ApplyDraft(
@@ -154,7 +147,9 @@ namespace AMath.UI
                 if (placement.X != x || placement.Y != y) continue;
 
                 symbol = SymbolOf(placement.EffectiveTileId);
-                color = input.PreviewValidation is { IsValid: true } ? CellDraftValid : CellDraftInvalid;
+                color = input.PreviewValidation is { IsValid: true }
+                    ? UiPalette.CellDraftValid
+                    : UiPalette.CellDraftInvalid;
                 fontSize = 18;
             }
         }
@@ -165,7 +160,7 @@ namespace AMath.UI
             PremiumType.TileX3 => new Color(0.28f, 0.62f, 0.88f, 1f),      // blue — ×3 piece
             PremiumType.EquationX2 => new Color(0.95f, 0.82f, 0.22f, 1f),  // yellow — ×2 equation
             PremiumType.EquationX3 => new Color(0.88f, 0.28f, 0.28f, 1f),  // red — ×3 equation
-            _ => CellPlain
+            _ => UiPalette.CellPlain
         };
     }
 }

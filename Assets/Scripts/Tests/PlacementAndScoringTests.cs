@@ -56,6 +56,42 @@ namespace AMath.Tests
             Assert.AreEqual(0, PointsOf(Blank));
         }
 
+        /// <summary>
+        /// A corrupt rack used to index the ownership table out of range and
+        /// throw out of the middle of the command instead of failing it.
+        /// </summary>
+        [Test]
+        public void CorruptRackTileId_FailsValidation_WithoutThrowing()
+        {
+            var board = new BoardManager();
+            List<TilePlacement> placements = FirstEquation();
+            List<byte> rack = Rack(1, Plus, 2, EqualsSign, 3, 200, 8, 9);
+
+            PlacementValidation validation = null;
+            Assert.DoesNotThrow(() => validation = board.Validate(rack, placements));
+            Assert.IsFalse(validation.IsValid);
+        }
+
+        [Test]
+        public void NullRack_FailsValidation_WithoutThrowing()
+        {
+            var board = new BoardManager();
+            List<TilePlacement> placements = FirstEquation();
+
+            PlacementValidation validation = null;
+            Assert.DoesNotThrow(() => validation = board.Validate(null, placements));
+            Assert.IsFalse(validation.IsValid);
+        }
+
+        [Test]
+        public void UnknownTileId_ScoresNothingAndRendersAsUnknown()
+        {
+            Assert.AreEqual(0, PointsOf(200));
+            Assert.AreEqual("?", SymbolOf(200));
+            Assert.IsFalse(IsValidTileId(200));
+            Assert.IsTrue(IsValidTileId(Blank));
+        }
+
         [Test]
         public void InvalidEquation_IsRejected_WithMathError()
         {

@@ -52,7 +52,8 @@ namespace AMath.Gameplay.Players
                     identity.PersistentGuid,
                     identity.DisplayName,
                     identity.IsAi,
-                    identity.TeamId));
+                    identity.TeamId,
+                    identity.ColorId));
             }
 
             _eventBus.Publish(new PlayerRosterChangedEvent());
@@ -91,14 +92,30 @@ namespace AMath.Gameplay.Players
 
         #region Rack operations (invoked by the command pipeline only)
 
-        /// <summary>Removes exactly these tiles from a rack. Assumes prior validation.</summary>
+        // Racks feed the deterministic lockstep engine, so these two are
+        // deliberately unforgiving. Every caller reaches them holding a
+        // PlayerState it just resolved and a request validation already passed,
+        // which means a bad seat or a tile the rack does not hold is a bug in
+        // this process — and a silent no-op would turn that bug into peers
+        // quietly disagreeing about the game state several turns later.
+
+        /// <summary>
+        /// Removes exactly these tiles from a rack. A tile that is not there
+        /// means the rack and the command have diverged: it would end up both on
+        /// the rack and on the board, so the mismatch is raised, not absorbed.
+        /// </summary>
         public void RemoveFromRack(int playerId, IReadOnlyList<byte> tileIds)
         {
-            PlayerState player = GetById(playerId);
-            if (player == null) return;
+            PlayerState player = RequirePlayer(playerId);
 
             for (int i = 0; i < tileIds.Count; i++)
-                player.Rack.Remove(tileIds[i]);
+            {
+                if (!player.Rack.Remove(tileIds[i]))
+                {
+                    throw new System.InvalidOperationException(
+                        $"Rack of player {playerId} does not hold tile {tileIds[i]}.");
+                }
+            }
 
             _eventBus.Publish(new LocalRackChangedEvent { PlayerId = playerId });
         }
@@ -106,14 +123,17 @@ namespace AMath.Gameplay.Players
         /// <summary>Adds drawn tiles to a rack.</summary>
         public void AddToRack(int playerId, IReadOnlyList<byte> tileIds)
         {
-            PlayerState player = GetById(playerId);
-            if (player == null) return;
+            PlayerState player = RequirePlayer(playerId);
 
             for (int i = 0; i < tileIds.Count; i++)
                 player.Rack.Add(tileIds[i]);
 
             _eventBus.Publish(new LocalRackChangedEvent { PlayerId = playerId });
         }
+
+        private PlayerState RequirePlayer(int playerId) =>
+            GetById(playerId)
+            ?? throw new System.InvalidOperationException($"No seated player with id {playerId}.");
 
         #endregion
 
@@ -132,6 +152,8 @@ namespace AMath.Gameplay.Players
                     DisplayName = player.DisplayName,
                     Score = player.Score,
                     IsAi = player.IsAi,
+                    TeamId = player.TeamId,
+                    ColorId = player.ColorId,
                     Rack = new List<byte>(player.Rack)
                 });
             }
@@ -147,7 +169,9 @@ namespace AMath.Gameplay.Players
                     saved.PlayerId,
                     saved.PersistentGuid,
                     saved.DisplayName,
-                    saved.IsAi)
+                    saved.IsAi,
+                    saved.TeamId,
+                    saved.ColorId)
                 {
                     Score = saved.Score,
                     // Players are considered disconnected until the network

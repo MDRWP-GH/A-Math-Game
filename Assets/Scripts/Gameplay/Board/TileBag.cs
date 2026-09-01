@@ -96,15 +96,20 @@ namespace AMath.Gameplay.Board
         /// Exchange: draws replacements first, then returns the player's tiles
         /// and reshuffles. The fixed sequence matters — every peer must consume
         /// the random stream identically.
+        ///
+        /// Returns false instead of throwing when the bag is too small, so the
+        /// command pipeline can reject the turn through its normal failure path
+        /// rather than unwinding out of the middle of a host frame.
         /// </summary>
-        public void Exchange(IReadOnlyList<byte> returned, List<byte> drawn, DeterministicRandom rng)
+        public bool Exchange(IReadOnlyList<byte> returned, List<byte> drawn, DeterministicRandom rng)
         {
-            if (returned.Count > _tiles.Count)
-                throw new InvalidOperationException("Not enough tiles in the bag to exchange.");
+            if (returned == null || returned.Count > _tiles.Count)
+                return false;
 
             Draw(returned.Count, drawn);
             _tiles.AddRange(returned);
             rng.Shuffle(_tiles);
+            return true;
         }
 
         #endregion

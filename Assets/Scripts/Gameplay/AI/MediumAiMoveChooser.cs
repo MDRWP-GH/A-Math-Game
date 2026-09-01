@@ -8,19 +8,32 @@ using static AMath.Gameplay.Board.AMathTileSet;
 namespace AMath.Gameplay.AI
 {
     /// <summary>
-    /// Medium-strength scripted mover: enumerates simple self-contained
-    /// equations from the rack, validates them on the real board, then picks
-    /// from the mid band of scored options so the AI can win or lose.
+    /// Medium-strength scripted mover: enumerates simple equations that the
+    /// rack can build — optionally reusing a tile already on the board —
+    /// validates them on the real board, then picks from the mid band of
+    /// scored options so the AI can win or lose.
     /// </summary>
     public sealed class MediumAiMoveChooser : IAiMoveChooser
     {
+        /// <summary>
+        /// How many symbols of an equation may come from tiles already on the
+        /// board. Hooking onto one existing tile covers the ordinary A-Math
+        /// continuation; a wider budget multiplies the search for very little
+        /// extra playing strength.
+        /// </summary>
+        private const int MaxBoardSuppliedSymbols = 1;
+
         private readonly ScoreCalculator _scoreCalculator = new();
         private readonly List<ScoredMove> _candidates = new(64);
         private readonly List<List<byte>> _equations = new(64);
         private readonly List<TilePlacement> _placementBuffer = new(GameRules.RackSize);
         private readonly List<byte> _rackScratch = new(GameRules.RackSize);
+        private readonly List<byte> _supplyScratch = new(GameRules.RackSize);
         private readonly List<(int x, int y)> _anchors = new(64);
         private readonly HashSet<string> _equationKeys = new();
+
+        /// <summary>Effective symbols the board can currently stand in for.</summary>
+        private readonly bool[] _boardSymbols = new bool[TileTypeCount];
 
         /// <inheritdoc />
         public IGameCommand Choose(
@@ -30,7 +43,7 @@ namespace AMath.Gameplay.AI
             int choiceSeed)
         {
             _candidates.Clear();
-            BuildEquations(rack);
+            BuildEquations(rack, board.Grid);
             CollectPlaceCandidates(board, rack);
 
             if (_candidates.Count > 0)
@@ -53,15 +66,18 @@ namespace AMath.Gameplay.AI
             return new PassTurnCommand();
         }
 
-        private void BuildEquations(IReadOnlyList<byte> rack)
+        private void BuildEquations(IReadOnlyList<byte> rack, BoardGrid grid)
         {
             _equations.Clear();
             _equationKeys.Clear();
+            CollectBoardSymbols(grid);
 
-            var numberValues = new List<byte>(16);
+            var numberValues = new List<byte>(24);
             for (byte n = 0; n <= 20; n++)
             {
-                if (CanSupply(rack, n))
+                // Worth trying when this turn could source the number either
+                // from the rack or from a tile already on the board.
+                if (CanSupply(rack, n) || _boardSymbols[n])
                     numberValues.Add(n);
             }
 
@@ -69,7 +85,7 @@ namespace AMath.Gameplay.AI
             for (int i = 0; i < numberValues.Count; i++)
             {
                 byte n = numberValues[i];
-                if (CanSupplyPair(rack, n, n))
+                if (CanSupplyEquation(rack, n, EqualsSign, n))
                     AddEquation(n, EqualsSign, n);
             }
 
@@ -93,8 +109,28 @@ namespace AMath.Gameplay.AI
         {
             if (result < 0 || result > 20) return;
             byte c = (byte)result;
-            if (!CanSupplyTriple(rack, a, op, b, c)) return;
+            if (!CanSupplyEquation(rack, a, op, b, EqualsSign, c)) return;
             AddEquation(a, op, b, EqualsSign, c);
+        }
+
+        /// <summary>
+        /// Records which effective symbols sit on the board, so equation
+        /// generation knows what a hook could borrow instead of demanding the
+        /// rack cover every symbol itself.
+        /// </summary>
+        private void CollectBoardSymbols(BoardGrid grid)
+        {
+            System.Array.Clear(_boardSymbols, 0, _boardSymbols.Length);
+            for (int y = 0; y < GameRules.BoardSize; y++)
+            {
+                for (int x = 0; x < GameRules.BoardSize; x++)
+                {
+                    if (!grid.IsOccupied(x, y)) continue;
+                    byte effective = grid.CellAt(x, y).EffectiveTileId;
+                    if (effective < _boardSymbols.Length)
+                        _boardSymbols[effective] = true;
+                }
+            }
         }
 
         private void AddEquation(params byte[] ids)
@@ -208,6 +244,9 @@ namespace AMath.Gameplay.AI
             List<TilePlacement> into)
         {
             into.Clear();
+            if (!SpanMatchesBoard(grid, equation, startX, startY, horizontal))
+                return false;
+
             _rackScratch.Clear();
             _rackScratch.AddRange(rack);
 
@@ -215,11 +254,14 @@ namespace AMath.Gameplay.AI
             {
                 int x = horizontal ? startX + i : startX;
                 int y = horizontal ? startY : startY + i;
-                if (!BoardGrid.InBounds(x, y)) return false;
-                if (grid.IsOccupied(x, y)) return false;
 
-                byte needed = equation[i];
-                if (!TryTakeTile(_rackScratch, needed, out byte tileId, out byte declaredAs))
+                // A tile already on the board covers its own symbol, so only the
+                // gaps come out of the rack. This is what lets the AI continue an
+                // existing equation instead of only playing on empty space.
+                if (grid.IsOccupied(x, y))
+                    continue;
+
+                if (!TryTakeTile(_rackScratch, equation[i], out byte tileId, out byte declaredAs))
                     return false;
 
                 into.Add(new TilePlacement
@@ -232,6 +274,56 @@ namespace AMath.Gameplay.AI
             }
 
             return into.Count > 0;
+        }
+
+        /// <summary>
+        /// Board-only screen for a span, run before any rack bookkeeping: it has
+        /// to fit, leave at least one cell for this turn to fill, and match every
+        /// tile already sitting inside it. The cells just outside must be empty
+        /// too, otherwise the line the host reads back would be longer than the
+        /// equation being placed.
+        /// </summary>
+        private static bool SpanMatchesBoard(
+            BoardGrid grid,
+            List<byte> equation,
+            int startX,
+            int startY,
+            bool horizontal)
+        {
+            int length = equation.Count;
+            int endX = horizontal ? startX + length - 1 : startX;
+            int endY = horizontal ? startY : startY + length - 1;
+
+            if (!BoardGrid.InBounds(startX, startY) || !BoardGrid.InBounds(endX, endY))
+                return false;
+
+            int beforeX = horizontal ? startX - 1 : startX;
+            int beforeY = horizontal ? startY : startY - 1;
+            if (BoardGrid.InBounds(beforeX, beforeY) && grid.IsOccupied(beforeX, beforeY))
+                return false;
+
+            int afterX = horizontal ? endX + 1 : endX;
+            int afterY = horizontal ? endY : endY + 1;
+            if (BoardGrid.InBounds(afterX, afterY) && grid.IsOccupied(afterX, afterY))
+                return false;
+
+            bool hasEmptyCell = false;
+            for (int i = 0; i < length; i++)
+            {
+                int x = horizontal ? startX + i : startX;
+                int y = horizontal ? startY : startY + i;
+
+                if (!grid.IsOccupied(x, y))
+                {
+                    hasEmptyCell = true;
+                    continue;
+                }
+
+                if (grid.CellAt(x, y).EffectiveTileId != equation[i])
+                    return false;
+            }
+
+            return hasEmptyCell;
         }
 
         private static bool TryTakeTile(List<byte> rack, byte neededEffective, out byte tileId, out byte declaredAs)
@@ -286,24 +378,28 @@ namespace AMath.Gameplay.AI
         private static bool CanSupply(IReadOnlyList<byte> rack, byte needed) =>
             CountSupply(rack, needed) > 0;
 
-        private static bool CanSupplyPair(IReadOnlyList<byte> rack, byte a, byte b)
+        /// <summary>
+        /// True when the rack covers the whole equation, save for up to
+        /// <see cref="MaxBoardSuppliedSymbols"/> symbols a board tile could
+        /// stand in for. Whether the board really offers them in the right
+        /// cells is settled later, when the equation is mapped onto a span.
+        /// </summary>
+        private bool CanSupplyEquation(IReadOnlyList<byte> rack, params byte[] ids)
         {
-            _tempScratch.Clear();
-            _tempScratch.AddRange(rack);
-            return TryTakeTile(_tempScratch, a, out _, out _)
-                   && TryTakeTile(_tempScratch, EqualsSign, out _, out _)
-                   && TryTakeTile(_tempScratch, b, out _, out _);
-        }
+            _supplyScratch.Clear();
+            _supplyScratch.AddRange(rack);
 
-        private static bool CanSupplyTriple(IReadOnlyList<byte> rack, byte a, byte op, byte b, byte c)
-        {
-            _tempScratch.Clear();
-            _tempScratch.AddRange(rack);
-            return TryTakeTile(_tempScratch, a, out _, out _)
-                   && TryTakeTile(_tempScratch, op, out _, out _)
-                   && TryTakeTile(_tempScratch, b, out _, out _)
-                   && TryTakeTile(_tempScratch, EqualsSign, out _, out _)
-                   && TryTakeTile(_tempScratch, c, out _, out _);
+            int borrowed = 0;
+            for (int i = 0; i < ids.Length; i++)
+            {
+                if (TryTakeTile(_supplyScratch, ids[i], out _, out _))
+                    continue;
+
+                if (!_boardSymbols[ids[i]] || ++borrowed > MaxBoardSuppliedSymbols)
+                    return false;
+            }
+
+            return true;
         }
 
         private static int CountSupply(IReadOnlyList<byte> rack, byte needed)
@@ -345,9 +441,6 @@ namespace AMath.Gameplay.AI
                 chars[i] = (char)('A' + ids[i]);
             return new string(chars);
         }
-
-        // Shared only for CanSupply* probes (not concurrent).
-        private static readonly List<byte> _tempScratch = new(GameRules.RackSize);
 
         private sealed class ScoredMove
         {

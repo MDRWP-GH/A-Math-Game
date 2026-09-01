@@ -10,6 +10,12 @@ namespace AMath.Networking.Room
     /// </summary>
     public sealed class RoomSession
     {
+        /// <summary>
+        /// Name given to a room when the host does not type one, so pressing
+        /// "play" straight away still produces a room others can recognise.
+        /// </summary>
+        public const string DefaultRoomName = "A-Math Server";
+
         /// <summary>Display name of the room.</summary>
         public string RoomName { get; set; }
 
