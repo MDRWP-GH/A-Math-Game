@@ -150,7 +150,10 @@ namespace AMath.UI.Localization
             ["ui.play.format"] = "รูปแบบการแข่งขัน",
             ["ui.play.format_individual"] = "แข่งเดี่ยว",
             ["ui.play.format_team"] = "แข่งทีม",
-            ["ui.play.team_hint"] = "โหมดทีมต้องมีผู้เล่นคู่ (อย่างน้อย 4 ที่นั่ง) — AI จะเติมให้อัตโนมัติ",
+            ["ui.play.team_hint"] = "เลือกทีม 1 หรือ ทีม 2 — ต้องมี 2–4 คน และทั้งสองทีมมีสมาชิก",
+            ["ui.play.pick_team"] = "เลือกทีม",
+            ["ui.play.team_one"] = "ทีม 1",
+            ["ui.play.team_two"] = "ทีม 2",
             ["ui.play.your_color"] = "สีของคุณ",
             ["ui.color.red"] = "แดง",
             ["ui.color.orange"] = "ส้ม",
@@ -173,7 +176,8 @@ namespace AMath.UI.Localization
             ["ui.play.connection_lost"] = "การเชื่อมต่อขาดหาย — กลับมาที่หน้าค้นหาห้อง",
             ["ui.play.need_host"] = "เฉพาะเจ้าของห้องเท่านั้นที่เริ่มแมตช์ได้",
             ["ui.play.need_players"] = "รอผู้เล่นเข้าห้อง…",
-            ["ui.play.need_even_teams"] = "โหมดทีมต้องมีที่นั่งเป็นเลขคู่ อย่างน้อย 4 ที่นั่ง",
+            ["ui.play.need_two_players"] = "ต้องมีผู้เล่นอย่างน้อย 2 คน",
+            ["ui.play.need_both_teams"] = "ทั้งสองทีมต้องมีสมาชิกอย่างน้อย 1 คน",
 
             // Match HUD
             ["ui.match.confirm"] = "ยืนยันการวาง",
@@ -380,7 +384,10 @@ namespace AMath.UI.Localization
             ["ui.play.format"] = "Match format",
             ["ui.play.format_individual"] = "Individual",
             ["ui.play.format_team"] = "Team",
-            ["ui.play.team_hint"] = "Team mode needs an even roster (at least 4 seats) — AI fills automatically",
+            ["ui.play.team_hint"] = "Pick Team 1 or Team 2 — need 2–4 players with at least one on each team",
+            ["ui.play.pick_team"] = "Pick a team",
+            ["ui.play.team_one"] = "Team 1",
+            ["ui.play.team_two"] = "Team 2",
             ["ui.play.your_color"] = "Your colour",
             ["ui.color.red"] = "Red",
             ["ui.color.orange"] = "Orange",
@@ -403,7 +410,8 @@ namespace AMath.UI.Localization
             ["ui.play.connection_lost"] = "Connection lost — back to the room list",
             ["ui.play.need_host"] = "Only the host can start the match",
             ["ui.play.need_players"] = "Waiting for players to join…",
-            ["ui.play.need_even_teams"] = "Team mode needs an even number of seats, at least 4",
+            ["ui.play.need_two_players"] = "Need at least 2 players",
+            ["ui.play.need_both_teams"] = "Both teams need at least one member",
 
             // Match HUD
             ["ui.match.confirm"] = "Confirm Place",

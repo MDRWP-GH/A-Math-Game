@@ -62,6 +62,12 @@ namespace AMath.Networking.RPC
         [SyncVar(hook = nameof(OnColorIdChanged))]
         private byte _colorId;
 
+        /// <summary>
+        /// Team picked in the lobby (0 or 1). Frozen into MatchConfig at start.
+        /// </summary>
+        [SyncVar(hook = nameof(OnLobbyTeamIdChanged))]
+        private byte _lobbyTeamId;
+
         #endregion
 
         #region Fields
@@ -89,6 +95,9 @@ namespace AMath.Networking.RPC
 
         /// <summary>Index into <see cref="PlayerColorPalette"/> for this player's colour.</summary>
         public byte ColorId => _colorId;
+
+        /// <summary>Lobby team selection (0 or 1). Meaningful in team mode only.</summary>
+        public byte LobbyTeamId => _lobbyTeamId;
 
         #endregion
 
@@ -214,6 +223,8 @@ namespace AMath.Networking.RPC
 
         private void OnColorIdChanged(byte _, byte __) => NotifyRosterChanged();
 
+        private void OnLobbyTeamIdChanged(byte _, byte __) => NotifyRosterChanged();
+
         private void NotifyRosterChanged()
         {
             ResolveServices();
@@ -255,6 +266,31 @@ namespace AMath.Networking.RPC
 
             // Mirror skips SyncVar hooks on the machine that assigns the value,
             // so the host refreshes its own lobby list explicitly.
+            NotifyRosterChanged();
+        }
+
+        #endregion
+
+        #region Team channel (client -> host)
+
+        /// <summary>
+        /// Asks the host to join a team. Only meaningful for the local player
+        /// while the room is still in the lobby.
+        /// </summary>
+        public void RequestTeam(byte teamId)
+        {
+            if (!isLocalPlayer) return;
+            CmdRequestTeam(teamId);
+        }
+
+        [Command]
+        private void CmdRequestTeam(byte teamId)
+        {
+            if (teamId >= GameRules.TeamCount) return;
+
+            if (_gameManager != null && _gameManager.Phase != MatchPhase.Lobby) return;
+
+            _lobbyTeamId = teamId;
             NotifyRosterChanged();
         }
 

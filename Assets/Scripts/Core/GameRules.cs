@@ -43,41 +43,33 @@ namespace AMath.Core
         public const int MinPlayers = 2;
 
         /// <summary>Supported player range for a room.</summary>
-        public const int MaxPlayers = 8;
-
-        /// <summary>Minimum seats required to start a team match (two teams of two).</summary>
-        public const int MinTeamMatchPlayers = 4;
+        public const int MaxPlayers = 4;
 
         /// <summary>Number of teams in team mode.</summary>
         public const int TeamCount = 2;
 
         /// <summary>
-        /// True when <paramref name="seatCount"/> can be split into equal teams.
-        /// The lobby uses this to explain why "start" is unavailable instead of
-        /// letting the host press it and have the host silently refuse.
+        /// Individual and team matches require 2–4 human players; empty seats
+        /// are no longer padded with AI in the lobby path.
         /// </summary>
-        public static bool IsValidTeamRoster(int seatCount) =>
-            seatCount >= MinTeamMatchPlayers
-            && seatCount <= MaxPlayers
-            && seatCount % TeamCount == 0;
+        public static bool IsValidHumanRoster(int humanCount) =>
+            humanCount >= MinPlayers && humanCount <= MaxPlayers;
 
         /// <summary>
-        /// Seats a match will actually have. Missing seats are filled with AI,
-        /// so a solo host can play and team mode does not require four humans.
-        /// The lobby and the host must agree on this number, otherwise the
-        /// lobby offers a "start" the host then refuses.
+        /// Team mode requires at least one player on each side. Supports 1v1,
+        /// 1v2, 1v3 and 2v2 rosters.
+        /// </summary>
+        public static bool IsValidTeamSplit(int team0Count, int team1Count) =>
+            team0Count >= 1 && team1Count >= 1;
+
+        /// <summary>
+        /// Seats a match will actually have. Only explicit scripted AI seats
+        /// (tutorial/rematch) are added; the lobby no longer pads to a minimum.
         /// </summary>
         public static int PlannedSeatCount(MatchFormat format, int humanCount, int extraAiPlayers = 0)
         {
-            int seats = humanCount + (extraAiPlayers > 0 ? extraAiPlayers : 0);
-            int minimum = format == MatchFormat.Team ? MinTeamMatchPlayers : MinPlayers;
-            if (seats < minimum)
-                seats = minimum;
-
-            if (format == MatchFormat.Team && seats % TeamCount != 0)
-                seats++;
-
-            return seats;
+            _ = format;
+            return humanCount + (extraAiPlayers > 0 ? extraAiPlayers : 0);
         }
     }
 }

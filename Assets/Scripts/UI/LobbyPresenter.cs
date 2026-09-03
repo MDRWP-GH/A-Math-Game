@@ -64,12 +64,12 @@ namespace AMath.UI
         /// </summary>
         public bool IsHost => NetworkServer.active;
 
-        /// <summary>Seats the match would actually have, including AI fill.</summary>
-        public int PlannedSeatCount => GameRules.PlannedSeatCount(SelectedFormat, _members.Count);
+        /// <summary>Seats the match would have (humans only in the lobby path).</summary>
+        public int HumanCount => _members.Count;
 
         /// <summary>
-        /// Only the host may start. One human is enough — empty seats up to the
-        /// minimum are filled with the scripted medium AI.
+        /// Only the host may start, and only when the roster satisfies the
+        /// selected format's human-count and team-split rules.
         /// </summary>
         public bool CanStartMatch => StartBlockedReason == null;
 
@@ -88,12 +88,17 @@ namespace AMath.UI
                 if (_members.Count < 1)
                     return "ui.play.need_players";
 
-                int seats = PlannedSeatCount;
-                if (seats > GameRules.MaxPlayers)
-                    return "ui.play.need_players";
+                if (!GameRules.IsValidHumanRoster(_members.Count))
+                    return _members.Count < GameRules.MinPlayers
+                        ? "ui.play.need_two_players"
+                        : "ui.play.need_players";
 
-                if (SelectedFormat == MatchFormat.Team && !GameRules.IsValidTeamRoster(seats))
-                    return "ui.play.need_even_teams";
+                if (SelectedFormat == MatchFormat.Team)
+                {
+                    CountTeams(_members, out int team0, out int team1);
+                    if (!GameRules.IsValidTeamSplit(team0, team1))
+                        return "ui.play.need_both_teams";
+                }
 
                 return null;
             }
@@ -101,6 +106,9 @@ namespace AMath.UI
 
         /// <summary>Colour the local player currently holds.</summary>
         public byte LocalColorId => LocalMember?.ColorId ?? PlayerColorPalette.FallbackId;
+
+        /// <summary>Team the local player picked in the lobby (0 or 1).</summary>
+        public byte LocalTeamId => LocalMember?.LobbyTeamId ?? 0;
 
         /// <summary>
         /// True when someone other than the local player already holds this
@@ -121,6 +129,9 @@ namespace AMath.UI
 
         /// <summary>Asks the host for a colour on behalf of the local player.</summary>
         public void RequestColor(byte colorId) => LocalMember?.RequestColor(colorId);
+
+        /// <summary>Asks the host to place the local player on a team.</summary>
+        public void RequestTeam(byte teamId) => LocalMember?.RequestTeam(teamId);
 
         private NetworkPlayer LocalMember
         {
@@ -233,6 +244,7 @@ namespace AMath.UI
                     hash = (hash * 31) + player.PlayerId;
                     hash = (hash * 31) + (player.IsHost ? 1 : 0);
                     hash = (hash * 31) + player.ColorId;
+                    hash = (hash * 31) + player.LobbyTeamId;
                 }
 
                 return hash;
@@ -282,6 +294,25 @@ namespace AMath.UI
                 && !members.Contains(local))
             {
                 members.Insert(0, local);
+            }
+        }
+
+        #endregion
+
+        #region Internals
+
+        private static void CountTeams(IReadOnlyList<NetworkPlayer> members, out int team0Count, out int team1Count)
+        {
+            team0Count = 0;
+            team1Count = 0;
+
+            foreach (NetworkPlayer member in members)
+            {
+                if (member == null) continue;
+                if (member.LobbyTeamId == 0)
+                    team0Count++;
+                else
+                    team1Count++;
             }
         }
 

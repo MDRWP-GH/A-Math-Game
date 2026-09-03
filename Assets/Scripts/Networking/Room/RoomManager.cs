@@ -96,10 +96,9 @@ namespace AMath.Networking.Room
 
         /// <summary>
         /// Host-only: finalizes seats and starts the match. Seat order is host
-        /// first, then join order, then optional scripted AI seats. Missing
-        /// seats are filled with AI (see <see cref="GameRules.PlannedSeatCount"/>),
-        /// so a solo host can play and team mode does not need four humans.
-        /// Extra AI opponents can be requested via <paramref name="extraAiPlayers"/>.
+        /// first, then join order. Humans only unless
+        /// <paramref name="extraAiPlayers"/> adds scripted AI seats
+        /// (tutorial/rematch).
         /// </summary>
         public bool StartMatch(MatchFormat format = MatchFormat.Individual, int extraAiPlayers = 0)
         {
@@ -116,19 +115,28 @@ namespace AMath.Networking.Room
                 return false;
             }
 
-            // Shared with the lobby's "can start" gate so the two never disagree.
-            int totalSeats = GameRules.PlannedSeatCount(format, members.Count, extraAiPlayers);
-            int aiCount = totalSeats - members.Count;
+            if (!GameRules.IsValidHumanRoster(members.Count))
+            {
+                Debug.LogWarning("[Room] Need 2–4 human players to start.");
+                return false;
+            }
+
+            if (format == MatchFormat.Team)
+            {
+                CountTeams(members, out int team0, out int team1);
+                if (!GameRules.IsValidTeamSplit(team0, team1))
+                {
+                    Debug.LogWarning("[Room] Both teams need at least one player.");
+                    return false;
+                }
+            }
+
+            int aiCount = extraAiPlayers > 0 ? extraAiPlayers : 0;
+            int totalSeats = members.Count + aiCount;
 
             if (totalSeats > GameRules.MaxPlayers)
             {
                 Debug.LogWarning($"[Room] Too many seats (max {GameRules.MaxPlayers}).");
-                return false;
-            }
-
-            if (format == MatchFormat.Team && !GameRules.IsValidTeamRoster(totalSeats))
-            {
-                Debug.LogWarning("[Room] Team matches need an even number of at least four players.");
                 return false;
             }
 
@@ -156,7 +164,7 @@ namespace AMath.Networking.Room
                     PersistentGuid = members[seat].PersistentGuid,
                     DisplayName = members[seat].DisplayName,
                     IsAi = false,
-                    TeamId = format == MatchFormat.Team ? seat % GameRules.TeamCount : -1,
+                    TeamId = format == MatchFormat.Team ? members[seat].LobbyTeamId : -1,
                     ColorId = colorId
                 });
             }
@@ -395,6 +403,20 @@ namespace AMath.Networking.Room
             }
 
             return members;
+        }
+
+        private static void CountTeams(List<NetworkPlayer> members, out int team0Count, out int team1Count)
+        {
+            team0Count = 0;
+            team1Count = 0;
+
+            foreach (NetworkPlayer member in members)
+            {
+                if (member.LobbyTeamId == 0)
+                    team0Count++;
+                else
+                    team1Count++;
+            }
         }
 
         #endregion

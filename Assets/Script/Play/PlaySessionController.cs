@@ -125,6 +125,9 @@ namespace AMath.UI
 
         private Button[] _colorButtons;
         private Image[] _colorRings;
+        private GameObject _teamPickerRoot;
+        private Button _team1Button;
+        private Button _team2Button;
 
         private Text _browserStatus;
         private Text _lobbyStatus;
@@ -833,7 +836,7 @@ namespace AMath.UI
             // Taller than the rest of the flow's panels to make room for the
             // colour picker without squeezing the member list.
             var panel = UiFactory.CreateGlassPanel(_lobbyRoot.transform, "Panel", UiPalette.GlassStrong);
-            UiFactory.SetCenteredRect(panel.rectTransform, new Vector2(0f, -10f), new Vector2(820f, 760f));
+            UiFactory.SetCenteredRect(panel.rectTransform, new Vector2(0f, -10f), new Vector2(820f, 860f));
 
             _lobbyCode = _ui.CreateText("Code", panel.transform, string.Empty, 40, FontStyle.Normal, UiPalette.Primary, TextAnchor.MiddleCenter);
             UiFactory.SetCenteredRect(_lobbyCode.rectTransform, new Vector2(0f, 310f), new Vector2(720f, 56f));
@@ -847,30 +850,31 @@ namespace AMath.UI
             UiFactory.SetCenteredRect((RectTransform)_lobbyMembersRoot, new Vector2(0f, 120f), new Vector2(700f, 240f));
 
             BuildColorPicker(panel.transform);
+            BuildTeamPicker(panel.transform);
 
             var formatTitle = _ui.CreateText("FormatTitle", panel.transform, string.Empty, 22, FontStyle.Normal, UiPalette.MutedText, TextAnchor.MiddleCenter);
-            UiFactory.SetCenteredRect(formatTitle.rectTransform, new Vector2(0f, -118f), new Vector2(660f, 32f));
+            UiFactory.SetCenteredRect(formatTitle.rectTransform, new Vector2(0f, -208f), new Vector2(660f, 32f));
             LocalizedText.Bind(formatTitle, "ui.play.format");
 
             _formatIndividualButton = _ui.CreateButton(
                 panel.transform, "FormatIndividual", string.Empty,
                 UiPalette.Secondary, UiPalette.SecondaryHighlight, () => SetMatchFormat(MatchFormat.Individual));
-            UiFactory.SetCenteredRect(_formatIndividualButton.GetComponent<RectTransform>(), new Vector2(-160f, -166f), new Vector2(280f, 56f));
+            UiFactory.SetCenteredRect(_formatIndividualButton.GetComponent<RectTransform>(), new Vector2(-160f, -256f), new Vector2(280f, 56f));
             LocalizedText.Bind(_formatIndividualButton.GetComponentInChildren<Text>(), "ui.play.format_individual");
 
             _formatTeamButton = _ui.CreateButton(
                 panel.transform, "FormatTeam", string.Empty,
                 UiPalette.Secondary, UiPalette.SecondaryHighlight, () => SetMatchFormat(MatchFormat.Team));
-            UiFactory.SetCenteredRect(_formatTeamButton.GetComponent<RectTransform>(), new Vector2(160f, -166f), new Vector2(280f, 56f));
+            UiFactory.SetCenteredRect(_formatTeamButton.GetComponent<RectTransform>(), new Vector2(160f, -256f), new Vector2(280f, 56f));
             LocalizedText.Bind(_formatTeamButton.GetComponentInChildren<Text>(), "ui.play.format_team");
 
             _lobbyStatus = _ui.CreateText("Status", panel.transform, string.Empty, 22, FontStyle.Normal, UiPalette.MutedText, TextAnchor.MiddleCenter);
-            UiFactory.SetCenteredRect(_lobbyStatus.rectTransform, new Vector2(0f, -214f), new Vector2(660f, 40f));
+            UiFactory.SetCenteredRect(_lobbyStatus.rectTransform, new Vector2(0f, -304f), new Vector2(660f, 40f));
 
             var startButton = _ui.CreateAccentButton(
                 panel.transform, "StartMatch", string.Empty,
                 UiPalette.Success, UiPalette.SuccessHighlight, () => _lobbyPresenter.StartMatch(), 28);
-            UiFactory.SetCenteredRect(startButton.GetComponent<RectTransform>(), new Vector2(0f, -268f), new Vector2(400f, 64f));
+            UiFactory.SetCenteredRect(startButton.GetComponent<RectTransform>(), new Vector2(0f, -358f), new Vector2(400f, 64f));
             LocalizedText.Bind(startButton.GetComponentInChildren<Text>(), "ui.play.start_match");
 
             var leaveButton = _ui.CreateAccentButton(
@@ -880,7 +884,7 @@ namespace AMath.UI
                     _lobbyPresenter.LeaveRoom();
                     ReturnToMenu();
                 }, 26);
-            UiFactory.SetCenteredRect(leaveButton.GetComponent<RectTransform>(), new Vector2(0f, -330f), new Vector2(280f, 56f));
+            UiFactory.SetCenteredRect(leaveButton.GetComponent<RectTransform>(), new Vector2(0f, -420f), new Vector2(280f, 56f));
             LocalizedText.Bind(leaveButton.GetComponentInChildren<Text>(), "ui.play.leave");
 
             _lobbyRoot.SetActive(false);
@@ -969,6 +973,31 @@ namespace AMath.UI
             return button;
         }
 
+        /// <summary>
+        /// Team 1 / Team 2 buttons for the local player in team mode. Hidden
+        /// in individual mode and for guests who only need to see badges.
+        /// </summary>
+        private void BuildTeamPicker(Transform panel)
+        {
+            _teamPickerRoot = UiFactory.CreateRect("TeamPicker", panel).gameObject;
+
+            var title = _ui.CreateText("TeamTitle", _teamPickerRoot.transform, string.Empty, 22, FontStyle.Normal, UiPalette.MutedText, TextAnchor.MiddleCenter);
+            UiFactory.SetCenteredRect(title.rectTransform, new Vector2(0f, -110f), new Vector2(660f, 32f));
+            LocalizedText.Bind(title, "ui.play.pick_team");
+
+            _team1Button = _ui.CreateButton(
+                _teamPickerRoot.transform, "Team1", string.Empty,
+                UiPalette.Secondary, UiPalette.SecondaryHighlight, () => _lobbyPresenter.RequestTeam(0));
+            UiFactory.SetCenteredRect(_team1Button.GetComponent<RectTransform>(), new Vector2(-160f, -156f), new Vector2(280f, 56f));
+            LocalizedText.Bind(_team1Button.GetComponentInChildren<Text>(), "ui.play.team_one");
+
+            _team2Button = _ui.CreateButton(
+                _teamPickerRoot.transform, "Team2", string.Empty,
+                UiPalette.Secondary, UiPalette.SecondaryHighlight, () => _lobbyPresenter.RequestTeam(1));
+            UiFactory.SetCenteredRect(_team2Button.GetComponent<RectTransform>(), new Vector2(160f, -156f), new Vector2(280f, 56f));
+            LocalizedText.Bind(_team2Button.GetComponentInChildren<Text>(), "ui.play.team_two");
+        }
+
         private void SetMatchFormat(MatchFormat format)
         {
             // Gated on hosting, not on "can start": team mode is chosen exactly
@@ -1019,7 +1048,7 @@ namespace AMath.UI
                 if (isYou)
                     badges += $"   <color=#69C4EA>({_text.GetText("ui.play.you_badge")})</color>";
                 if (format == MatchFormat.Team)
-                    badges += $"   <color=#8FD694>[{_text.GetText("ui.play.team_badge")} {index % GameRules.TeamCount + 1}]</color>";
+                    badges += $"   <color=#8FD694>[{_text.GetText("ui.play.team_badge")} {player.LobbyTeamId + 1}]</color>";
 
                 AddMemberSwatch(card.transform, player.ColorId);
 
@@ -1034,6 +1063,7 @@ namespace AMath.UI
             }
 
             RefreshColorPicker();
+            RefreshTeamPicker();
 
             bool weAreHost = _lobbyPresenter.IsHost;
             if (_formatIndividualButton != null)
@@ -1107,6 +1137,20 @@ namespace AMath.UI
                 if (_colorRings[i] != null)
                     _colorRings[i].color = isMine ? UiPalette.WinnerGold : ColorRingIdle;
             }
+        }
+
+        private void RefreshTeamPicker()
+        {
+            if (_teamPickerRoot == null) return;
+
+            MatchFormat format = _lobbyPresenter.SelectedFormat;
+            bool showPicker = format == MatchFormat.Team;
+            _teamPickerRoot.SetActive(showPicker);
+            if (!showPicker) return;
+
+            byte mine = _lobbyPresenter.LocalTeamId;
+            HighlightFormatButton(_team1Button, mine == 0);
+            HighlightFormatButton(_team2Button, mine == 1);
         }
 
         private static void HighlightFormatButton(Button button, bool selected)

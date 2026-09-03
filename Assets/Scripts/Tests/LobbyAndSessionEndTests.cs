@@ -102,51 +102,43 @@ namespace AMath.Tests
 
         #endregion
 
-        #region Team roster rules
+        #region Human roster rules
 
         [Test]
-        public void PlannedSeatCount_FillsIndividualUpToTheMinimum()
+        public void IsValidHumanRoster_AcceptsTwoToFourPlayers()
         {
-            Assert.AreEqual(GameRules.MinPlayers, GameRules.PlannedSeatCount(MatchFormat.Individual, 1));
+            Assert.IsFalse(GameRules.IsValidHumanRoster(0));
+            Assert.IsFalse(GameRules.IsValidHumanRoster(1));
+            Assert.IsTrue(GameRules.IsValidHumanRoster(2));
+            Assert.IsTrue(GameRules.IsValidHumanRoster(3));
+            Assert.IsTrue(GameRules.IsValidHumanRoster(4));
+            Assert.IsFalse(GameRules.IsValidHumanRoster(5));
+        }
+
+        [Test]
+        public void PlannedSeatCount_DoesNotPadHumans()
+        {
+            Assert.AreEqual(1, GameRules.PlannedSeatCount(MatchFormat.Individual, 1));
             Assert.AreEqual(3, GameRules.PlannedSeatCount(MatchFormat.Individual, 3));
+            Assert.AreEqual(2, GameRules.PlannedSeatCount(MatchFormat.Team, 2));
+            Assert.AreEqual(4, GameRules.PlannedSeatCount(MatchFormat.Team, 4));
         }
 
         [Test]
-        public void PlannedSeatCount_FillsTeamsToAnEvenRoster()
+        public void PlannedSeatCount_AddsOnlyExplicitAi()
         {
-            // A solo host can still pick team mode: AI fills the other seats.
-            Assert.AreEqual(GameRules.MinTeamMatchPlayers, GameRules.PlannedSeatCount(MatchFormat.Team, 1));
-            Assert.AreEqual(GameRules.MinTeamMatchPlayers, GameRules.PlannedSeatCount(MatchFormat.Team, 4));
-
-            // Five humans cannot be split evenly, so a sixth seat is added.
-            Assert.AreEqual(6, GameRules.PlannedSeatCount(MatchFormat.Team, 5));
+            Assert.AreEqual(3, GameRules.PlannedSeatCount(MatchFormat.Individual, 2, extraAiPlayers: 1));
+            Assert.AreEqual(2, GameRules.PlannedSeatCount(MatchFormat.Team, 2, extraAiPlayers: 0));
         }
 
         [Test]
-        public void IsValidTeamRoster_RequiresEvenSeatsAboveTheMinimum()
+        public void IsValidTeamSplit_RequiresBothTeams()
         {
-            Assert.IsFalse(GameRules.IsValidTeamRoster(2));
-            Assert.IsFalse(GameRules.IsValidTeamRoster(3));
-            Assert.IsTrue(GameRules.IsValidTeamRoster(4));
-            Assert.IsFalse(GameRules.IsValidTeamRoster(5));
-            Assert.IsTrue(GameRules.IsValidTeamRoster(6));
-            Assert.IsFalse(GameRules.IsValidTeamRoster(GameRules.MaxPlayers + 2));
-        }
-
-        [Test]
-        public void PlannedSeatCount_AgreesWithTheTeamRosterRule()
-        {
-            // The lobby enables "start" from these two rules combined, so any
-            // disagreement would offer a start the host then refuses.
-            for (int humans = 1; humans <= GameRules.MaxPlayers; humans++)
-            {
-                int seats = GameRules.PlannedSeatCount(MatchFormat.Team, humans);
-                if (seats > GameRules.MaxPlayers) continue;
-
-                Assert.IsTrue(
-                    GameRules.IsValidTeamRoster(seats),
-                    $"{humans} humans plan {seats} seats, which team mode rejects.");
-            }
+            Assert.IsFalse(GameRules.IsValidTeamSplit(0, 2));
+            Assert.IsFalse(GameRules.IsValidTeamSplit(3, 0));
+            Assert.IsTrue(GameRules.IsValidTeamSplit(1, 1));
+            Assert.IsTrue(GameRules.IsValidTeamSplit(1, 3));
+            Assert.IsTrue(GameRules.IsValidTeamSplit(2, 2));
         }
 
         #endregion
