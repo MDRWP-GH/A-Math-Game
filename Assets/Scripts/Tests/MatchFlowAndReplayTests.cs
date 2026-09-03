@@ -215,5 +215,14 @@ namespace AMath.Tests
 
             Assert.AreEqual(0, rig.Replay.Log.Events.Count, "A new match starts from an empty log.");
         }
+
+        [Test]
+        public void ReplayReconstructor_RejectsNullEventList()
+        {
+            var log = new ReplayLog { Config = TwoPlayerConfig(1), Events = null };
+
+            Assert.IsFalse(ReplayReconstructor.TryReconstruct(log, int.MaxValue, out _, out string error));
+            Assert.AreEqual("Replay has no events.", error);
+        }
     }
 }

@@ -64,6 +64,29 @@ namespace AMath.AI.Context
             return trimmed.Replace("-----", "- - - - -");
         }
 
+        /// <summary>
+        /// Strips control characters and delimiter-like text from untrusted
+        /// strings (player names, objective text) before they are embedded in
+        /// the prompt above the player-question block.
+        /// </summary>
+        private static string SanitizeInline(string value, int maxLength = 64)
+        {
+            if (string.IsNullOrEmpty(value))
+                return string.Empty;
+
+            var cleaned = new StringBuilder(value.Length);
+            for (int i = 0; i < value.Length && cleaned.Length < maxLength; i++)
+            {
+                char c = value[i];
+                if (c == '\r' || c == '\n' || c == '\t')
+                    cleaned.Append(' ');
+                else if (!char.IsControl(c))
+                    cleaned.Append(c);
+            }
+
+            return cleaned.ToString().Replace("-----", "- - - - -").Trim();
+        }
+
         private static void AppendState(StringBuilder text, GameContextSnapshot context)
         {
             text.AppendLine("Current safe game state:");
@@ -76,12 +99,12 @@ namespace AMath.AI.Context
             text.Append("- Selected tile: ")
                 .AppendLine(context.SelectedTileId?.ToString() ?? "none");
             text.Append("- Last rejected action: ")
-                .AppendLine(context.LastCommandRejectionReason ?? "none");
+                .AppendLine(SanitizeInline(context.LastCommandRejectionReason ?? "none", 160));
             text.Append("- Tutorial active: ").AppendLine(context.IsTutorialActive.ToString());
             text.Append("- Tutorial step: ")
-                .AppendLine(context.CurrentTutorialStepId ?? "none");
+                .AppendLine(SanitizeInline(context.CurrentTutorialStepId ?? "none"));
             text.Append("- Current objective: ")
-                .AppendLine(context.CurrentObjectiveText ?? "none");
+                .AppendLine(SanitizeInline(context.CurrentObjectiveText ?? "none", 160));
 
             text.AppendLine("- Public players:");
             if (context.Players != null)
@@ -89,7 +112,7 @@ namespace AMath.AI.Context
                 foreach (PlayerPublicInfo player in context.Players)
                 {
                     text.Append("  - id=").Append(player.PlayerId)
-                        .Append(", name=").Append(player.DisplayName)
+                        .Append(", name=").Append(SanitizeInline(player.DisplayName))
                         .Append(", score=").Append(player.Score)
                         .Append(", rackCount=").Append(player.RackTileCount)
                         .Append(", connected=").AppendLine(player.IsConnected.ToString());

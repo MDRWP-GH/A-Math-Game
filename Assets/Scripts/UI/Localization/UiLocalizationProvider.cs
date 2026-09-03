@@ -181,7 +181,7 @@ namespace AMath.UI.Localization
             ["ui.match.pass"] = "ข้ามตา",
             ["ui.match.exchange"] = "แลกไทล์ที่เลือก",
             ["ui.match.bag"] = "ถุง",
-            ["ui.match.score"] = "Score :",
+            ["ui.match.score"] = "คะแนน :",
             ["ui.match.turn"] = "ตา",
             ["ui.match.time"] = "เวลา",
             ["ui.match.you"] = "คุณ",

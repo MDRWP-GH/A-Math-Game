@@ -134,7 +134,9 @@ namespace AMath.Bootstrap
                 && _aiBackendConfig != null
                 && _aiBackendConfig.IsValid(out _)
                 && _services.TryResolve(out IAiClient client)
-                && client != null;
+                && client != null
+                && _services.TryResolve(out IAccessTokenProvider tokenProvider)
+                && !string.IsNullOrWhiteSpace(tokenProvider.GetAccessToken());
 
             ILocalizedTextProvider text = AMath.UI.Localization.UiLocalizationProvider.Shared;
             if (!backendReady)

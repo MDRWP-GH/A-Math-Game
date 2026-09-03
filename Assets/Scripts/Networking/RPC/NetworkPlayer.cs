@@ -5,6 +5,7 @@ using AMath.Core.Events;
 using AMath.Core.StateMachines;
 using AMath.Gameplay.Players;
 using AMath.Managers;
+using AMath.Networking.Messages;
 using Mirror;
 using UnityEngine;
 
@@ -29,9 +30,10 @@ namespace AMath.Networking.RPC
         /// <summary>
         /// Ceiling for a serialized command. The largest legal command places a
         /// full rack, so anything beyond this is malformed or hostile and is
-        /// dropped before it reaches the deserializer.
+        /// dropped before it reaches the deserializer. Shared with the record
+        /// reader so the inbound and outbound paths cannot drift apart.
         /// </summary>
-        private const int MaxCommandPayloadBytes = 256;
+        private const int MaxCommandPayloadBytes = NetworkDtoSerialization.MaxCommandPayloadBytes;
 
         #endregion
 

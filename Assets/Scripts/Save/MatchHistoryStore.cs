@@ -19,6 +19,7 @@ namespace AMath.Save
 
         private readonly string _historyDirectory;
         private readonly string _indexPath;
+        private readonly SaveMigrator _migrator = new();
 
         public MatchHistoryStore()
             : this(Path.Combine(Application.persistentDataPath, "History"))
@@ -35,6 +36,7 @@ namespace AMath.Save
         public IReadOnlyList<MatchHistoryEntry> ListEntries()
         {
             MatchHistoryIndex index = LoadIndex();
+            index.Entries ??= new List<MatchHistoryEntry>();
             index.Entries.Sort((a, b) => b.FinishedUtcTicks.CompareTo(a.FinishedUtcTicks));
             return index.Entries;
         }
@@ -61,7 +63,7 @@ namespace AMath.Save
 
             try
             {
-                File.WriteAllText(replayPath, JsonUtility.ToJson(file));
+                WriteAtomic(replayPath, JsonUtility.ToJson(file));
             }
             catch (Exception ex)
             {
@@ -99,6 +101,7 @@ namespace AMath.Save
                 entry.Teams.AddRange(result.TeamStandings);
 
             MatchHistoryIndex index = LoadIndex();
+            index.Entries ??= new List<MatchHistoryEntry>();
             index.Entries.Insert(0, entry);
             while (index.Entries.Count > MaxEntries)
             {
@@ -109,7 +112,7 @@ namespace AMath.Save
 
             try
             {
-                File.WriteAllText(_indexPath, JsonUtility.ToJson(index));
+                WriteAtomic(_indexPath, JsonUtility.ToJson(index));
             }
             catch (Exception ex)
             {
@@ -133,14 +136,26 @@ namespace AMath.Save
             if (entry == null)
                 return false;
 
-            string path = Path.Combine(_historyDirectory, entry.ReplayFileName);
+            if (!TryResolveReplayPath(entry.ReplayFileName, out string path))
+            {
+                error = "Replay path is invalid.";
+                return false;
+            }
+
             if (!File.Exists(path))
                 return false;
 
             try
             {
-                file = JsonUtility.FromJson<SaveFile>(File.ReadAllText(path));
-                if (file?.Replay == null)
+                string json = File.ReadAllText(path);
+                if (!_migrator.TryMigrate(json, out string migratedJson, out string migrateError))
+                {
+                    error = migrateError;
+                    return false;
+                }
+
+                file = JsonUtility.FromJson<SaveFile>(migratedJson);
+                if (file?.Replay == null || file.Replay.Events == null)
                 {
                     error = "Replay file is corrupt.";
                     file = null;
@@ -163,8 +178,10 @@ namespace AMath.Save
 
             try
             {
-                return JsonUtility.FromJson<MatchHistoryIndex>(File.ReadAllText(_indexPath))
+                MatchHistoryIndex index = JsonUtility.FromJson<MatchHistoryIndex>(File.ReadAllText(_indexPath))
                        ?? new MatchHistoryIndex();
+                index.Entries ??= new List<MatchHistoryEntry>();
+                return index;
             }
             catch (Exception ex)
             {
@@ -175,15 +192,48 @@ namespace AMath.Save
 
         private void TryDeleteReplay(string replayFileName)
         {
-            if (string.IsNullOrEmpty(replayFileName))
+            if (!TryResolveReplayPath(replayFileName, out string path))
                 return;
 
-            string path = Path.Combine(_historyDirectory, replayFileName);
             if (File.Exists(path))
             {
                 try { File.Delete(path); }
                 catch { /* best effort */ }
             }
+        }
+
+        private bool TryResolveReplayPath(string replayFileName, out string path)
+        {
+            path = null;
+            if (string.IsNullOrWhiteSpace(replayFileName))
+                return false;
+
+            // Reject path segments so a tampered index cannot escape the history
+            // folder and read arbitrary files the game process can open.
+            if (replayFileName.IndexOfAny(new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar }) >= 0)
+                return false;
+
+            string candidate = Path.GetFullPath(Path.Combine(_historyDirectory, replayFileName));
+            string root = Path.GetFullPath(_historyDirectory);
+            if (!candidate.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(candidate, root, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            path = candidate;
+            return true;
+        }
+
+        private static void WriteAtomic(string path, string contents)
+        {
+            string temp = path + ".tmp";
+            File.WriteAllText(temp, contents);
+
+            if (File.Exists(path))
+                File.Replace(temp, path, null);
+            else
+                File.Move(temp, path);
         }
 
         private static PlayerResult FindLocalPlayer(SaveFile file, string persistentGuid, string displayName)

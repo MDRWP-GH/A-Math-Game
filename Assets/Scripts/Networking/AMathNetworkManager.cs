@@ -61,7 +61,17 @@ namespace AMath.Networking
 
         public override void OnServerAddPlayer(NetworkConnectionToClient conn)
         {
-            var identity = (AuthenticatedIdentity)conn.authenticationData;
+            // Every connection is supposed to carry an authenticated identity by
+            // the time it asks for a player. If it does not, the auth pipeline
+            // regressed; dropping that one connection keeps the rest of the room
+            // alive instead of throwing out of Mirror's connection handler.
+            if (conn.authenticationData is not AuthenticatedIdentity identity)
+            {
+                Debug.LogError(
+                    $"[Net] Connection {conn.connectionId} requested a player without an authenticated identity.");
+                conn.Disconnect();
+                return;
+            }
 
             GameObject playerObject = Instantiate(_runtimePlayerPrefab);
             playerObject.SetActive(true);
@@ -90,9 +100,22 @@ namespace AMath.Networking
 
                 // Push the full match state to the returning client.
                 if (NetworkContext.Services != null
-                    && NetworkContext.Services.TryResolve(out NetworkGameState gameState))
+                    && NetworkContext.Services.TryResolve(out NetworkGameState gameState)
+                    && gameState != null)
                 {
                     gameState.ServerSendFullStateTo(conn);
+                }
+                else
+                {
+                    // Without this push the player is seated and "connected" but
+                    // has no board, scores or turn state, and nothing would ever
+                    // send them again. Failing the reconnect is recoverable; a
+                    // silently empty match is not.
+                    Debug.LogError(
+                        $"[Net] No NetworkGameState to resync reconnecting player {identity.ExistingPlayerId}; dropping the connection.");
+                    _playerManager.SetConnected(identity.ExistingPlayerId, false);
+                    conn.Disconnect();
+                    return;
                 }
             }
             else

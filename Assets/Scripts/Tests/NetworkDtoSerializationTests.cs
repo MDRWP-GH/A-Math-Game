@@ -172,6 +172,37 @@ namespace AMath.Tests
             Assert.AreEqual(4, PlayerColorPalette.FirstUnused(allButFour.Contains, PlayerColorPalette.Count - 1));
         }
 
+        [Test]
+        public void ReadTurnRecord_RejectsOversizedPayload()
+        {
+            var writer = new NetworkWriter();
+            writer.WriteInt(1);
+            writer.WriteInt(0);
+            writer.WriteByte(1);
+            writer.WriteBytesAndSize(new byte[NetworkDtoSerialization.MaxCommandPayloadBytes + 1]);
+            writer.WriteInt(0);
+            writer.WriteLong(0);
+            writer.WriteBool(false);
+            writer.WriteByte(0);
+
+            var reader = new NetworkReader(writer.ToArray());
+            Assert.Throws<System.IO.InvalidDataException>(() => reader.ReadTurnRecord());
+        }
+
+        [Test]
+        public void ReadMatchConfig_RejectsTooManyPlayers()
+        {
+            var writer = new NetworkWriter();
+            writer.WriteInt(1);
+            writer.WriteInt(60);
+            writer.WriteString("test");
+            writer.WriteByte((byte)MatchFormat.Individual);
+            writer.WriteInt(GameRules.MaxPlayers + 1);
+
+            var reader = new NetworkReader(writer.ToArray());
+            Assert.Throws<System.IO.InvalidDataException>(() => reader.ReadMatchConfig());
+        }
+
         private static MatchConfig RoundTrip(MatchConfig config)
         {
             var writer = new NetworkWriter();

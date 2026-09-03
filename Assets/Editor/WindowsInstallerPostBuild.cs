@@ -31,14 +31,16 @@ internal sealed class WindowsInstallerPostBuild : IPostprocessBuildWithReport
         string projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
         try
         {
-            EditorUtility.DisplayProgressBar("A-Math installer", "Compiling Setup.exe…", 0.1f);
+            if (!Application.isBatchMode)
+                EditorUtility.DisplayProgressBar("A-Math installer", "Compiling Setup.exe…", 0.1f);
             if (!WindowsInstallerBuilder.TryBuild(projectRoot, out string error))
             {
                 Debug.LogWarning("A-Math Windows installer: " + error);
                 return;
             }
 
-            EditorUtility.DisplayProgressBar("A-Math installer", "Packing game into Setup.exe…", 0.35f);
+            if (!Application.isBatchMode)
+                EditorUtility.DisplayProgressBar("A-Math installer", "Packing game into Setup.exe…", 0.35f);
             if (!WindowsInstallerBuilder.TryPackSelfExtractingSetup(projectRoot, outputDir, out error))
             {
                 Debug.LogWarning("A-Math Windows installer: " + error);
@@ -51,7 +53,8 @@ internal sealed class WindowsInstallerPostBuild : IPostprocessBuildWithReport
         }
         finally
         {
-            EditorUtility.ClearProgressBar();
+            if (!Application.isBatchMode)
+                EditorUtility.ClearProgressBar();
         }
     }
 
@@ -68,6 +71,17 @@ internal sealed class WindowsInstallerPostBuild : IPostprocessBuildWithReport
         EditorUtility.DisplayDialog(
             "A-Math installer",
             "Built installer stubs in installer/.\nA Windows player build packs the game into a single Setup.exe automatically.",
+            "OK");
+    }
+
+    [MenuItem("A-Math/Windows/Build Player and Setup.exe")]
+    private static void BuildPlayerFromMenu()
+    {
+        BuildReport report = WindowsPlayerBuilder.Build();
+        bool ok = report != null && report.summary.result == BuildResult.Succeeded;
+        EditorUtility.DisplayDialog(
+            "A-Math Windows build",
+            ok ? "Built self-extracting Setup.exe in Build/Windows." : "Windows build failed. See the Console.",
             "OK");
     }
 
@@ -144,12 +158,17 @@ internal static class WindowsInstallerBuilder
 
         string zipPath = Path.Combine(Path.GetTempPath(), "amath-payload-" + Guid.NewGuid().ToString("N") + ".zip");
         string packedPath = Path.Combine(Path.GetTempPath(), "amath-setup-" + Guid.NewGuid().ToString("N") + ".exe");
+        string setupTemp = Path.Combine(Path.GetTempPath(), "amath-setup-out-" + Guid.NewGuid().ToString("N") + ".exe");
         try
         {
             CreatePayloadZip(outputDir, zipPath);
             AppendPayload(stubPath, zipPath, packedPath);
+            // Stage the installer outside outputDir first. Clearing the folder
+            // before the final copy succeeds would leave Build/Windows empty if
+            // the copy failed (AV lock, disk full, permissions).
+            File.Copy(packedPath, setupTemp, true);
             ClearDirectoryLeavingNothing(outputDir);
-            File.Copy(packedPath, Path.Combine(outputDir, "Setup.exe"), true);
+            File.Copy(setupTemp, Path.Combine(outputDir, "Setup.exe"), true);
             return true;
         }
         catch (Exception ex)
@@ -161,6 +180,7 @@ internal static class WindowsInstallerBuilder
         {
             TryDeleteFile(zipPath);
             TryDeleteFile(packedPath);
+            TryDeleteFile(setupTemp);
         }
     }
 
@@ -184,10 +204,13 @@ internal static class WindowsInstallerBuilder
             {
                 string file = files[i];
                 string relative = MakeRelative(outputDir, file).Replace('\\', '/');
-                EditorUtility.DisplayProgressBar(
-                    "A-Math installer",
-                    "Packing " + relative,
-                    0.35f + (0.5f * (i + 1) / files.Count));
+                if (!Application.isBatchMode)
+                {
+                    EditorUtility.DisplayProgressBar(
+                        "A-Math installer",
+                        "Packing " + relative,
+                        0.35f + (0.5f * (i + 1) / files.Count));
+                }
 
                 ZipArchiveEntry entry = archive.CreateEntry(relative, System.IO.Compression.CompressionLevel.Optimal);
                 using (Stream entryStream = entry.Open())
@@ -354,5 +377,46 @@ internal static class WindowsInstallerBuilder
         }
 
         return null;
+    }
+}
+
+internal static class WindowsPlayerBuilder
+{
+    public static void BuildFromCli()
+    {
+        BuildReport report = Build();
+        bool ok = report != null && report.summary.result == BuildResult.Succeeded;
+        EditorApplication.Exit(ok ? 0 : 1);
+    }
+
+    public static BuildReport Build()
+    {
+        string projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+        string outputExe = Path.Combine(projectRoot, "Build", "Windows", "A-Math.exe");
+        string outputDir = Path.GetDirectoryName(outputExe);
+        if (!string.IsNullOrEmpty(outputDir))
+            Directory.CreateDirectory(outputDir);
+
+        var scenes = new List<string>();
+        foreach (EditorBuildSettingsScene scene in EditorBuildSettings.scenes)
+        {
+            if (scene.enabled && !string.IsNullOrEmpty(scene.path))
+                scenes.Add(scene.path);
+        }
+
+        if (scenes.Count == 0)
+        {
+            Debug.LogError("[A-Math] Windows build aborted: enable at least one scene in Build Settings.");
+            return null;
+        }
+
+        var options = new BuildPlayerOptions
+        {
+            scenes = scenes.ToArray(),
+            locationPathName = outputExe,
+            target = BuildTarget.StandaloneWindows64,
+            options = BuildOptions.CompressWithLz4HC
+        };
+        return BuildPipeline.BuildPlayer(options);
     }
 }

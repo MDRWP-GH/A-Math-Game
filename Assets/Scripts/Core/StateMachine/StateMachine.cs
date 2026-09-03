@@ -108,10 +108,22 @@ namespace AMath.Core.StateMachines
             if (EqualityComparer<TKey>.Default.Equals(CurrentKey, state))
                 return;
 
+            // The phase arrives as a raw byte from a save file or a peer, so it
+            // may name a state this machine does not have. Rejecting it keeps
+            // the current phase intact and lets the caller fail the restore,
+            // rather than throwing KeyNotFoundException out of a load.
+            if (!_states.TryGetValue(state, out IState restored))
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(state),
+                    state,
+                    "Snapshot names a phase this state machine does not define.");
+            }
+
             TKey previous = CurrentKey;
             _currentState?.Exit();
             CurrentKey = state;
-            _currentState = _states[state];
+            _currentState = restored;
             _currentState.Enter();
             StateChanged?.Invoke(previous, state);
         }

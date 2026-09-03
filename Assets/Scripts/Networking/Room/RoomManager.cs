@@ -330,6 +330,11 @@ namespace AMath.Networking.Room
             _eventBus.Unsubscribe(_onRosterChanged);
             _eventBus.Unsubscribe(_onPhaseChanged);
             _discovery.StopAdvertising();
+
+            // Searching owns a bound UDP socket and a receive thread; leaving it
+            // running past teardown keeps the discovery port claimed and pushes
+            // room-list updates at a presenter that is already gone.
+            _discovery.StopSearching();
         }
 
         #endregion
@@ -352,7 +357,10 @@ namespace AMath.Networking.Room
             MaxPlayers = _session.MaxPlayers,
             GameVersion = Application.version,
             Port = _session.Port,
-            MatchInProgress = _gameManager.Config != null && _gameManager.Phase != MatchPhase.Lobby
+            // Only a live match blocks fresh joins. A Finished match still has a
+            // Config, so testing "not Lobby" left the post-match room advertised
+            // as in-progress and unjoinable until the host recreated it.
+            MatchInProgress = _gameManager.Phase is MatchPhase.Playing or MatchPhase.Paused
         };
 
         private void RefreshAdvertisement()

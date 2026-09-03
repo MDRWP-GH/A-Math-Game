@@ -110,6 +110,41 @@ namespace AMath.Tests
             Assert.AreEqual(30, entry.LocalPlayerScore);
         }
 
+        [Test]
+        public void ListEntries_SurvivesIndexWithNullEntries()
+        {
+            File.WriteAllText(
+                Path.Combine(_directory, "history_index.json"),
+                "{\"Version\":1}");
+
+            Assert.AreEqual(0, _store.ListEntries().Count);
+        }
+
+        [Test]
+        public void TryLoadReplay_RejectsPathTraversalFileName()
+        {
+            SaveFile file = CreateFinishedSave(
+                MatchFormat.Individual,
+                DateTime.UtcNow.Ticks,
+                DateTime.UtcNow.Ticks,
+                30,
+                winnerPlayerId: 0,
+                new PlayerResult { PlayerId = 0, DisplayName = "Ann", FinalScore = 88, TeamId = -1 });
+            file.State.Players.Add(new PlayerSnapshot { PlayerId = 0, PersistentGuid = "guid-ann", DisplayName = "Ann" });
+
+            Assert.IsTrue(
+                _store.TryArchiveFinishedMatch(file, "guid-ann", "Ann", out MatchHistoryEntry entry, out string error),
+                error);
+
+            string indexPath = Path.Combine(_directory, "history_index.json");
+            string indexJson = File.ReadAllText(indexPath);
+            indexJson = indexJson.Replace(entry.ReplayFileName, "..\\\\outside.json");
+            File.WriteAllText(indexPath, indexJson);
+
+            Assert.IsFalse(_store.TryLoadReplay(entry.MatchId, out _, out error));
+            Assert.AreEqual("Replay path is invalid.", error);
+        }
+
         private static SaveFile CreateFinishedSave(
             MatchFormat format,
             long startedUtcTicks,

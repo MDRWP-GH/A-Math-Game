@@ -51,6 +51,12 @@ namespace AMath.Replay
 
             gameManager.StartMatch(log.Config);
 
+            if (log.Events == null || log.Events.Count == 0)
+            {
+                error = "Replay has no events.";
+                return false;
+            }
+
             foreach (ReplayEvent evt in log.Events)
             {
                 if (evt.Turn > upToTurn) break;

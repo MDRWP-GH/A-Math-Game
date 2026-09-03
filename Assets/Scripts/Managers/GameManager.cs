@@ -248,6 +248,13 @@ namespace AMath.Managers
         /// </summary>
         public bool ApplyRecord(TurnRecord record)
         {
+            // A finished match accepts nothing more. The turn that ends a match
+            // never advances the turn counter (FinishTurn returns early), so a
+            // duplicate of that last record still looks "current" by turn number
+            // alone and would otherwise be re-executed and reported as a desync.
+            if (Phase == MatchPhase.Finished)
+                return false;
+
             // Turn numbers are the only ordering guarantee we have. A record we
             // already executed must never run twice (it would double the score
             // and the tile draw), and a record from the future means we dropped

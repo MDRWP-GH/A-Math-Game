@@ -988,7 +988,15 @@ namespace AMath.UI
             _lobbyCode.text = $"{_text.GetText("ui.play.room_code")}: {_lobbyPresenter.RoomCode}";
 
             for (int i = _lobbyMembersRoot.childCount - 1; i >= 0; i--)
-                DestroyImmediate(_lobbyMembersRoot.GetChild(i).gameObject);
+            {
+                // Destroy is deferred to end of frame, so the outgoing rows are
+                // detached first: otherwise they would still be parented here
+                // while the new roster is laid out at the same offsets and the
+                // list would show every member twice for a frame.
+                Transform row = _lobbyMembersRoot.GetChild(i);
+                row.SetParent(null, false);
+                Destroy(row.gameObject);
+            }
 
             float y = 90f;
             var members = _lobbyPresenter.Members

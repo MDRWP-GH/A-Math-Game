@@ -81,6 +81,56 @@ namespace AMath.Tests
         }
 
         [Test]
+        public void ApplyRecord_RejectsRecordsAfterMatchFinished()
+        {
+            Rig host = CreateRig(authority: true);
+            Rig client = CreateRig(authority: false);
+            host.Game.StartMatch(TwoPlayerConfig(4242));
+            client.Game.StartMatch(TwoPlayerConfig(4242));
+
+            for (int i = 0; i < 4; i++)
+            {
+                Assert.IsTrue(
+                    host.Game.SubmitCommand(host.Turns.CurrentPlayerId, new PassTurnCommand(), out TurnRecord record).Success);
+                Assert.IsTrue(client.Game.ApplyRecord(record));
+            }
+
+            Assert.AreEqual(MatchPhase.Finished, host.Game.Phase);
+            Assert.AreEqual(MatchPhase.Finished, client.Game.Phase);
+
+            var lateRecord = new TurnRecord
+            {
+                TurnNumber = client.Turns.TurnNumber,
+                PlayerId = 0,
+                CommandType = (byte)CommandType.PassTurn,
+                CommandPayload = CommandSerializer.Serialize(new PassTurnCommand())
+            };
+
+            Assert.IsFalse(client.Game.ApplyRecord(lateRecord));
+        }
+
+        [Test]
+        public void TurnManager_RejectsZeroSeatRoster()
+        {
+            var turns = new TurnManager(new EventBus());
+            Assert.Throws<System.ArgumentOutOfRangeException>(() => turns.StartMatch(0, 60));
+        }
+
+        [Test]
+        public void BoardGrid_Restore_IgnoresDuplicateCells()
+        {
+            var grid = new BoardGrid();
+            grid.Restore(new[]
+            {
+                new TilePlacement { X = 7, Y = 7, TileId = 1 },
+                new TilePlacement { X = 7, Y = 7, TileId = 2 }
+            });
+
+            Assert.AreEqual(1, grid.PlacedCount);
+            Assert.AreEqual((byte)1, grid.CellAt(7, 7).TileId);
+        }
+
+        [Test]
         public void ApplyRecord_ReportsDesyncWhenARecordIsMissing()
         {
             Rig host = CreateRig(authority: true);

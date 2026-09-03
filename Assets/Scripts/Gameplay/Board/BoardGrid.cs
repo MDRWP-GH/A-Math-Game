@@ -164,9 +164,21 @@ namespace AMath.Gameplay.Board
         public void Restore(IReadOnlyList<TilePlacement> cells)
         {
             Clear();
+            if (cells == null)
+                return;
+
             for (int i = 0; i < cells.Count; i++)
             {
                 TilePlacement cell = cells[i];
+                if (!InBounds(cell.X, cell.Y))
+                    continue;
+
+                // A duplicated coordinate in a corrupt snapshot would overwrite
+                // the cell but count twice, leaving PlacedCount (and therefore
+                // IsEmpty, which gates the centre-square rule) permanently wrong.
+                if (IsOccupied(cell.X, cell.Y))
+                    continue;
+
                 Place(in cell);
             }
         }

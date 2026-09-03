@@ -59,12 +59,30 @@ namespace AMath.Managers
         /// <summary>Resets for a new match and starts turn 1 with player 0.</summary>
         public void StartMatch(int playerCount, int turnSeconds)
         {
+            RequireSeats(playerCount);
             _playerCount = playerCount;
             TurnSeconds = turnSeconds;
             TurnNumber = 1;
             CurrentPlayerId = 0;
             ConsecutivePasses = 0;
             BeginTurn();
+        }
+
+        /// <summary>
+        /// A seatless match cannot be sequenced: <see cref="AdvanceTurn"/> would
+        /// divide by zero and take the host down. Rejecting the roster here
+        /// turns a corrupt snapshot or malformed config into a catchable load
+        /// failure instead of a crash three turns later.
+        /// </summary>
+        private static void RequireSeats(int playerCount)
+        {
+            if (playerCount < 1)
+            {
+                throw new System.ArgumentOutOfRangeException(
+                    nameof(playerCount),
+                    playerCount,
+                    "A match needs at least one seat.");
+            }
         }
 
         /// <summary>Records how the current turn ended and advances to the next player.</summary>
@@ -116,6 +134,7 @@ namespace AMath.Managers
         /// <summary>Restores turn state from a snapshot.</summary>
         public void Restore(int playerCount, int turnSeconds, int turnNumber, int currentPlayerId, int consecutivePasses)
         {
+            RequireSeats(playerCount);
             _playerCount = playerCount;
             TurnSeconds = turnSeconds;
             TurnNumber = turnNumber;
