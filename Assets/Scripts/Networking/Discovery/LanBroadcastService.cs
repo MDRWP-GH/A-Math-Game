@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -18,10 +19,12 @@ namespace AMath.Networking.Discovery
 
         private readonly int _discoveryPort;
         private readonly float _interval;
+        private readonly float _targetRefreshSeconds;
 
         private UdpClient _udp;
-        private IPEndPoint _broadcastEndPoint;
+        private IReadOnlyList<IPEndPoint> _targets = Array.Empty<IPEndPoint>();
         private float _nextSendTime;
+        private float _nextTargetRefreshTime;
         private byte[] _payload = Array.Empty<byte>();
 
         #endregion
@@ -41,10 +44,11 @@ namespace AMath.Networking.Discovery
 
         #region Construction
 
-        public LanBroadcastService(int discoveryPort, float intervalSeconds = 1f)
+        public LanBroadcastService(int discoveryPort, float intervalSeconds = 1f, float targetRefreshSeconds = 30f)
         {
             _discoveryPort = discoveryPort;
             _interval = intervalSeconds;
+            _targetRefreshSeconds = targetRefreshSeconds;
         }
 
         #endregion
@@ -59,7 +63,7 @@ namespace AMath.Networking.Discovery
             try
             {
                 _udp = new UdpClient { EnableBroadcast = true };
-                _broadcastEndPoint = new IPEndPoint(IPAddress.Broadcast, _discoveryPort);
+                RefreshTargets(0f);
                 UpdateAdvertisement(advertisement);
                 _nextSendTime = 0f;
                 ConsecutiveSendFailures = 0;
@@ -83,6 +87,7 @@ namespace AMath.Networking.Discovery
         {
             IsRunning = false;
             ConsecutiveSendFailures = 0;
+            _targets = Array.Empty<IPEndPoint>();
             _udp?.Close();
             _udp = null;
         }
@@ -98,19 +103,40 @@ namespace AMath.Networking.Discovery
         public void Tick(float unscaledTime)
         {
             if (!IsRunning || unscaledTime < _nextSendTime) return;
+
+            if (unscaledTime >= _nextTargetRefreshTime)
+                RefreshTargets(unscaledTime);
+
             _nextSendTime = unscaledTime + _interval;
 
-            try
+            bool anySent = false;
+            foreach (IPEndPoint target in _targets)
             {
-                _udp.Send(_payload, _payload.Length, _broadcastEndPoint);
-                ConsecutiveSendFailures = 0;
+                try
+                {
+                    _udp.Send(_payload, _payload.Length, target);
+                    anySent = true;
+                }
+                catch (SocketException ex)
+                {
+                    Debug.LogWarning($"[Discovery] Broadcast to {target} failed: {ex.Message}");
+                }
             }
-            catch (SocketException ex)
+
+            if (anySent)
+                ConsecutiveSendFailures = 0;
+            else
             {
                 ConsecutiveSendFailures++;
                 Debug.LogWarning(
-                    $"[Discovery] Broadcast failed ({ConsecutiveSendFailures}): {ex.Message}");
+                    $"[Discovery] Broadcast failed ({ConsecutiveSendFailures}): no targets delivered.");
             }
+        }
+
+        private void RefreshTargets(float unscaledTime)
+        {
+            _nextTargetRefreshTime = unscaledTime + _targetRefreshSeconds;
+            _targets = LanBroadcastTargets.GetEndpoints(_discoveryPort);
         }
 
         #endregion

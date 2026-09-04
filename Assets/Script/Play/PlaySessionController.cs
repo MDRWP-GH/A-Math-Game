@@ -397,6 +397,15 @@ namespace AMath.UI
                 PulseTurnRings();
                 HandlePauseInput();
             }
+
+            if (_screen == ScreenId.Browser
+                && _browserRoot != null
+                && _browserRoot.activeSelf
+                && _browserPresenter != null
+                && _browserStatus != null)
+            {
+                UpdateBrowserStatus(_text.GetText(GetBrowserStatusLocalizationKey()));
+            }
         }
 
         private void HandlePlayFlowCancel()
@@ -464,7 +473,7 @@ namespace AMath.UI
             {
                 case ScreenId.Browser:
                     if (_browserRoot.activeSelf && _browserPresenter != null)
-                        UpdateBrowserStatus(_text.GetText(_browserPresenter.NoRoomsFound ? "ui.play.no_rooms" : "ui.play.searching"));
+                        UpdateBrowserStatus(_text.GetText(GetBrowserStatusLocalizationKey()));
                     break;
                 case ScreenId.Lobby:
                     RefreshLobby();
@@ -510,7 +519,18 @@ namespace AMath.UI
             HideRecovery();
             SetActiveScreens(browser: true);
             _browserPresenter.StartSearching();
-            UpdateBrowserStatus(_text.GetText("ui.play.searching"));
+            UpdateBrowserStatus(_text.GetText(GetBrowserStatusLocalizationKey()));
+        }
+
+        private string GetBrowserStatusLocalizationKey()
+        {
+            if (_browserPresenter == null)
+                return "ui.play.searching";
+
+            if (_browserPresenter.DiscoveryFailed)
+                return "ui.play.discovery_failed";
+
+            return _browserPresenter.NoRoomsFound ? "ui.play.no_rooms" : "ui.play.searching";
         }
 
         /// <summary>Shows <paramref name="message"/> on the browser for a few seconds.</summary>
@@ -794,7 +814,7 @@ namespace AMath.UI
 
             if (rooms == null || rooms.Count == 0)
             {
-                UpdateBrowserStatus(_text.GetText(_browserPresenter.NoRoomsFound ? "ui.play.no_rooms" : "ui.play.searching"));
+                UpdateBrowserStatus(_text.GetText(GetBrowserStatusLocalizationKey()));
                 return;
             }
 

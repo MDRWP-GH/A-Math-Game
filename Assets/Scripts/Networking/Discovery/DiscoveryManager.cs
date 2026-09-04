@@ -49,7 +49,13 @@ namespace AMath.Networking.Discovery
         public IReadOnlyList<RoomInfo> Rooms => _roomList;
 
         /// <summary>True when searching is active but nothing has been found ("No rooms found").</summary>
-        public bool NoRoomsFound => _listener.IsRunning && _roomList.Count == 0;
+        public bool NoRoomsFound => IsSearching && _roomList.Count == 0;
+
+        /// <summary>True while the LAN listener is active.</summary>
+        public bool IsSearching => _listener.IsRunning;
+
+        /// <summary>True when the listener could not bind the discovery port.</summary>
+        public bool SearchFailed { get; private set; }
 
         /// <summary>True while this machine is advertising a room.</summary>
         public bool IsAdvertising => _broadcaster.IsRunning;
@@ -99,7 +105,7 @@ namespace AMath.Networking.Discovery
         {
             _roomsByAddress.Clear();
             _roomList.Clear();
-            _listener.Start();
+            SearchFailed = !_listener.Start();
             PublishRoomList();
         }
 
@@ -107,6 +113,7 @@ namespace AMath.Networking.Discovery
         public void StopSearching()
         {
             _listener.Stop();
+            SearchFailed = false;
             _roomsByAddress.Clear();
             _roomList.Clear();
             PublishRoomList();
@@ -203,6 +210,24 @@ namespace AMath.Networking.Discovery
 
         private void PublishRoomList() =>
             _eventBus.Publish(new RoomListUpdatedEvent { Rooms = _roomList });
+
+        #endregion
+
+        #region Test support
+
+        /// <summary>Test hook: inserts or updates a room without UDP I/O.</summary>
+        internal void TestReceiveAdvertisement(string address, RoomAdvertisement advertisement, float now)
+        {
+            if (UpsertRoom(address, advertisement, now))
+                PublishRoomList();
+        }
+
+        /// <summary>Test hook: expires stale rooms at the given timestamp.</summary>
+        internal void TestExpireStaleRooms(float now)
+        {
+            if (ExpireStaleRooms(now))
+                PublishRoomList();
+        }
 
         #endregion
 

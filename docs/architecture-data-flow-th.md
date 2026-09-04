@@ -126,6 +126,30 @@ flowchart TD
 - host-authentication ตรวจ version, room code, persistent GUID, reconnect token
 - match ที่กำลังเล่นอยู่รับเฉพาะ reconnection ของ seat เดิม
 
+#### Troubleshooting: ค้นหาห้องไม่เจอ
+
+ระบบ discovery ใช้ **UDP broadcast พอร์ต 47777** บน LAN เท่านั้น (ไม่รองรับ join ข้ามอินเทอร์เน็ต)
+
+| อาการ | สิ่งที่ควรตรวจ |
+|--------|----------------|
+| รายการห้องว่างตลอด | ทั้ง host และ client อยู่ LAN/Wi‑Fi เดียวกัน, ไม่ใช่ guest network ที่แยก client |
+| ใส่รหัสแล้วไม่เจอ | client ต้องเปิดหน้า Join อยู่และรอรับ broadcast จาก host ก่อน (รหัสเป็น lookup key ไม่ใช่ server กลาง) |
+| `[Discovery] Cannot start listening` | พอร์ต 47777 ถูกใช้งานอยู่ — ปิดเกมที่ค้าง หรือ restart |
+| Host log ไม่มี `[Room] Hosting ... code XXXXXX` | ฝั่ง host ยังไม่ได้สร้างห้องสำเร็จ |
+
+พอร์ตที่เกี่ยวข้อง:
+- **47777** — LAN discovery (client ต้องรับ inbound ได้)
+- **7778** — KCP game (host ต้องรับ inbound เมื่อมีคน join)
+
+Windows:
+- ตัวติดตั้งและเกมจะไม่เพิ่มกฎ Firewall เอง (การเรียก netsh จากไฟล์ที่ยังไม่เซ็นชื่อมักถูก Defender บล็อก)
+- ถ้ายังไม่เจอห้อง ให้ตรวจว่า profile เป็น Private/Domain แล้วอนุญาต `A-Math.exe` ใน Windows Firewall และปิด **AP isolation** บน router ถ้าเปิดอยู่
+
+Log ที่มีประโยชน์:
+- Host: `[Room] Hosting '...' code XXXXXX on port 7778`
+- Host: `[Discovery] Broadcast failed` — ปัญหา network interface
+- Client: `[Discovery] Cannot start listening` — bind พอร์ต 47777 ไม่ได้
+
 ### 6. Mirror Networking และ Replication
 
 ไฟล์หลัก:

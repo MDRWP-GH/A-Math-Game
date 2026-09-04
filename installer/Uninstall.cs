@@ -6,6 +6,8 @@ using System.Threading;
 using System.Windows.Forms;
 using Microsoft.Win32;
 
+// Obsolete: uninstall is handled by the Inno Setup uninstaller from installer/A-Math.iss.
+
 internal static class UninstallProgram
 {
     [STAThread]
@@ -216,6 +218,9 @@ internal static class Uninstaller
 
         report(I18n.T("Removing Apps & Features entry…", "กำลังลบรายการถอนการติดตั้ง…"));
         RegistryInstall.Remove();
+
+        report(I18n.T("Removing firewall rules…", "กำลังลบกฎ Windows Firewall…"));
+        WindowsFirewallHelper.RemoveRules();
 
         if (deleteUserData)
         {

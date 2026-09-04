@@ -5,6 +5,9 @@ using System.IO;
 using System.Threading;
 using System.Windows.Forms;
 
+// Obsolete: Setup.exe is produced by installer/A-Math.iss (Inno Setup).
+// Do not compile this self-extracting stub — Windows Defender flags the appended-zip layout.
+
 internal static class SetupProgram
 {
     [STAThread]
@@ -272,6 +275,9 @@ internal static class Installer
 
         report(I18n.T("Registering uninstaller…", "กำลังลงทะเบียนตัวถอนการติดตั้ง…"));
         RegistryInstall.Write(destDir);
+
+        report(I18n.T("Configuring Windows Firewall…", "กำลังตั้งค่า Windows Firewall…"));
+        WindowsFirewallHelper.EnsureRules(destDir);
     }
 
     private static void CopyDirectory(string source, string dest)

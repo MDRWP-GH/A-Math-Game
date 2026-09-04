@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System.IO.Compression;
+using System.Security.Cryptography;
 using System.Text;
 using UnityEditor;
 using UnityEditor.Build;
@@ -11,8 +11,8 @@ using UnityEngine;
 using Debug = UnityEngine.Debug;
 
 /// <summary>
-/// After a Windows player build, packs the game and uninstall.exe into a single
-/// self-extracting Setup.exe and removes the unpacked player files from the output folder.
+/// After a Windows player build, compiles an Inno Setup installer and leaves
+/// only Setup.exe (plus Setup.exe.sha256) in the output folder.
 /// </summary>
 internal sealed class WindowsInstallerPostBuild : IPostprocessBuildWithReport
 {
@@ -32,46 +32,21 @@ internal sealed class WindowsInstallerPostBuild : IPostprocessBuildWithReport
         try
         {
             if (!Application.isBatchMode)
-                EditorUtility.DisplayProgressBar("A-Math installer", "Compiling Setup.exe…", 0.1f);
-            if (!WindowsInstallerBuilder.TryBuild(projectRoot, out string error))
+                EditorUtility.DisplayProgressBar("A-Math installer", "Compiling Setup.exe with Inno Setup…", 0.35f);
+
+            if (!WindowsInstallerBuilder.TryCompileInnoSetup(projectRoot, outputDir, PlayerSettings.bundleVersion, out string error))
             {
-                Debug.LogWarning("A-Math Windows installer: " + error);
+                Debug.LogError("A-Math Windows installer: " + error);
                 return;
             }
 
-            if (!Application.isBatchMode)
-                EditorUtility.DisplayProgressBar("A-Math installer", "Packing game into Setup.exe…", 0.35f);
-            if (!WindowsInstallerBuilder.TryPackSelfExtractingSetup(projectRoot, outputDir, out error))
-            {
-                Debug.LogWarning("A-Math Windows installer: " + error);
-                CopyIfExists(Path.Combine(projectRoot, "installer", "uninstall.exe"), Path.Combine(outputDir, "uninstall.exe"));
-                CopyIfExists(Path.Combine(projectRoot, "installer", "Setup.exe"), Path.Combine(outputDir, "Setup.exe"));
-                return;
-            }
-
-            Debug.Log("A-Math Windows installer: wrote self-extracting Setup.exe to " + outputDir);
+            Debug.Log("A-Math Windows installer: wrote Setup.exe to " + outputDir);
         }
         finally
         {
             if (!Application.isBatchMode)
                 EditorUtility.ClearProgressBar();
         }
-    }
-
-    [MenuItem("A-Math/Windows/Build Setup and Uninstall")]
-    private static void BuildFromMenu()
-    {
-        string projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
-        if (!WindowsInstallerBuilder.TryBuild(projectRoot, out string error))
-        {
-            EditorUtility.DisplayDialog("A-Math installer", error, "OK");
-            return;
-        }
-
-        EditorUtility.DisplayDialog(
-            "A-Math installer",
-            "Built installer stubs in installer/.\nA Windows player build packs the game into a single Setup.exe automatically.",
-            "OK");
     }
 
     [MenuItem("A-Math/Windows/Build Player and Setup.exe")]
@@ -81,70 +56,32 @@ internal sealed class WindowsInstallerPostBuild : IPostprocessBuildWithReport
         bool ok = report != null && report.summary.result == BuildResult.Succeeded;
         EditorUtility.DisplayDialog(
             "A-Math Windows build",
-            ok ? "Built self-extracting Setup.exe in Build/Windows." : "Windows build failed. See the Console.",
+            ok ? "Built Setup.exe in Build/Windows." : "Windows build failed. See the Console.",
             "OK");
-    }
-
-    private static void CopyIfExists(string source, string dest)
-    {
-        if (!File.Exists(source))
-            return;
-        File.Copy(source, dest, true);
     }
 }
 
 internal static class WindowsInstallerBuilder
 {
-    private const string PayloadMagic = "AMTHZIP1";
-    private const int PayloadFooterSize = 16;
-
-    public static bool TryBuild(string projectRoot, out string error)
-    {
-        error = null;
-        string installerDir = Path.Combine(projectRoot, "installer");
-        string csc = FindCsc();
-        if (csc == null)
-        {
-            error = "csc.exe not found. Build the Windows player on a machine with .NET Framework 4.x.";
-            return false;
-        }
-
-        if (!Compile(csc, installerDir, "uninstall.exe", null, out error, "Uninstall.cs", "AppInfo.cs"))
-            return false;
-
-        string compressionDll = Path.Combine(Path.GetDirectoryName(csc) ?? string.Empty, "System.IO.Compression.dll");
-        if (!File.Exists(compressionDll))
-        {
-            error = "System.IO.Compression.dll not found next to csc.exe.";
-            return false;
-        }
-
-        if (!Compile(
-                csc,
-                installerDir,
-                "Setup.exe",
-                "/reference:\"" + compressionDll + "\"",
-                out error,
-                "Setup.cs",
-                "PackedPayload.cs",
-                "AppInfo.cs"))
-            return false;
-
-        return true;
-    }
-
-    public static bool TryPackSelfExtractingSetup(string projectRoot, string outputDir, out string error)
+    public static bool TryCompileInnoSetup(string projectRoot, string outputDir, string appVersion, out string error)
     {
         error = null;
         outputDir = Path.GetFullPath(outputDir);
         string installerDir = Path.Combine(projectRoot, "installer");
-        string stubPath = Path.Combine(installerDir, "Setup.exe");
-        string uninstallPath = Path.Combine(installerDir, "uninstall.exe");
+        string scriptPath = Path.Combine(installerDir, "A-Math.iss");
         string gameExe = Path.Combine(outputDir, "A-Math.exe");
 
-        if (!File.Exists(stubPath) || !File.Exists(uninstallPath))
+        string iscc = FindIscc();
+        if (iscc == null)
         {
-            error = "Setup.exe / uninstall.exe stubs were not compiled.";
+            error = "Inno Setup compiler (ISCC.exe) was not found. Install Inno Setup 6.5 or later from https://jrsoftware.org/isdl.php "
+                    + "and keep ISCC.exe on PATH, or in Program Files\\Inno Setup 6. Windows builds will not produce Setup.exe until then.";
+            return false;
+        }
+
+        if (!File.Exists(scriptPath))
+        {
+            error = "Missing installer script: " + scriptPath;
             return false;
         }
 
@@ -154,121 +91,157 @@ internal static class WindowsInstallerBuilder
             return false;
         }
 
-        File.Copy(uninstallPath, Path.Combine(outputDir, "uninstall.exe"), true);
+        string version = string.IsNullOrWhiteSpace(appVersion) ? "1.0" : appVersion.Trim();
+        string packedDir = Path.Combine(Path.GetTempPath(), "amath-inno-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(packedDir);
 
-        string zipPath = Path.Combine(Path.GetTempPath(), "amath-payload-" + Guid.NewGuid().ToString("N") + ".zip");
-        string packedPath = Path.Combine(Path.GetTempPath(), "amath-setup-" + Guid.NewGuid().ToString("N") + ".exe");
-        string setupTemp = Path.Combine(Path.GetTempPath(), "amath-setup-out-" + Guid.NewGuid().ToString("N") + ".exe");
         try
         {
-            CreatePayloadZip(outputDir, zipPath);
-            AppendPayload(stubPath, zipPath, packedPath);
-            // Stage the installer outside outputDir first. Clearing the folder
-            // before the final copy succeeds would leave Build/Windows empty if
-            // the copy failed (AV lock, disk full, permissions).
-            File.Copy(packedPath, setupTemp, true);
+            var info = new ProcessStartInfo
+            {
+                FileName = iscc,
+                WorkingDirectory = installerDir,
+                Arguments = BuildIsccArguments(scriptPath, outputDir, packedDir, version),
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+
+            using (var process = Process.Start(info))
+            {
+                if (process == null)
+                {
+                    error = "Failed to start ISCC.exe.";
+                    return false;
+                }
+
+                string stdout = process.StandardOutput.ReadToEnd();
+                string stderr = process.StandardError.ReadToEnd();
+                process.WaitForExit();
+                if (process.ExitCode != 0)
+                {
+                    error = "ISCC.exe failed:\n" + stdout + stderr;
+                    return false;
+                }
+            }
+
+            string packedSetup = Path.Combine(packedDir, "Setup.exe");
+            if (!File.Exists(packedSetup))
+            {
+                error = "ISCC.exe finished but Setup.exe was not created in " + packedDir;
+                return false;
+            }
+
+            string hashText;
+            if (!TryBuildSha256Line(packedSetup, out hashText, out error))
+                return false;
+
+            string setupTemp = Path.Combine(Path.GetTempPath(), "amath-setup-out-" + Guid.NewGuid().ToString("N") + ".exe");
+            File.Copy(packedSetup, setupTemp, true);
             ClearDirectoryLeavingNothing(outputDir);
-            File.Copy(setupTemp, Path.Combine(outputDir, "Setup.exe"), true);
+            string finalSetup = Path.Combine(outputDir, "Setup.exe");
+            File.Copy(setupTemp, finalSetup, true);
+            File.WriteAllText(Path.Combine(outputDir, "Setup.exe.sha256"), hashText, new UTF8Encoding(false));
+            TryDeleteFile(setupTemp);
             return true;
         }
         catch (Exception ex)
         {
-            error = "Failed to pack Setup.exe: " + ex.Message;
+            error = "Failed to compile Setup.exe: " + ex.Message;
             return false;
         }
         finally
         {
-            TryDeleteFile(zipPath);
-            TryDeleteFile(packedPath);
-            TryDeleteFile(setupTemp);
+            TryDeleteDirectory(packedDir);
         }
     }
 
-    private static void CreatePayloadZip(string outputDir, string zipPath)
+    private static string BuildIsccArguments(string scriptPath, string sourceDir, string outputDir, string appVersion)
     {
-        var files = new List<string>();
-        foreach (string file in Directory.GetFiles(outputDir, "*", SearchOption.AllDirectories))
-        {
-            if (ShouldSkipPayloadFile(outputDir, file))
-                continue;
-            files.Add(file);
-        }
-
-        if (files.Count == 0)
-            throw new InvalidOperationException("No game files were found to pack.");
-
-        using (FileStream zipStream = File.Create(zipPath))
-        using (var archive = new ZipArchive(zipStream, ZipArchiveMode.Create))
-        {
-            for (int i = 0; i < files.Count; i++)
-            {
-                string file = files[i];
-                string relative = MakeRelative(outputDir, file).Replace('\\', '/');
-                if (!Application.isBatchMode)
-                {
-                    EditorUtility.DisplayProgressBar(
-                        "A-Math installer",
-                        "Packing " + relative,
-                        0.35f + (0.5f * (i + 1) / files.Count));
-                }
-
-                ZipArchiveEntry entry = archive.CreateEntry(relative, System.IO.Compression.CompressionLevel.Optimal);
-                using (Stream entryStream = entry.Open())
-                using (FileStream input = File.OpenRead(file))
-                    input.CopyTo(entryStream);
-            }
-        }
+        return Quote("/DSourceDir=" + ToInnoPath(sourceDir))
+               + " " + Quote("/DOutputDir=" + ToInnoPath(outputDir))
+               + " " + Quote("/DAppVersion=" + appVersion)
+               + " " + Quote(ToInnoPath(scriptPath));
     }
 
-    private static void AppendPayload(string stubPath, string zipPath, string packedPath)
+    private static string ToInnoPath(string path)
     {
-        using (FileStream output = File.Create(packedPath))
-        {
-            using (FileStream stub = File.OpenRead(stubPath))
-                stub.CopyTo(output);
-
-            long payloadOffset = output.Position;
-            using (FileStream zip = File.OpenRead(zipPath))
-                zip.CopyTo(output);
-
-            byte[] offsetBytes = BitConverter.GetBytes(payloadOffset);
-            output.Write(offsetBytes, 0, 8);
-            byte[] magic = Encoding.ASCII.GetBytes(PayloadMagic);
-            if (magic.Length != 8)
-                throw new InvalidOperationException("Payload magic must be 8 bytes.");
-            output.Write(magic, 0, 8);
-            if (PayloadFooterSize != 16)
-                throw new InvalidOperationException("Payload footer must be 16 bytes.");
-        }
+        return Path.GetFullPath(path).TrimEnd('\\', '/').Replace('\\', '/');
     }
 
-    private static bool ShouldSkipPayloadFile(string outputDir, string filePath)
+    private static bool TryBuildSha256Line(string setupPath, out string line, out string error)
     {
-        string name = Path.GetFileName(filePath);
-        if (name.Equals("Setup.exe", StringComparison.OrdinalIgnoreCase))
+        line = null;
+        error = null;
+        try
+        {
+            byte[] hash;
+            using (var sha = SHA256.Create())
+            using (FileStream stream = File.OpenRead(setupPath))
+                hash = sha.ComputeHash(stream);
+
+            var hex = new StringBuilder(hash.Length * 2);
+            for (int i = 0; i < hash.Length; i++)
+                hex.Append(hash[i].ToString("x2"));
+
+            line = hex + "  Setup.exe" + Environment.NewLine;
             return true;
-
-        string relative = MakeRelative(outputDir, filePath);
-        string[] parts = relative.Split(new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar }, StringSplitOptions.RemoveEmptyEntries);
-        foreach (string part in parts)
-        {
-            if (part.IndexOf("DoNotShip", StringComparison.OrdinalIgnoreCase) >= 0)
-                return true;
-            if (part.IndexOf("DontShipItWithYourGame", StringComparison.OrdinalIgnoreCase) >= 0)
-                return true;
         }
-
-        return false;
+        catch (Exception ex)
+        {
+            error = "Failed to hash Setup.exe: " + ex.Message;
+            return false;
+        }
     }
 
-    private static string MakeRelative(string root, string path)
+    private static string FindIscc()
     {
-        string rootFull = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-                          + Path.DirectorySeparatorChar;
-        string pathFull = Path.GetFullPath(path);
-        if (!pathFull.StartsWith(rootFull, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException("Path is outside the build folder: " + path);
-        return pathFull.Substring(rootFull.Length);
+        string fromPath = FindOnPath("ISCC.exe") ?? FindOnPath("iscc.exe");
+        if (fromPath != null)
+            return fromPath;
+
+        var folders = new List<string>();
+        AddIfNotEmpty(folders, Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86));
+        AddIfNotEmpty(folders, Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles));
+
+        foreach (string root in folders)
+        {
+            string candidate = Path.Combine(root, "Inno Setup 6", "ISCC.exe");
+            if (File.Exists(candidate))
+                return candidate;
+        }
+
+        return null;
+    }
+
+    private static string FindOnPath(string fileName)
+    {
+        string path = Environment.GetEnvironmentVariable("PATH");
+        if (string.IsNullOrEmpty(path))
+            return null;
+
+        foreach (string dir in path.Split(Path.PathSeparator))
+        {
+            if (string.IsNullOrWhiteSpace(dir))
+                continue;
+            string candidate = Path.Combine(dir.Trim().Trim('"'), fileName);
+            if (File.Exists(candidate))
+                return candidate;
+        }
+
+        return null;
+    }
+
+    private static void AddIfNotEmpty(List<string> list, string value)
+    {
+        if (!string.IsNullOrEmpty(value))
+            list.Add(value);
+    }
+
+    private static string Quote(string value)
+    {
+        return "\"" + value.Replace("\"", "\"\"") + "\"";
     }
 
     private static void ClearDirectoryLeavingNothing(string outputDir)
@@ -322,61 +295,6 @@ internal static class WindowsInstallerBuilder
         catch
         {
         }
-    }
-
-    private static bool Compile(string csc, string installerDir, string outputName, string extraArgs, out string error, params string[] sources)
-    {
-        error = null;
-        string sourceArgs = string.Join(" ", sources);
-        string extra = string.IsNullOrEmpty(extraArgs) ? string.Empty : extraArgs + " ";
-        var info = new ProcessStartInfo
-        {
-            FileName = csc,
-            WorkingDirectory = installerDir,
-            Arguments = "/nologo /target:winexe /optimize+ /out:" + outputName +
-                        " /reference:System.Windows.Forms.dll /reference:System.Drawing.dll " +
-                        extra + sourceArgs,
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true
-        };
-
-        using (var process = Process.Start(info))
-        {
-            if (process == null)
-            {
-                error = "Failed to start csc.exe.";
-                return false;
-            }
-
-            string stdout = process.StandardOutput.ReadToEnd();
-            string stderr = process.StandardError.ReadToEnd();
-            process.WaitForExit();
-            if (process.ExitCode == 0)
-                return true;
-
-            error = "Failed to compile " + outputName + ":\n" + stdout + stderr;
-            return false;
-        }
-    }
-
-    private static string FindCsc()
-    {
-        string windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
-        string[] candidates =
-        {
-            Path.Combine(windows, @"Microsoft.NET\Framework64\v4.0.30319\csc.exe"),
-            Path.Combine(windows, @"Microsoft.NET\Framework\v4.0.30319\csc.exe")
-        };
-
-        foreach (string path in candidates)
-        {
-            if (File.Exists(path))
-                return path;
-        }
-
-        return null;
     }
 }
 

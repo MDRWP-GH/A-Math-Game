@@ -68,8 +68,8 @@ namespace AMath.Networking.Discovery
 
         #region Control
 
-        /// <summary>Starts listening for room broadcasts.</summary>
-        public void Start()
+        /// <summary>Starts listening for room broadcasts. Returns false when bind fails.</summary>
+        public bool Start()
         {
             Stop();
 
@@ -87,11 +87,13 @@ namespace AMath.Networking.Discovery
                     Name = "AMath.LanDiscovery"
                 };
                 _receiveThread.Start();
+                return true;
             }
             catch (SocketException ex)
             {
                 Debug.LogError($"[Discovery] Cannot start listening: {ex.Message}");
                 Stop();
+                return false;
             }
         }
 
@@ -134,7 +136,7 @@ namespace AMath.Networking.Discovery
                     if (data.Length == 0 || data.Length > 1024) continue;
 
                     _pending.Enqueue(new RawPacket(
-                        remote.Address.ToString(),
+                        NormalizeSenderAddress(remote.Address),
                         Encoding.UTF8.GetString(data)));
                 }
                 catch (SocketException)
@@ -147,6 +149,17 @@ namespace AMath.Networking.Discovery
                     return;
                 }
             }
+        }
+
+        private static string NormalizeSenderAddress(IPAddress address)
+        {
+            if (address == null)
+                return string.Empty;
+
+            if (address.IsIPv4MappedToIPv6)
+                address = address.MapToIPv4();
+
+            return address.ToString();
         }
 
         #endregion

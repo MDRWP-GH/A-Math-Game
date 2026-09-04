@@ -5,8 +5,9 @@ using System.Reflection;
 using System.Text;
 
 /// <summary>
-/// Self-extracting payload appended after Setup.exe:
-/// [stub PE][zip bytes][int64 offset][8-byte magic AMTHZIP1]
+/// Obsolete. Self-extracting payload previously appended after Setup.exe:
+/// [stub PE][zip bytes][int64 offset][8-byte magic AMTHZIP1].
+/// Windows Defender treats that layout as a dropper; the shipping installer is Inno Setup.
 /// </summary>
 internal static class PackedPayload
 {

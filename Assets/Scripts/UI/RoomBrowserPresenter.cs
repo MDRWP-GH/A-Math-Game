@@ -16,6 +16,8 @@ namespace AMath.UI
     /// </summary>
     public sealed class RoomBrowserPresenter : MonoBehaviour
     {
+        private const float NoRoomsGraceSeconds = 3f;
+
         #region View-facing events
 
         /// <summary>Room list changed. Empty list + searching means show "No rooms found".</summary>
@@ -32,13 +34,24 @@ namespace AMath.UI
         private DiscoveryManager _discovery;
         private RoomManager _roomManager;
         private bool _initialized;
+        private float _searchStartedAt = -1f;
 
         #endregion
 
         #region Properties
 
-        /// <summary>True when searching is active and no rooms are visible.</summary>
-        public bool NoRoomsFound => _discovery is { NoRoomsFound: true };
+        /// <summary>True when discovery failed to bind the LAN listener port.</summary>
+        public bool DiscoveryFailed => _discovery is { SearchFailed: true };
+
+        /// <summary>
+        /// True when searching is active, no rooms are visible, and the grace
+        /// window after opening the browser has elapsed.
+        /// </summary>
+        public bool NoRoomsFound =>
+            _discovery is { IsSearching: true }
+            && _discovery.Rooms.Count == 0
+            && _searchStartedAt >= 0f
+            && Time.unscaledTime - _searchStartedAt >= NoRoomsGraceSeconds;
 
         #endregion
 
@@ -74,6 +87,7 @@ namespace AMath.UI
         public void StartSearching()
         {
             EnsureInitialized();
+            _searchStartedAt = Time.unscaledTime;
             _discovery.StartSearching();
         }
 
@@ -81,6 +95,7 @@ namespace AMath.UI
         public void StopSearching()
         {
             EnsureInitialized();
+            _searchStartedAt = -1f;
             _discovery.StopSearching();
         }
 
