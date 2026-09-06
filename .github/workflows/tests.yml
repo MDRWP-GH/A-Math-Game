@@ -18,6 +18,31 @@ jobs:
     name: EditMode
     runs-on: ubuntu-latest
     steps:
+      # Must stay first: this remounts the workspace onto a merged LVM volume
+      # so the Unity 6 image has somewhere to unpack. Stock runner free space
+      # is not enough; docker exit 125 here was "no space left on device".
+      - name: Maximize build space
+        if: ${{ secrets.UNITY_LICENSE != '' }}
+        uses: easimon/maximize-build-space@v10
+        with:
+          root-reserve-mb: 8192
+          swap-size-mb: 2048
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+          remove-docker-images: 'true'
+
+      - name: Point Docker at the large volume
+        if: ${{ secrets.UNITY_LICENSE != '' }}
+        run: |
+          sudo systemctl stop docker.socket docker containerd
+          sudo mkdir -p "${GITHUB_WORKSPACE}/.docker-data"
+          printf '%s\n' "{\"data-root\":\"${GITHUB_WORKSPACE}/.docker-data\"}" | sudo tee /etc/docker/daemon.json
+          sudo systemctl start docker
+          docker info | grep 'Docker Root Dir'
+          df -h
+
       # game-ci cannot start Unity without a license file or serial. Skip
       # instead of failing red while UNITY_LICENSE is not configured.
       - name: Unity license secret missing
@@ -25,25 +50,6 @@ jobs:
         run: |
           echo "::warning::UNITY_LICENSE is not set. EditMode tests were skipped."
           echo "Add UNITY_LICENSE, UNITY_EMAIL, and UNITY_PASSWORD in Settings > Secrets and variables > Actions."
-
-      # Unity 6 editor images unpack to well over 10GB. Stock runners do not
-      # have that much free, which makes `docker pull` fail with exit 125.
-      - name: Free disk space
-        if: ${{ secrets.UNITY_LICENSE != '' }}
-        uses: AdityaGarg8/remove-unwanted-software@v5
-        with:
-          remove-android: 'true'
-          remove-cached-tools: 'true'
-          remove-codeql: 'true'
-          remove-docker-images: 'true'
-          remove-dotnet: 'true'
-          remove-haskell: 'true'
-          remove-large-packages: 'true'
-          remove-swapfile: 'false'
-
-      - name: Show free disk
-        if: ${{ secrets.UNITY_LICENSE != '' }}
-        run: df -h
 
       - uses: actions/checkout@v4
         if: ${{ secrets.UNITY_LICENSE != '' }}
