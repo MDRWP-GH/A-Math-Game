@@ -26,19 +26,24 @@ jobs:
           echo "::warning::UNITY_LICENSE is not set. EditMode tests were skipped."
           echo "Add UNITY_LICENSE, UNITY_EMAIL, and UNITY_PASSWORD in Settings > Secrets and variables > Actions."
 
-      # Unity 6 editor images are larger than a stock GitHub runner's free
-      # disk. Clear unused toolchains before checkout/pull so docker has room.
+      # Unity 6 editor images unpack to well over 10GB. Stock runners do not
+      # have that much free, which makes `docker pull` fail with exit 125.
       - name: Free disk space
         if: ${{ secrets.UNITY_LICENSE != '' }}
-        uses: jlumbroso/free-disk-space@v1.3.1
+        uses: AdityaGarg8/remove-unwanted-software@v5
         with:
-          tool-cache: false
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: true
-          docker-images: true
-          swap-storage: false
+          remove-android: 'true'
+          remove-cached-tools: 'true'
+          remove-codeql: 'true'
+          remove-docker-images: 'true'
+          remove-dotnet: 'true'
+          remove-haskell: 'true'
+          remove-large-packages: 'true'
+          remove-swapfile: 'false'
+
+      - name: Show free disk
+        if: ${{ secrets.UNITY_LICENSE != '' }}
+        run: df -h
 
       - uses: actions/checkout@v4
         if: ${{ secrets.UNITY_LICENSE != '' }}
@@ -65,6 +70,7 @@ jobs:
           UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
         with:
           unityVersion: 6000.3.19f1
+          customImage: unityci/editor:ubuntu-6000.3.19f1-base-3
           testMode: editmode
           artifactsPath: test-results
           githubToken: ${{ secrets.GITHUB_TOKEN }}
