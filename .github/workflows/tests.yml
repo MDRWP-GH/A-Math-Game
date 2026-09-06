@@ -49,4 +49,5 @@ jobs:
         if: always()
         with:
           name: test-results
-          path: ${{ steps.tests.outputs.artifactsPath }}
+          path: ${{ steps.tests.outputs.artifactsPath || 'test-results' }}
+          if-no-files-found: ignore
