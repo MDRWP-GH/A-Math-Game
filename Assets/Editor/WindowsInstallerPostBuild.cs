@@ -212,6 +212,14 @@ internal static class WindowsInstallerBuilder
                 return candidate;
         }
 
+        string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        if (!string.IsNullOrEmpty(localAppData))
+        {
+            string wingetCandidate = Path.Combine(localAppData, "Programs", "Inno Setup 6", "ISCC.exe");
+            if (File.Exists(wingetCandidate))
+                return wingetCandidate;
+        }
+
         return null;
     }
 
