@@ -23,6 +23,8 @@ namespace AMath.UI
         private readonly Button _nextButton;
         private readonly Button _closeButton;
         private readonly GameObject _equipmentIcons;
+        private readonly ScrollRect _scrollRect;
+        private readonly RectTransform _scrollContent;
 
         private int _page;
 
@@ -54,7 +56,7 @@ namespace AMath.UI
                 _root.transform,
                 "Title",
                 string.Empty,
-                68,
+                72,
                 TextAnchor.UpperLeft);
             UiFactory.SetTopLeftRect(title.rectTransform, new Vector2(72f, 28f), new Vector2(720f, 88f));
             LocalizedText.Bind(title, "ui.help.title");
@@ -63,28 +65,64 @@ namespace AMath.UI
                 "Heading",
                 panel.transform,
                 string.Empty,
-                40,
+                46,
                 FontStyle.Normal,
                 Color.white,
                 TextAnchor.UpperLeft);
-            UiFactory.SetTopLeftRect(_heading.rectTransform, new Vector2(48f, 36f), new Vector2(1400f, 56f));
+            UiFactory.SetAnchoredRect(
+                _heading.rectTransform,
+                new Vector2(0f, 1f),
+                new Vector2(1f, 1f),
+                new Vector2(0.5f, 1f),
+                new Vector2(-96f, 64f),
+                new Vector2(0f, -32f));
             UiFactory.AddDoubleOutline(_heading.gameObject, new Vector2(3f, -3f), new Vector2(1.5f, -1.5f));
+
+            var viewport = UiFactory.CreateImage(
+                "Content Viewport",
+                panel.transform,
+                new Color(0f, 0f, 0f, 0.01f));
+            viewport.raycastTarget = true;
+            UiFactory.SetStretchRect(viewport.rectTransform, 48f, 112f, 48f, 112f);
+            viewport.gameObject.AddComponent<RectMask2D>();
+
+            _scrollContent = UiFactory.CreateRect("Scroll Content", viewport.transform);
+            _scrollContent.anchorMin = new Vector2(0f, 1f);
+            _scrollContent.anchorMax = new Vector2(1f, 1f);
+            _scrollContent.pivot = new Vector2(0.5f, 1f);
+            _scrollContent.anchoredPosition = Vector2.zero;
+            _scrollContent.sizeDelta = Vector2.zero;
+            UiFactory.AddVerticalLayout(
+                _scrollContent.gameObject,
+                20f,
+                new RectOffset(0, 0, 0, 12));
+            var contentFitter = _scrollContent.gameObject.AddComponent<ContentSizeFitter>();
+            contentFitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
+            contentFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+            _scrollRect = viewport.gameObject.AddComponent<ScrollRect>();
+            _scrollRect.viewport = viewport.rectTransform;
+            _scrollRect.content = _scrollContent;
+            _scrollRect.horizontal = false;
+            _scrollRect.vertical = true;
+            _scrollRect.movementType = ScrollRect.MovementType.Clamped;
+            _scrollRect.scrollSensitivity = 34f;
+            _scrollRect.inertia = true;
+            _scrollRect.decelerationRate = 0.12f;
 
             _body = ui.CreateText(
                 "Body",
-                panel.transform,
+                _scrollContent,
                 string.Empty,
-                28,
+                34,
                 FontStyle.Normal,
                 UiPalette.LightText,
                 TextAnchor.UpperLeft);
             _body.horizontalOverflow = HorizontalWrapMode.Wrap;
             _body.verticalOverflow = VerticalWrapMode.Overflow;
-            _body.lineSpacing = 1.12f;
-            // Leave room at the bottom for Exit / arrows, and for the equipment icon row.
-            UiFactory.SetStretchRect(_body.rectTransform, 48f, 100f, 48f, 180f);
+            _body.lineSpacing = 1.15f;
 
-            _equipmentIcons = CreateEquipmentIcons(panel.transform);
+            _equipmentIcons = CreateEquipmentIcons(_scrollContent);
             _equipmentIcons.SetActive(false);
 
             _closeButton = ui.CreateTextMenuButton(
@@ -131,7 +169,7 @@ namespace AMath.UI
                 new Vector2(1f, 0f),
                 new Vector2(1f, 0f),
                 new Vector2(1f, 0f),
-                new Vector2(56f, 56f),
+                new Vector2(92f, 56f),
                 new Vector2(-100f, 28f));
             UiFactory.AddDoubleOutline(_pageLabel.gameObject, new Vector2(3f, -3f), new Vector2(1.5f, -1.5f));
 
@@ -178,9 +216,14 @@ namespace AMath.UI
             int pageNumber = _page + 1;
             LocalizedText.Bind(_heading, $"ui.help.p{pageNumber}.heading");
             LocalizedText.Bind(_body, $"ui.help.p{pageNumber}.body");
-            _pageLabel.text = pageNumber.ToString();
+            _pageLabel.text = $"{pageNumber} / {PageCount}";
 
             _equipmentIcons.SetActive(_page == 1);
+
+            Canvas.ForceUpdateCanvases();
+            LayoutRebuilder.ForceRebuildLayoutImmediate(_scrollContent);
+            _scrollRect.StopMovement();
+            _scrollRect.verticalNormalizedPosition = 1f;
 
             bool hasPrev = _page > 0;
             bool hasNext = _page < PageCount - 1;
@@ -188,17 +231,16 @@ namespace AMath.UI
             _nextButton.gameObject.SetActive(hasNext);
 
             // Keep the page number tucked beside whichever arrows are visible.
-            float pageX = hasNext ? -100f : (hasPrev ? -100f : -28f);
+            float pageX = hasNext ? -100f : -28f;
             if (!hasNext && hasPrev)
             {
-                pageX = -28f;
                 UiFactory.SetAnchoredRect(
                     _prevButton.GetComponent<RectTransform>(),
                     new Vector2(1f, 0f),
                     new Vector2(1f, 0f),
                     new Vector2(1f, 0f),
                     new Vector2(64f, 56f),
-                    new Vector2(-96f, 28f));
+                    new Vector2(-128f, 28f));
             }
             else if (hasPrev)
             {
@@ -208,7 +250,7 @@ namespace AMath.UI
                     new Vector2(1f, 0f),
                     new Vector2(1f, 0f),
                     new Vector2(64f, 56f),
-                    new Vector2(-168f, 28f));
+                    new Vector2(-200f, 28f));
             }
 
             UiFactory.SetAnchoredRect(
@@ -216,7 +258,7 @@ namespace AMath.UI
                 new Vector2(1f, 0f),
                 new Vector2(1f, 0f),
                 new Vector2(1f, 0f),
-                new Vector2(56f, 56f),
+                new Vector2(92f, 56f),
                 new Vector2(pageX, 28f));
 
             ConfigureNavigation();
@@ -259,19 +301,13 @@ namespace AMath.UI
             selectable.navigation = navigation;
         }
 
-        private static GameObject CreateEquipmentIcons(Transform panel)
+        private static GameObject CreateEquipmentIcons(Transform parent)
         {
-            var row = UiFactory.CreateRect("Equipment Icons", panel);
-            UiFactory.SetAnchoredRect(
-                row,
-                new Vector2(0f, 0f),
-                new Vector2(0f, 0f),
-                new Vector2(0f, 0f),
-                new Vector2(420f, 64f),
-                new Vector2(48f, 100f));
+            var row = UiFactory.CreateRect("Equipment Icons", parent);
             UiFactory.AddHorizontalLayout(row.gameObject, 12f);
+            UiFactory.SetLayoutSize(row.gameObject, 540f, 72f);
 
-            string[] icons = { "+", "-", "x", "÷", "blank" };
+            string[] icons = { "+", "-", "x", "÷", "=", "blank" };
             foreach (var iconName in icons)
             {
                 var sprite = GameImages.LoadIcon(iconName);
@@ -282,7 +318,7 @@ namespace AMath.UI
 
                 var image = UiFactory.CreateImage("Icon " + iconName, row, sprite);
                 image.preserveAspect = true;
-                UiFactory.SetLayoutSize(image.gameObject, 56f, 56f);
+                UiFactory.SetLayoutSize(image.gameObject, 64f, 64f);
             }
 
             return row.gameObject;

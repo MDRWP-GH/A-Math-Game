@@ -1,7 +1,11 @@
 using System;
 using System.IO;
+using AMath.Tutorial.Definitions;
 using AMath.Tutorial.Save;
 using NUnit.Framework;
+using UnityEngine;
+using UnityEngine.TestTools;
+using System.Text.RegularExpressions;
 
 namespace AMath.Tests
 {
@@ -69,6 +73,34 @@ namespace AMath.Tests
         }
 
         [Test]
+        public void ChapterAvailability_RefreshesFromLatestCompletionState()
+        {
+            TutorialChapterAvailability locked = TutorialChapterAvailability.Load(_store);
+            Assert.IsFalse(locked.ConnectUnlocked);
+            Assert.IsFalse(locked.PremiumUnlocked);
+
+            _store.Save(IntroTutorialSequence.IntroTutorialId,
+                new TutorialProgressData
+                {
+                    TutorialId = IntroTutorialSequence.IntroTutorialId,
+                    IsCompleted = true
+                });
+            TutorialChapterAvailability afterIntro = TutorialChapterAvailability.Load(_store);
+            Assert.IsTrue(afterIntro.ConnectUnlocked);
+            Assert.IsFalse(afterIntro.PremiumUnlocked);
+
+            _store.Save(ConnectTutorialSequence.ConnectTutorialId,
+                new TutorialProgressData
+                {
+                    TutorialId = ConnectTutorialSequence.ConnectTutorialId,
+                    IsCompleted = true
+                });
+            TutorialChapterAvailability afterConnect = TutorialChapterAvailability.Load(_store);
+            Assert.IsTrue(afterConnect.ConnectUnlocked);
+            Assert.IsTrue(afterConnect.PremiumUnlocked);
+        }
+
+        [Test]
         public void Save_UsesSeparateFilesPerTutorialId()
         {
             _store.Save("intro", new TutorialProgressData { StepIndex = 1, TimestampUtcTicks = 1 });
@@ -102,5 +134,19 @@ namespace AMath.Tests
         {
             Assert.Throws<ArgumentNullException>(() => _store.Save("intro", null));
         }
+
+        [Test]
+        public void UnavailableDirectory_DoesNotCrashConstructionOrProgressRead()
+        {
+            string blockingFile = Path.Combine(_directory, "blocked");
+            File.WriteAllText(blockingFile, "not a directory");
+            LogAssert.Expect(LogType.Warning, new Regex("Progress storage is unavailable"));
+
+            TutorialProgressSaveStore unavailable = null;
+            Assert.DoesNotThrow(() => unavailable = new TutorialProgressSaveStore(blockingFile));
+            Assert.IsFalse(unavailable.TryLoad("intro", out _));
+            Assert.Throws<IOException>(() => unavailable.Save("intro", new TutorialProgressData()));
+        }
+
     }
 }

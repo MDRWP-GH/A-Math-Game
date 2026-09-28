@@ -1,11 +1,13 @@
 using System;
 using System.IO;
+using System.Linq;
 using AMath.Core;
 using AMath.Core.History;
 using AMath.Core.Snapshot;
 using AMath.Replay;
 using AMath.Save;
 using NUnit.Framework;
+using UnityEngine;
 
 namespace AMath.Tests
 {
@@ -18,6 +20,7 @@ namespace AMath.Tests
         public void SetUp()
         {
             _directory = Path.Combine(Path.GetTempPath(), "amath-history-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(_directory);
             _store = new MatchHistoryStore(_directory);
         }
 
@@ -143,6 +146,141 @@ namespace AMath.Tests
 
             Assert.IsFalse(_store.TryLoadReplay(entry.MatchId, out _, out error));
             Assert.AreEqual("Replay path is invalid.", error);
+        }
+
+        [Test]
+        public void TryArchiveFinishedMatch_DrawIsNeitherWinNorLoss()
+        {
+            SaveFile file = CreateFinishedSave(
+                MatchFormat.Individual,
+                DateTime.UtcNow.Ticks,
+                DateTime.UtcNow.Ticks,
+                15,
+                winnerPlayerId: -1,
+                new PlayerResult { PlayerId = 0, DisplayName = "Ann", FinalScore = 50, TeamId = -1 },
+                new PlayerResult { PlayerId = 1, DisplayName = "Ben", FinalScore = 50, TeamId = -1 });
+            file.State.Result.IsDraw = true;
+            file.State.Players.Add(new PlayerSnapshot { PlayerId = 0, PersistentGuid = "guid-ann", DisplayName = "Ann" });
+
+            Assert.IsTrue(
+                _store.TryArchiveFinishedMatch(file, "guid-ann", "Ann", out MatchHistoryEntry entry, out string error),
+                error);
+            Assert.IsTrue(entry.IsDraw);
+            Assert.IsFalse(entry.DidWin);
+            Assert.AreEqual(string.Empty, entry.WinnerLabel);
+            Assert.AreEqual(50, entry.WinnerScore);
+        }
+
+        [Test]
+        public void CorruptPrimaryIndex_RecoversFromBackup()
+        {
+            SaveFile first = CreateFinishedSave(
+                MatchFormat.Individual, DateTime.UtcNow.Ticks, DateTime.UtcNow.Ticks, 1, 0,
+                new PlayerResult { PlayerId = 0, DisplayName = "A", FinalScore = 1 });
+            SaveFile second = CreateFinishedSave(
+                MatchFormat.Individual, DateTime.UtcNow.Ticks, DateTime.UtcNow.Ticks, 2, 0,
+                new PlayerResult { PlayerId = 0, DisplayName = "A", FinalScore = 2 });
+            Assert.IsTrue(_store.TryArchiveFinishedMatch(first, null, "A", out _, out string error), error);
+            Assert.IsTrue(_store.TryArchiveFinishedMatch(second, null, "A", out _, out error), error);
+            File.WriteAllText(Path.Combine(_directory, "history_index.json"), "{ broken");
+
+            Assert.IsTrue(_store.TryListEntries(out var entries, out MatchHistoryReadStatus status, out error), error);
+            Assert.AreEqual(MatchHistoryReadStatus.RecoveredFromBackup, status);
+            Assert.AreEqual(2, entries.Count, "A valid replay newer than the backup must remain visible.");
+            Assert.IsTrue(Directory.GetFiles(_directory, "history_index.json.corrupt-*").Length > 0);
+        }
+
+        [Test]
+        public void MissingIndex_RebuildsFromExistingReplay()
+        {
+            SaveFile file = CreateFinishedSave(
+                MatchFormat.Individual, DateTime.UtcNow.Ticks, DateTime.UtcNow.Ticks, 1, 0,
+                new PlayerResult { PlayerId = 0, DisplayName = "A", FinalScore = 1 });
+            Assert.IsTrue(_store.TryArchiveFinishedMatch(file, null, "A", out _, out string error), error);
+            File.Delete(Path.Combine(_directory, "history_index.json"));
+            string backup = Path.Combine(_directory, "history_index.json.bak");
+            if (File.Exists(backup)) File.Delete(backup);
+
+            Assert.IsTrue(_store.TryListEntries(out var entries, out MatchHistoryReadStatus status, out error), error);
+            Assert.AreEqual(MatchHistoryReadStatus.RebuiltFromReplays, status);
+            Assert.AreEqual(1, entries.Count);
+            Assert.IsTrue(File.Exists(Path.Combine(_directory, "history_index.json")));
+        }
+
+        [Test]
+        public void ArchiveWhileRecoveringIndex_DoesNotDuplicateNewMatch()
+        {
+            SaveFile file = CreateFinishedSave(
+                MatchFormat.Individual, DateTime.UtcNow.Ticks, DateTime.UtcNow.Ticks, 1, 0,
+                new PlayerResult { PlayerId = 0, DisplayName = "A", FinalScore = 1 });
+            Assert.IsTrue(_store.TryArchiveFinishedMatch(file, null, "A", out _, out string error), error);
+            Assert.IsTrue(_store.TryArchiveFinishedMatch(file, null, "A", out _, out error), error);
+            File.WriteAllText(Path.Combine(_directory, "history_index.json"), "{ broken");
+
+            Assert.IsTrue(_store.TryArchiveFinishedMatch(file, null, "A", out MatchHistoryEntry archived, out error), error);
+            var entries = _store.ListEntries();
+            Assert.AreEqual(3, entries.Count);
+            Assert.AreEqual(1, entries.Count(item => item.MatchId == archived.MatchId));
+        }
+
+        [Test]
+        public void ArchiveAtCapacity_KeepsReplayReferencedByBackupUntilItRotates()
+        {
+            SaveFile oldSave = CreateFinishedSave(
+                MatchFormat.Individual, DateTime.UtcNow.Ticks, DateTime.UtcNow.Ticks, 1, 0,
+                new PlayerResult { PlayerId = 0, DisplayName = "A", FinalScore = 1 });
+            string oldestReplay = "match_oldest.json";
+            File.WriteAllText(Path.Combine(_directory, oldestReplay), JsonUtility.ToJson(oldSave));
+
+            var index = new MatchHistoryIndex();
+            for (int i = 0; i < MatchHistoryStore.MaxEntries - 1; i++)
+                index.Entries.Add(new MatchHistoryEntry
+                {
+                    MatchId = "existing-" + i,
+                    ReplayFileName = "match_existing-" + i + ".json"
+                });
+            index.Entries.Add(new MatchHistoryEntry { MatchId = "oldest", ReplayFileName = oldestReplay });
+            File.WriteAllText(Path.Combine(_directory, "history_index.json"), JsonUtility.ToJson(index));
+
+            Assert.IsTrue(_store.TryArchiveFinishedMatch(oldSave, null, "A", out _, out string error), error);
+            Assert.IsTrue(File.Exists(Path.Combine(_directory, oldestReplay)),
+                "The rotated backup still references this replay.");
+
+            Assert.IsTrue(_store.TryArchiveFinishedMatch(oldSave, null, "A", out _, out error), error);
+            Assert.IsFalse(File.Exists(Path.Combine(_directory, oldestReplay)),
+                "The replay may be pruned once neither index references it.");
+        }
+
+        [Test]
+        public void CorruptIndex_RebuildsFromValidReplays_AndSkipsBadFiles()
+        {
+            SaveFile file = CreateFinishedSave(
+                MatchFormat.Individual, DateTime.UtcNow.Ticks, DateTime.UtcNow.Ticks, 3, 0,
+                new PlayerResult { PlayerId = 0, DisplayName = "A", FinalScore = 3 });
+            Assert.IsTrue(_store.TryArchiveFinishedMatch(file, null, "A", out _, out string error), error);
+            File.WriteAllText(Path.Combine(_directory, "history_index.json"), "{ broken");
+            File.Delete(Path.Combine(_directory, "history_index.json.bak"));
+            File.WriteAllText(Path.Combine(_directory, "match_bad.json"), "not-json");
+
+            Assert.IsTrue(_store.TryListEntries(out var entries, out MatchHistoryReadStatus status, out error), error);
+            Assert.AreEqual(MatchHistoryReadStatus.RebuiltFromReplays, status);
+            Assert.AreEqual(1, entries.Count);
+            StringAssert.Contains("skipped 1", error);
+        }
+
+        [Test]
+        public void StorageUnavailable_DoesNotThrowFromConstructor()
+        {
+            string blocker = Path.Combine(_directory, "not-a-directory");
+            Directory.CreateDirectory(_directory);
+            File.WriteAllText(blocker, "file");
+
+            var store = new MatchHistoryStore(blocker);
+
+            Assert.IsFalse(store.TryListEntries(out var entries, out MatchHistoryReadStatus status, out string error));
+            Assert.AreEqual(MatchHistoryReadStatus.StorageUnavailable, status);
+            Assert.AreEqual(0, entries.Count);
+            Assert.IsNotEmpty(error);
         }
 
         private static SaveFile CreateFinishedSave(

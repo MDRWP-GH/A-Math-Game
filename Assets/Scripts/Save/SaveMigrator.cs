@@ -61,34 +61,49 @@ namespace AMath.Save
             migratedJson = json;
             error = null;
 
-            var probe = JsonUtility.FromJson<VersionProbe>(json);
-            int version = probe?.SaveVersion ?? -1;
-
-            if (version < 1)
+            if (string.IsNullOrWhiteSpace(json))
             {
-                error = "Save file has no valid version.";
+                error = "Save file is empty.";
                 return false;
             }
 
-            if (version > SaveFile.CurrentVersion)
+            try
             {
-                error = $"Save was written by a newer game version (schema v{version}).";
-                return false;
-            }
+                var probe = JsonUtility.FromJson<VersionProbe>(json);
+                int version = probe?.SaveVersion ?? -1;
 
-            while (version < SaveFile.CurrentVersion)
-            {
-                if (!_steps.TryGetValue(version, out ISaveMigrationStep step))
+                if (version < 1)
                 {
-                    error = $"No migration path from schema v{version}.";
+                    error = "Save file has no valid version.";
                     return false;
                 }
 
-                migratedJson = step.Apply(migratedJson);
-                version++;
-            }
+                if (version > SaveFile.CurrentVersion)
+                {
+                    error = $"Save was written by a newer game version (schema v{version}).";
+                    return false;
+                }
 
-            return true;
+                while (version < SaveFile.CurrentVersion)
+                {
+                    if (!_steps.TryGetValue(version, out ISaveMigrationStep step))
+                    {
+                        error = $"No migration path from schema v{version}.";
+                        return false;
+                    }
+
+                    migratedJson = step.Apply(migratedJson);
+                    version++;
+                }
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                migratedJson = null;
+                error = $"Save migration failed: {ex.Message}";
+                return false;
+            }
         }
 
         #endregion

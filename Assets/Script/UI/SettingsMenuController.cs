@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using AMath.Art;
+using AMath.Core.Identity;
 using AMath.Settings;
 using UnityEngine;
 using UnityEngine.InputSystem;
@@ -8,9 +9,16 @@ using UnityEngine.UI;
 
 namespace AMath.UI
 {
+    /// <summary>Controls what remains visible behind the settings panel.</summary>
+    public enum SettingsBackdropMode
+    {
+        MenuBackground,
+        LiveMatchOverlay
+    }
+
     /// <summary>
     /// Settings screen matching the mockup: scene background, translucent panel,
-    /// outlined Jersey text, tab column with selection marker, and one content page.
+    /// outlined Jersey text, tab column, and one content page.
     /// Changes apply immediately; there is no Apply button.
     /// </summary>
     public sealed class SettingsMenuController : MonoBehaviour
@@ -35,8 +43,7 @@ namespace AMath.UI
         private const float TabColumnWidth = 300f;
         private const float TabHeight = 70f;
         private const float TabSpacing = 10f;
-        private const float MarkerSize = 44f;
-        private const float TabTextLeftPad = 56f;
+        private const float TabTextLeftPad = 16f;
 
         private const float RowsLeft = 460f;
         private const float RowsRight = 400f;
@@ -55,7 +62,6 @@ namespace AMath.UI
 
         private static readonly Color SliderTrack = new Color(1f, 1f, 1f, 0.95f);
         private static readonly Color SliderHandle = new Color(0.82f, 0.84f, 0.88f, 1f);
-        private static readonly Color MarkerFallback = new Color(0.35f, 0.78f, 1f, 1f);
 
         private static readonly string[] TabKeys =
         {
@@ -79,12 +85,14 @@ namespace AMath.UI
 
         private UiFactory _ui;
         private GameObject _screen;
-        private RectTransform _navMarker;
+        private SettingsBackdropMode _backdropMode;
         private InputAction _cancelAction;
         private int _activeTab = GeneralTab;
 
         /// <summary>Shared by every option row, so only one list can be open at a time.</summary>
         private UiDropdown _dropdown;
+        private Text _playerNameErrorText;
+        private PlayerNameValidationError _playerNameError;
 
         /// <summary>Raised when the player leaves the settings screen.</summary>
         public event Action Closed;
@@ -93,11 +101,19 @@ namespace AMath.UI
 
         public static SettingsMenuController Create(Transform parent, Font font)
         {
+            return Create(parent, font, SettingsBackdropMode.MenuBackground);
+        }
+
+        public static SettingsMenuController Create(
+            Transform parent,
+            Font font,
+            SettingsBackdropMode backdropMode)
+        {
             var root = new GameObject("Settings Menu");
             root.transform.SetParent(parent, false);
 
             var controller = root.AddComponent<SettingsMenuController>();
-            controller.Build(font);
+            controller.Build(font, backdropMode);
             return controller;
         }
 
@@ -130,9 +146,10 @@ namespace AMath.UI
             Closed?.Invoke();
         }
 
-        private void Build(Font font)
+        private void Build(Font font, SettingsBackdropMode backdropMode)
         {
             _ui = new UiFactory(font);
+            _backdropMode = backdropMode;
             BuildScreen();
             _screen.SetActive(false);
 
@@ -170,10 +187,22 @@ namespace AMath.UI
             var canvas = _ui.CreateCanvas(transform, "Settings Canvas", 200);
             _screen = canvas.gameObject;
 
-            UiFactory.CreateFullScreenBackground(
-                _screen.transform,
-                "Main Menu Backgrounds",
-                UiPalette.Background);
+            if (_backdropMode == SettingsBackdropMode.MenuBackground)
+            {
+                UiFactory.CreateFullScreenBackground(
+                    _screen.transform,
+                    "Main Menu Backgrounds",
+                    UiPalette.Background);
+            }
+            else
+            {
+                var scrim = UiFactory.CreateImage(
+                    "Live Match Scrim",
+                    _screen.transform,
+                    new Color(0.015f, 0.025f, 0.04f, 0.72f));
+                scrim.raycastTarget = true;
+                UiFactory.Stretch(scrim.rectTransform);
+            }
 
             var panel = UiFactory.CreateGlassPanel(_screen.transform, "Panel", UiPalette.Glass);
             UiFactory.SetStretchRect(panel.rectTransform, PanelLeft, PanelTop, PanelRight, PanelBottom);
@@ -239,8 +268,6 @@ namespace AMath.UI
                 var down = _tabButtons[(i + 1) % _tabButtons.Count];
                 UiFactory.SetVerticalNavigation(_tabButtons[i], up, down);
             }
-
-            _navMarker = CreateSelectionMarker(_tabButtons[0].transform);
         }
 
         private Button CreateTabButton(Transform parent, string name, Action onClick)
@@ -281,23 +308,6 @@ namespace AMath.UI
             return button;
         }
 
-        private static RectTransform CreateSelectionMarker(Transform tab)
-        {
-            var sprite = GameImages.LoadIcon("Selected");
-            var marker = sprite != null
-                ? UiFactory.CreateImage("Selection Marker", tab, sprite)
-                : UiFactory.CreateImage("Selection Marker", tab, MarkerFallback);
-            marker.preserveAspect = true;
-            UiFactory.SetAnchoredRect(
-                marker.rectTransform,
-                new Vector2(0f, 0.5f),
-                new Vector2(0f, 0.5f),
-                new Vector2(0.5f, 0.5f),
-                new Vector2(MarkerSize, MarkerSize),
-                new Vector2(MarkerSize * 0.45f, 0f));
-            return marker.rectTransform;
-        }
-
         private GameObject BuildGeneralPage(Transform parent)
         {
             var page = CreatePage(parent, "General Page");
@@ -306,7 +316,25 @@ namespace AMath.UI
                 page.transform,
                 "ui.settings.player_name",
                 () => GameSettings.PlayerName,
-                value => GameSettings.PlayerName = value);
+                value =>
+                {
+                    GameSettings.TrySetPlayerName(value, out _playerNameError);
+                    RefreshPlayerNameError();
+                });
+
+            if (_pageFocus[GeneralTab] is InputField playerNameField)
+            {
+                playerNameField.textComponent.font = GameFonts.K2D;
+                if (playerNameField.placeholder is Text namePlaceholder)
+                    namePlaceholder.font = GameFonts.K2D;
+            }
+
+            _playerNameErrorText = _ui.CreateText(
+                "Player Name Error", page.transform, string.Empty, 22,
+                FontStyle.Normal, UiPalette.TimerWarning, TextAnchor.MiddleRight);
+            _playerNameErrorText.horizontalOverflow = HorizontalWrapMode.Wrap;
+            UiFactory.SetLayoutSize(_playerNameErrorText.gameObject, 0f, 34f, flexibleWidth: 1f);
+            _refreshers.Add(RefreshPlayerNameError);
 
             AddDropdownRow(
                 page.transform,
@@ -389,9 +417,6 @@ namespace AMath.UI
                     _pages[i].SetActive(i == _activeTab);
                 }
             }
-
-            _navMarker.SetParent(_tabButtons[_activeTab].transform, false);
-            _navMarker.SetAsFirstSibling();
         }
 
         private GameObject CreatePage(Transform parent, string name)
@@ -676,7 +701,9 @@ namespace AMath.UI
             field.textComponent = text;
             field.placeholder = hint;
             field.lineType = InputField.LineType.SingleLine;
-            field.characterLimit = 24;
+            // Keep enough raw input to report "too long" instead of silently
+            // truncating it at the valid-name boundary.
+            field.characterLimit = 64;
             field.text = getValue();
             field.colors = new ColorBlock
             {
@@ -692,14 +719,26 @@ namespace AMath.UI
 
             _refreshers.Add(() =>
             {
-                // Keep the raw string in the field; only swap the font for Thai display.
-                text.font = UiText.IsThai ? GameFonts.K2D : _ui.Font;
-                text.lineSpacing = UiText.IsThai ? 1.4f : 1f;
-                hint.font = text.font;
-                hint.lineSpacing = text.lineSpacing;
+                // Player names accept Thai independently of the menu language.
+                // K2D also contains the Latin and numeric glyphs allowed here.
+                text.font = GameFonts.K2D;
+                text.lineSpacing = 1.4f;
+                hint.font = GameFonts.K2D;
+                hint.lineSpacing = 1.4f;
                 field.SetTextWithoutNotify(getValue());
             });
             return field;
+        }
+
+        private void RefreshPlayerNameError()
+        {
+            if (_playerNameErrorText == null)
+                return;
+
+            string key = PlayerNameValidationUi.LocalizationKey(_playerNameError);
+            _playerNameErrorText.text = string.IsNullOrEmpty(key)
+                ? string.Empty
+                : Localization.UiLocalizationProvider.Shared.GetText(key);
         }
 
         private void RefreshAll()

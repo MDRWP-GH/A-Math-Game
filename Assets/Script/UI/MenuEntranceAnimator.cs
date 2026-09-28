@@ -19,6 +19,7 @@ namespace AMath.UI
         private const float DefaultStartDelay = 0.05f;
 
         private readonly List<CanvasGroup> _targets = new();
+        private readonly List<Vector3> _targetScales = new();
 
         private Coroutine _running;
         private float _fadeDuration = DefaultFadeDuration;
@@ -35,6 +36,7 @@ namespace AMath.UI
         public void SetTargets(params Component[] targets)
         {
             _targets.Clear();
+            _targetScales.Clear();
             if (targets == null)
                 return;
 
@@ -48,6 +50,7 @@ namespace AMath.UI
                     group = target.gameObject.AddComponent<CanvasGroup>();
 
                 _targets.Add(group);
+                _targetScales.Add(group.transform.localScale);
             }
         }
 
@@ -66,8 +69,8 @@ namespace AMath.UI
 
             Stop();
 
-            foreach (CanvasGroup group in _targets)
-                SetVisible(group, 0f);
+            for (int i = 0; i < _targets.Count; i++)
+                SetVisible(i, 0f);
 
             _running = StartCoroutine(RunEntrance());
         }
@@ -93,7 +96,7 @@ namespace AMath.UI
             while (elapsed < total)
             {
                 for (int i = 0; i < _targets.Count; i++)
-                    SetVisible(_targets[i], FadeProgress(elapsed - i * _stagger));
+                    SetVisible(i, FadeProgress(elapsed - i * _stagger));
 
                 elapsed += Time.unscaledDeltaTime;
                 yield return null;
@@ -125,20 +128,22 @@ namespace AMath.UI
 
         private void RevealAll()
         {
-            foreach (CanvasGroup group in _targets)
-                SetVisible(group, 1f);
+            for (int i = 0; i < _targets.Count; i++)
+                SetVisible(i, 1f);
         }
 
-        private static void SetVisible(CanvasGroup group, float alpha)
+        private void SetVisible(int index, float alpha)
         {
+            CanvasGroup group = _targets[index];
             if (group == null)
                 return;
 
             group.alpha = alpha;
+            group.transform.localScale = _targetScales[index] * Mathf.Lerp(0.975f, 1f, alpha);
 
-            // An invisible button must not swallow clicks, but it stays
-            // interactable so keyboard and gamepad selection keep working.
-            group.blocksRaycasts = alpha >= 1f;
+            // Only the barely visible part of the entrance ignores pointer input.
+            // Once the control can be seen, users need not wait for the fade to finish.
+            group.blocksRaycasts = alpha >= 0.25f;
         }
 
         /// <summary>

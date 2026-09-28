@@ -32,7 +32,7 @@ namespace AMath.Networking.HostMigration
         /// <summary>Sorts candidates in succession order (index 0 = next host).</summary>
         public static void Sort(List<MigrationCandidate> candidates)
         {
-            candidates.Sort(static (a, b) =>
+            candidates.Sort((a, b) =>
             {
                 int byRtt = a.RttMs.CompareTo(b.RttMs);
                 return byRtt != 0 ? byRtt : a.PlayerId.CompareTo(b.PlayerId);

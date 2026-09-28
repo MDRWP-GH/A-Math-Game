@@ -1,3 +1,6 @@
+using System.IO;
+using AMath.Core.Snapshot;
+using AMath.Core.Events;
 using AMath.Save;
 using NUnit.Framework;
 using UnityEngine;
@@ -28,6 +31,63 @@ namespace AMath.Tests
         public void MissingVersion_IsRejected()
         {
             Assert.IsFalse(new SaveMigrator().TryMigrate("{}", out _, out _));
+        }
+
+        [TestCase("")]
+        [TestCase("{")]
+        [TestCase("not-json")]
+        public void MalformedOrTruncatedJson_IsRejectedWithoutThrowing(string json)
+        {
+            var migrator = new SaveMigrator();
+            Assert.DoesNotThrow(() =>
+                Assert.IsFalse(migrator.TryMigrate(json, out _, out string error), error));
+        }
+
+        [TestCase("{")]
+        [TestCase("not-json")]
+        [TestCase("{\"SaveVersion\":9999}")]
+        public void SaveManager_RejectsInvalidFilesWithoutThrowing(string json)
+        {
+            string path = Path.GetTempFileName();
+            File.WriteAllText(path, json);
+            var manager = new SaveManager(new EventBus(), null, null);
+
+            try
+            {
+                bool loaded = true;
+                string error = null;
+                Assert.DoesNotThrow(() => loaded = manager.TryLoad(path, out _, out error));
+                Assert.IsFalse(loaded);
+                Assert.IsNotEmpty(error);
+            }
+            finally
+            {
+                manager.Dispose();
+                File.Delete(path);
+            }
+        }
+
+        [Test]
+        public void SaveManager_RejectsIncompleteSnapshotBeforeRecovery()
+        {
+            string path = Path.GetTempFileName();
+            File.WriteAllText(path, JsonUtility.ToJson(new SaveFile
+            {
+                State = new GameStateSnapshot { TurnNumber = 1 }
+            }));
+            var manager = new SaveManager(new EventBus(), null, null);
+
+            try
+            {
+                Assert.IsFalse(manager.TryLoad(path, out SaveFile file, out string error));
+                Assert.IsNull(file);
+                StringAssert.Contains("corrupt", error);
+            }
+            finally
+            {
+                manager.Dispose();
+                File.Delete(path);
+            }
         }
 
         [Test]

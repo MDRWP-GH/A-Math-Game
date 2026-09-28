@@ -106,30 +106,24 @@ namespace AMath.UI
         public void CreateRoom(string roomName, int maxPlayers)
         {
             EnsureInitialized();
-            if (!_roomManager.CreateRoom(roomName, maxPlayers))
-                ErrorRaised?.Invoke("ui.play.err_create");
+            if (!_roomManager.TryCreateRoom(roomName, maxPlayers, out RoomOperationError error))
+                ErrorRaised?.Invoke(RoomOperationErrorText.LocalizationKey(error));
         }
 
         /// <summary>Joins a room selected from the discovered list.</summary>
         public void JoinRoom(RoomInfo room)
         {
             EnsureInitialized();
-            if (!room.IsJoinable)
-            {
-                ErrorRaised?.Invoke("ui.play.err_not_joinable");
-                return;
-            }
-
-            if (!_roomManager.JoinRoom(room))
-                ErrorRaised?.Invoke("ui.play.err_join");
+            if (!_roomManager.TryJoinRoom(room, out RoomOperationError error))
+                ErrorRaised?.Invoke(RoomOperationErrorText.LocalizationKey(error));
         }
 
         /// <summary>Joins by a user-typed room code (resolved through discovery).</summary>
         public void JoinByCode(string code)
         {
             EnsureInitialized();
-            if (!_roomManager.JoinByCode(code, out string error))
-                ErrorRaised?.Invoke(error);
+            if (!_roomManager.TryJoinByCode(code, out RoomOperationError error))
+                ErrorRaised?.Invoke(RoomOperationErrorText.LocalizationKey(error));
         }
 
         #endregion

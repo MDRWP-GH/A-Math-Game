@@ -54,7 +54,9 @@ namespace AMath.Tutorial.Scripted
         public IReadOnlyList<byte> GetLocalHand()
         {
             PlayerState local = _players.GetById(_players.LocalPlayerId);
-            return local != null ? local.Rack : System.Array.Empty<byte>();
+            return local != null
+                ? (IReadOnlyList<byte>)local.Rack
+                : System.Array.Empty<byte>();
         }
 
         /// <inheritdoc />

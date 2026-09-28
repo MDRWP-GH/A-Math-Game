@@ -58,7 +58,7 @@ namespace AMath.Networking.HostMigration
         private readonly GameManager _gameManager;
         private readonly PlayerManager _playerManager;
         private readonly SaveManager _saveManager;
-        private readonly HostMigrationManager _migrationManager;
+        private readonly HostReconnectManager _migrationManager;
         private readonly RoomManager _roomManager;
         private readonly DiscoveryManager _discovery;
         private readonly RoomSession _session;
@@ -109,7 +109,7 @@ namespace AMath.Networking.HostMigration
             GameManager gameManager,
             PlayerManager playerManager,
             SaveManager saveManager,
-            HostMigrationManager migrationManager,
+            HostReconnectManager migrationManager,
             RoomManager roomManager,
             DiscoveryManager discovery,
             RoomSession session)
@@ -295,7 +295,7 @@ namespace AMath.Networking.HostMigration
 
         /// <summary>
         /// Stops every recovery activity and guarantees a terminal recovery
-        /// state reaches the UI. <see cref="HostMigrationManager.CancelRecovery"/>
+        /// state reaches the UI. <see cref="HostReconnectManager.CancelRecovery"/>
         /// stays silent when it is already idle (which it is during fresh-join),
         /// so the blocking overlay would otherwise never be told to close.
         /// </summary>

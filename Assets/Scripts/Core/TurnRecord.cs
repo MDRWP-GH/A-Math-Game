@@ -77,10 +77,13 @@ namespace AMath.Core
     public sealed class MatchResult
     {
         public MatchEndReason Reason;
-        public int WinnerPlayerId;
+        public int WinnerPlayerId = -1;
 
         /// <summary>Winning team when <see cref="Format"/> is team; otherwise -1.</summary>
         public int WinnerTeamId = -1;
+
+        /// <summary>True when two or more players/teams share the best score.</summary>
+        public bool IsDraw;
 
         public MatchFormat Format = MatchFormat.Individual;
 

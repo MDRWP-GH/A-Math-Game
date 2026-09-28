@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using AMath.Gameplay.Board;
+using AMath.Core.StateMachines;
 
 namespace AMath.Core.Snapshot
 {
@@ -65,5 +66,80 @@ namespace AMath.Core.Snapshot
 
         /// <summary>UTC ticks when the match began (for duration tracking across restore).</summary>
         public long MatchStartedUtcTicks;
+
+        /// <summary>
+        /// Elapsed seconds captured from the authority's monotonic clock. Older
+        /// saves omit this field and restore through the UTC compatibility path.
+        /// </summary>
+        public double MatchElapsedSeconds;
+
+        /// <summary>Rejects incomplete snapshots before a restore mutates live match state.</summary>
+        public bool TryValidate(out string error)
+        {
+            error = null;
+            if (Config?.Players == null || Players == null ||
+                Config.Players.Count < 1 || Config.Players.Count > GameRules.MaxPlayers ||
+                Players.Count != Config.Players.Count || BoardCells == null || BagTiles == null)
+            {
+                error = "Snapshot is missing match, roster, board, or bag data.";
+                return false;
+            }
+
+            if (TurnNumber < 1 || CurrentPlayerId < 0 || CurrentPlayerId >= Players.Count)
+            {
+                error = "Snapshot has an invalid turn or current player.";
+                return false;
+            }
+
+            if (!System.Enum.IsDefined(typeof(MatchPhase), Phase) || Config.TurnSeconds <= 0)
+            {
+                error = "Snapshot has an invalid match phase or turn time.";
+                return false;
+            }
+
+            for (int i = 0; i < Players.Count; i++)
+            {
+                if (Config.Players[i] == null || Config.Players[i].PlayerId != i ||
+                    Players[i] == null || Players[i].PlayerId != i || Players[i].Rack == null)
+                {
+                    error = $"Snapshot has an incomplete player at seat {i}.";
+                    return false;
+                }
+
+                if (Players[i].Rack.Count > GameRules.RackSize)
+                {
+                    error = $"Snapshot has an oversized rack at seat {i}.";
+                    return false;
+                }
+                foreach (byte tileId in Players[i].Rack)
+                {
+                    if (AMathTileSet.IsValidTileId(tileId)) continue;
+                    error = $"Snapshot has an unknown rack tile at seat {i}.";
+                    return false;
+                }
+            }
+
+            foreach (byte tileId in BagTiles)
+            {
+                if (AMathTileSet.IsValidTileId(tileId)) continue;
+                error = "Snapshot has an unknown bag tile.";
+                return false;
+            }
+
+            var occupied = new HashSet<int>();
+            foreach (TilePlacement cell in BoardCells)
+            {
+                if (!BoardGrid.InBounds(cell.X, cell.Y) ||
+                    !occupied.Add(cell.Y * GameRules.BoardSize + cell.X) ||
+                    !AMathTileSet.IsValidTileId(cell.TileId) ||
+                    !AMathTileSet.IsLegalDeclaration(cell.TileId, cell.DeclaredAs))
+                {
+                    error = "Snapshot has an invalid or duplicate board cell.";
+                    return false;
+                }
+            }
+
+            return true;
+        }
     }
 }

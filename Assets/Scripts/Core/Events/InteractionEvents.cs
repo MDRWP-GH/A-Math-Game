@@ -31,4 +31,12 @@ namespace AMath.Core.Events
 
     /// <summary>The game board finished loading and is ready to be highlighted/inspected.</summary>
     public struct BoardLoadedEvent { }
+
+    /// <summary>The local player added a tile to their turn draft on the board.</summary>
+    public struct DraftTilePlacedEvent
+    {
+        public int X;
+        public int Y;
+        public byte TileId;
+    }
 }

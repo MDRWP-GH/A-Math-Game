@@ -105,14 +105,28 @@ namespace AMath.UI
             for (int i = _listRoot.childCount - 1; i >= 0; i--)
                 UnityEngine.Object.Destroy(_listRoot.GetChild(i).gameObject);
 
-            IReadOnlyList<MatchHistoryEntry> entries = _historyStore.ListEntries();
-            if (entries.Count == 0)
+            if (!_historyStore.TryListEntries(
+                    out IReadOnlyList<MatchHistoryEntry> entries,
+                    out MatchHistoryReadStatus readStatus,
+                    out _))
             {
-                _status.text = _text.GetText("ui.history.empty");
+                _status.text = _text.GetText("ui.history.storage_unavailable");
                 return;
             }
 
-            _status.text = string.Empty;
+            _status.text = readStatus switch
+            {
+                MatchHistoryReadStatus.RecoveredFromBackup => _text.GetText("ui.history.recovered"),
+                MatchHistoryReadStatus.RebuiltFromReplays => _text.GetText("ui.history.rebuilt"),
+                _ => string.Empty
+            };
+            if (entries.Count == 0)
+            {
+                if (string.IsNullOrEmpty(_status.text))
+                    _status.text = _text.GetText("ui.history.empty");
+                return;
+            }
+
             foreach (MatchHistoryEntry entry in entries)
             {
                 MatchHistoryEntry captured = entry;
@@ -143,9 +157,10 @@ namespace AMath.UI
             string when = FormatPlayedAt(entry);
 
             var builder = new StringBuilder();
-            if (TryGetLocalResult(entry, out string playerName, out int score, out bool didWin))
+            if (TryGetLocalResult(entry, out string playerName, out int score, out bool didWin, out bool isDraw))
             {
-                builder.AppendLine(_text.GetText(didWin ? "ui.history.win" : "ui.history.lose"));
+                builder.AppendLine(_text.GetText(
+                    isDraw ? "ui.history.draw" : didWin ? "ui.history.win" : "ui.history.lose"));
                 builder.AppendLine(string.Format(
                     _text.GetText("ui.history.player_score"),
                     playerName,
@@ -164,13 +179,15 @@ namespace AMath.UI
             MatchHistoryEntry entry,
             out string playerName,
             out int score,
-            out bool didWin)
+            out bool didWin,
+            out bool isDraw)
         {
             if (entry.HasLocalPlayer)
             {
                 playerName = entry.LocalPlayerName;
                 score = entry.LocalPlayerScore;
                 didWin = entry.DidWin;
+                isDraw = entry.IsDraw;
                 return true;
             }
 
@@ -184,9 +201,10 @@ namespace AMath.UI
 
                     playerName = player.DisplayName;
                     score = player.FinalScore;
-                    didWin = entry.Format == MatchFormat.Team
+                    didWin = !entry.IsDraw && (entry.Format == MatchFormat.Team
                         ? player.TeamId >= 0 && entry.WinnerLabel == $"Team {player.TeamId + 1}"
-                        : entry.WinnerLabel == player.DisplayName;
+                        : entry.WinnerLabel == player.DisplayName);
+                    isDraw = entry.IsDraw;
                     return true;
                 }
             }
@@ -194,6 +212,7 @@ namespace AMath.UI
             playerName = null;
             score = 0;
             didWin = false;
+            isDraw = false;
             return false;
         }
 

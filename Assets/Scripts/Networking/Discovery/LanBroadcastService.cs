@@ -56,7 +56,7 @@ namespace AMath.Networking.Discovery
         #region Control
 
         /// <summary>Starts broadcasting the given advertisement.</summary>
-        public void Start(RoomAdvertisement advertisement)
+        public bool Start(RoomAdvertisement advertisement)
         {
             Stop();
 
@@ -68,11 +68,13 @@ namespace AMath.Networking.Discovery
                 _nextSendTime = 0f;
                 ConsecutiveSendFailures = 0;
                 IsRunning = true;
+                return true;
             }
             catch (SocketException ex)
             {
                 Debug.LogError($"[Discovery] Cannot start broadcasting: {ex.Message}");
                 Stop();
+                return false;
             }
         }
 

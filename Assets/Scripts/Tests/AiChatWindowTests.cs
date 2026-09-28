@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -9,6 +10,7 @@ using AMath.Core.Assistance.Context;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.UI;
+using Object = UnityEngine.Object;
 
 namespace AMath.Tests
 {
@@ -59,6 +61,40 @@ namespace AMath.Tests
             }
         }
 
+        [Test]
+        public async Task ReplacingAndDetachingView_CancelsOldRequestAndUsesOnlyCurrentWindow()
+        {
+            var first = new RecordingView();
+            var second = new RecordingView();
+            var mode = new SwitchingMode();
+            var controller = new AiAssistantController(
+                new IAiAssistantMode[] { mode },
+                new FakeContextProvider(),
+                new AllowAllRestrictionGuard(),
+                first,
+                new FakeTextProvider());
+
+            Task oldRequest = controller.AskAsync("first");
+            Assert.IsTrue(first.IsBusy);
+
+            controller.AttachView(second);
+            await oldRequest;
+            Assert.IsTrue(mode.FirstRequestWasCancelled);
+            Assert.IsFalse(first.IsBusy);
+
+            controller.OpenChat();
+            await controller.AskAsync("second");
+            Assert.AreEqual(0, first.OpenCount);
+            Assert.AreEqual(1, second.OpenCount);
+            CollectionAssert.AreEqual(new[] { "second" }, second.UserMessages);
+            CollectionAssert.AreEqual(new[] { "answer" }, second.AssistantMessages);
+            Assert.IsFalse(second.IsBusy);
+
+            controller.DetachView(second);
+            Assert.DoesNotThrow(controller.OpenChat);
+            Assert.AreEqual(1, second.OpenCount);
+        }
+
         private static AiChatWindow CreateConfiguredWindow(
             out GameObject parent,
             out AiAssistantController controller)
@@ -106,6 +142,50 @@ namespace AMath.Tests
         private sealed class FakeTextProvider : ILocalizedTextProvider
         {
             public string GetText(string key) => key;
+        }
+
+        private sealed class RecordingView : IAiChatView
+        {
+            public int OpenCount { get; private set; }
+            public bool IsBusy { get; private set; }
+            public List<string> UserMessages { get; } = new();
+            public List<string> AssistantMessages { get; } = new();
+
+            public void Open() => OpenCount++;
+            public void Close() { }
+            public void ShowUserMessage(string text) => UserMessages.Add(text);
+            public void ShowAssistantMessage(string text) => AssistantMessages.Add(text);
+            public void ShowError(string text) { }
+            public void SetBusy(bool isBusy) => IsBusy = isBusy;
+        }
+
+        private sealed class SwitchingMode : IAiAssistantMode
+        {
+            private int _requestCount;
+
+            public string ModeId => "strategy_coach";
+            public bool FirstRequestWasCancelled { get; private set; }
+
+            public async Task<string> RespondAsync(
+                string question,
+                GameContextSnapshot context,
+                CancellationToken cancellationToken)
+            {
+                if (_requestCount++ == 0)
+                {
+                    try
+                    {
+                        await Task.Delay(Timeout.Infinite, cancellationToken);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        FirstRequestWasCancelled = true;
+                        throw;
+                    }
+                }
+
+                return "answer";
+            }
         }
     }
 }

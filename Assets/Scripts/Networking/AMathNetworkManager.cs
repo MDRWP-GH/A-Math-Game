@@ -4,6 +4,7 @@ using AMath.Core.StateMachines;
 using AMath.Gameplay.Players;
 using AMath.Managers;
 using AMath.Networking.Messages;
+using AMath.Networking.Discovery;
 using AMath.Networking.RPC;
 using AMath.Networking.Room;
 using Mirror;
@@ -219,7 +220,7 @@ namespace AMath.Networking
         public override void OnClientDisconnect()
         {
             bool matchWasRunning =
-                _gameManager.Config != null
+                _gameManager?.Config != null
                 && _gameManager.Phase != MatchPhase.Lobby
                 && _gameManager.Phase != MatchPhase.Finished;
 
@@ -228,7 +229,53 @@ namespace AMath.Networking
             // The reconnection pipeline reacts to this event.
             Debug.LogWarning(
                 $"[Network] Client disconnected (match running: {matchWasRunning}, RTT: {NetworkTime.rtt * 1000d:0} ms).");
-            _eventBus.Publish(new ClientDisconnectedEvent { MatchWasRunning = matchWasRunning });
+            _eventBus?.Publish(new ClientDisconnectedEvent { MatchWasRunning = matchWasRunning });
+        }
+
+        public override void OnClientError(TransportError error, string reason)
+        {
+            base.OnClientError(error, reason);
+            if (_eventBus == null || _session == null || !_session.IsActive)
+                return;
+
+            bool matchRunning = _gameManager?.Config != null
+                && _gameManager.Phase != MatchPhase.Lobby
+                && _gameManager.Phase != MatchPhase.Finished;
+            if (!TryMapInitialRoomError(
+                    error,
+                    LanBroadcastTargets.HasUsableLanInterface(),
+                    matchRunning,
+                    out RoomOperationError operationError))
+                return;
+
+            Debug.LogWarning($"[Network] Client transport error {error}: {reason}");
+            _eventBus.Publish(new RoomOperationFailedEvent { Error = operationError });
+        }
+
+        /// <summary>
+        /// Maps transport callbacks during initial join/lobby into stable UI
+        /// errors. Mid-match errors deliberately remain owned by recovery.
+        /// </summary>
+        internal static bool TryMapInitialRoomError(
+            TransportError transportError,
+            bool networkAvailable,
+            bool matchRunning,
+            out RoomOperationError operationError)
+        {
+            if (matchRunning)
+            {
+                operationError = RoomOperationError.None;
+                return false;
+            }
+
+            if (!networkAvailable)
+                operationError = RoomOperationError.NetworkUnavailable;
+            else if (transportError is TransportError.Refused or TransportError.Timeout or TransportError.ConnectionClosed)
+                operationError = RoomOperationError.RoomClosed;
+            else
+                operationError = RoomOperationError.TransportFailed;
+
+            return true;
         }
 
         #endregion

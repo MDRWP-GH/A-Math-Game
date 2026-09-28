@@ -17,13 +17,18 @@ namespace AMath.Networking
 
     /// <summary>
     /// The host refused this client at the door (version, room code, capacity,
-    /// identity clash, match already running). The reason is host-authored
-    /// English text meant to be shown verbatim — it explains failures the UI
-    /// cannot deduce on its own.
+    /// identity clash, match already running). Known failures use localization
+    /// keys; unexpected compatibility failures may still carry diagnostic prose.
     /// </summary>
     public struct ConnectionRejectedEvent
     {
         public string Reason;
+    }
+
+    /// <summary>A room operation failed before or while the transport was starting.</summary>
+    public struct RoomOperationFailedEvent
+    {
+        public Room.RoomOperationError Error;
     }
 
     /// <summary>

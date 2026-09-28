@@ -2,13 +2,14 @@ using System;
 using System.IO;
 using System.Text;
 using AMath.Tutorial.Interfaces;
+using AMath.Accounts;
 using UnityEngine;
 
 namespace AMath.Tutorial.Save
 {
     /// <summary>
     /// Persists tutorial progress as one JSON file per tutorial id under
-    /// <c>Application.persistentDataPath/Progress</c>. Writes are atomic so
+    /// the active account's <c>Progress</c> folder. Writes are atomic so
     /// a crash mid-save cannot corrupt the previous good file.
     /// </summary>
     public sealed class TutorialProgressSaveStore : ITutorialSaveStore
@@ -16,6 +17,7 @@ namespace AMath.Tutorial.Save
         private const string DefaultFolderName = "Progress";
 
         private readonly string _directory;
+        private readonly string _initializationError;
 
         /// <summary>
         /// Creates a store rooted at the default progress folder, or at
@@ -23,18 +25,31 @@ namespace AMath.Tutorial.Save
         /// </summary>
         public TutorialProgressSaveStore(string directoryOverride = null)
         {
-            _directory = string.IsNullOrWhiteSpace(directoryOverride)
-                ? Path.Combine(Application.persistentDataPath, DefaultFolderName)
-                : directoryOverride;
+            if (string.IsNullOrWhiteSpace(directoryOverride))
+            {
+                if (!ProfileStorage.TryGetDirectory(DefaultFolderName, out _directory, out _initializationError))
+                    Debug.LogWarning($"[TutorialSave] Progress storage is unavailable: {_initializationError}");
+                return;
+            }
 
-            Directory.CreateDirectory(_directory);
+            _directory = directoryOverride;
+            try
+            {
+                Directory.CreateDirectory(_directory);
+            }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException ||
+                                       ex is ArgumentException || ex is NotSupportedException)
+            {
+                _initializationError = ex.Message;
+                Debug.LogWarning($"[TutorialSave] Progress storage is unavailable: {_initializationError}");
+            }
         }
 
         /// <inheritdoc />
         public bool TryLoad(string tutorialId, out TutorialProgressData data)
         {
             data = null;
-            if (string.IsNullOrWhiteSpace(tutorialId))
+            if (string.IsNullOrWhiteSpace(tutorialId) || _initializationError != null)
                 return false;
 
             string path = PathForTutorial(tutorialId);
@@ -46,7 +61,7 @@ namespace AMath.Tutorial.Save
             {
                 json = File.ReadAllText(path);
             }
-            catch (IOException ex)
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
             {
                 Debug.LogWarning($"[TutorialSave] Could not read '{path}': {ex.Message}");
                 return false;
@@ -83,6 +98,8 @@ namespace AMath.Tutorial.Save
                 throw new ArgumentException("A tutorial id is required.", nameof(tutorialId));
             if (data == null)
                 throw new ArgumentNullException(nameof(data));
+            if (_initializationError != null)
+                throw new IOException($"Tutorial progress storage is unavailable: {_initializationError}");
 
             data.TutorialId = tutorialId;
             if (data.TimestampUtcTicks <= 0)
@@ -94,7 +111,7 @@ namespace AMath.Tutorial.Save
             {
                 WriteAtomic(path, JsonUtility.ToJson(data));
             }
-            catch (IOException ex)
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
             {
                 Debug.LogError($"[TutorialSave] Could not write '{path}': {ex.Message}");
                 throw;

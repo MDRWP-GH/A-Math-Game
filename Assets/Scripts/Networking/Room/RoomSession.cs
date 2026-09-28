@@ -44,6 +44,9 @@ namespace AMath.Networking.Room
         /// <summary>Match format the host selected in the lobby before start.</summary>
         public MatchFormat SelectedFormat { get; set; } = MatchFormat.Individual;
 
+        /// <summary>Per-turn limit preset the host selected in the lobby.</summary>
+        public TurnTimePreset SelectedTurnTimePreset { get; set; } = GameRules.DefaultTurnTimePreset;
+
         /// <summary>Resets to the "not in a room" state.</summary>
         public void Reset()
         {
@@ -55,6 +58,7 @@ namespace AMath.Networking.Room
             IsActive = false;
             ReconnectToken = null;
             SelectedFormat = MatchFormat.Individual;
+            SelectedTurnTimePreset = GameRules.DefaultTurnTimePreset;
         }
     }
 }

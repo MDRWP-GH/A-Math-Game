@@ -28,7 +28,6 @@ namespace AMath.Tutorial.UI
         [Header("Dialogue")]
         [SerializeField] private GameObject _dialoguePanel;
         [SerializeField] private Text _dialogueText;
-        [SerializeField] private AudioSource _voiceSource;
 
         [Header("Player controls")]
         [SerializeField] private Button _skipButton;
@@ -68,17 +67,6 @@ namespace AMath.Tutorial.UI
                 _dialoguePanel.SetActive(false);
         }
 
-        private void Update()
-        {
-            if (_dialogueFinished != null &&
-                _voiceSource != null &&
-                _voiceSource.clip != null &&
-                !_voiceSource.isPlaying)
-            {
-                CompleteDialogue();
-            }
-        }
-
         private void OnDestroy()
         {
             foreach ((Button button, UnityAction callback) in _boundSignals)
@@ -86,6 +74,13 @@ namespace AMath.Tutorial.UI
 
             _skipButton?.onClick.RemoveListener(OnSkipPressed);
             _replayStepButton?.onClick.RemoveListener(OnReplayStepPressed);
+        }
+
+        /// <inheritdoc />
+        public void SetMilestone(string milestoneText)
+        {
+            // The legacy prefab presenter has no dedicated milestone label.
+            // Keep it compatible while the scene-facing presenter shows it.
         }
 
         /// <inheritdoc />
@@ -141,7 +136,7 @@ namespace AMath.Tutorial.UI
         }
 
         /// <inheritdoc />
-        public void Play(string localizedText, AudioClip voiceClip, Action onFinished)
+        public void Play(string localizedText, Action onFinished)
         {
             StopCurrentDialogue(invokeCallback: false);
 
@@ -151,11 +146,6 @@ namespace AMath.Tutorial.UI
                 _dialogueText.text = localizedText ?? string.Empty;
 
             _dialogueFinished = onFinished;
-            if (voiceClip != null && _voiceSource != null)
-            {
-                _voiceSource.clip = voiceClip;
-                _voiceSource.Play();
-            }
         }
 
         /// <summary>Dismisses visible dialogue when a scripted button is pressed.</summary>
@@ -226,12 +216,6 @@ namespace AMath.Tutorial.UI
 
         private void StopCurrentDialogue(bool invokeCallback)
         {
-            if (_voiceSource != null)
-            {
-                _voiceSource.Stop();
-                _voiceSource.clip = null;
-            }
-
             if (_dialoguePanel != null)
                 _dialoguePanel.SetActive(false);
 

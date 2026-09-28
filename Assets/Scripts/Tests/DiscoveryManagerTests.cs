@@ -115,7 +115,39 @@ namespace AMath.Tests
         }
 
         [Test]
-        public void StartSearching_SetsSearchFailedWhenPortIsAlreadyBound()
+        public void SameRoomName_FromDifferentHosts_RemainsTwoRoomsWithVisibleCodes()
+        {
+            RoomAdvertisement first = SampleAdvertisement("ROOM01");
+            RoomAdvertisement second = SampleAdvertisement("ROOM02");
+            first.RoomName = second.RoomName = "Friday Match";
+
+            _discovery.TestReceiveAdvertisement("192.168.0.10", first, 0f);
+            _discovery.TestReceiveAdvertisement("192.168.0.11", second, 0f);
+
+            Assert.AreEqual(2, _discovery.Rooms.Count);
+            Assert.AreNotEqual(
+                _discovery.Rooms[0].Advertisement.RoomCode,
+                _discovery.Rooms[1].Advertisement.RoomCode);
+        }
+
+        [Test]
+        public void TwoRoomsOnSameAddressAndDifferentPorts_AreBothDiscoverable()
+        {
+            RoomAdvertisement first = SampleAdvertisement("ROOM01");
+            RoomAdvertisement second = SampleAdvertisement("ROOM02");
+            second.Port = first.Port + 1;
+
+            _discovery.TestReceiveAdvertisement("192.168.0.10", first, 0f);
+            _discovery.TestReceiveAdvertisement("192.168.0.10", second, 0f);
+
+            Assert.AreEqual(2, _discovery.Rooms.Count);
+            Assert.IsTrue(_discovery.TryResolveRoomCode("ROOM01", out RoomInfo foundFirst));
+            Assert.IsTrue(_discovery.TryResolveRoomCode("ROOM02", out RoomInfo foundSecond));
+            Assert.AreNotEqual(foundFirst.Advertisement.Port, foundSecond.Advertisement.Port);
+        }
+
+        [Test]
+        public void StartSearching_AllowsTwoLocalClientsToShareDiscoveryPort()
         {
             using var blocker = new DiscoveryManager(_bus);
             blocker.StartSearching();
@@ -123,8 +155,8 @@ namespace AMath.Tests
 
             _discovery.StartSearching();
 
-            Assert.IsTrue(_discovery.SearchFailed);
-            Assert.IsFalse(_discovery.IsSearching);
+            Assert.IsFalse(_discovery.SearchFailed);
+            Assert.IsTrue(_discovery.IsSearching);
         }
 
         private static RoomAdvertisement SampleAdvertisement(string roomCode, int currentPlayers = 1) => new()

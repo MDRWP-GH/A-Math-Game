@@ -55,7 +55,9 @@ namespace AMath.UI
         public static readonly Color CellDraftValid = new Color(0.28f, 0.72f, 0.38f, 1f);
         public static readonly Color CellDraftInvalid = new Color(0.78f, 0.28f, 0.24f, 1f);
         public static readonly Color CellHighlight = new Color(0.70f, 0.52f, 0.32f, 1f);
-        public static readonly Color CellGuide = new Color(0.98f, 0.84f, 0.18f, 0.95f);
+        public static readonly Color CellGuide = new Color(1f, 0.77f, 0.04f, 1f);
+        public static readonly Color CellHover = new Color(0.82f, 0.68f, 0.42f, 1f);
+        public static readonly Color CellSelected = new Color(1f, 0.92f, 0.55f, 1f);
         public static readonly Color TurnRing = new Color(1f, 0.85f, 0.20f, 1f);
     }
 }

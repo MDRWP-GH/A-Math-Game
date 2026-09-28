@@ -34,11 +34,15 @@ internal sealed class WindowsInstallerPostBuild : IPostprocessBuildWithReport
             if (!Application.isBatchMode)
                 EditorUtility.DisplayProgressBar("A-Math installer", "Compiling Setup.exe with Inno Setup…", 0.35f);
 
+            WindowsInstallerBuilder.RemoveInstallerArtifacts(outputDir);
             if (!WindowsInstallerBuilder.TryCompileInnoSetup(projectRoot, outputDir, PlayerSettings.bundleVersion, out string error))
             {
                 Debug.LogError("A-Math Windows installer: " + error);
-                return;
+                throw new BuildFailedException(error);
             }
+
+            if (!WindowsInstallerBuilder.TryValidateInstallerArtifacts(outputDir, out error))
+                throw new BuildFailedException(error);
 
             Debug.Log("A-Math Windows installer: wrote Setup.exe to " + outputDir);
         }
@@ -52,17 +56,75 @@ internal sealed class WindowsInstallerPostBuild : IPostprocessBuildWithReport
     [MenuItem("A-Math/Windows/Build Player and Setup.exe")]
     private static void BuildPlayerFromMenu()
     {
-        BuildReport report = WindowsPlayerBuilder.Build();
-        bool ok = report != null && report.summary.result == BuildResult.Succeeded;
-        EditorUtility.DisplayDialog(
-            "A-Math Windows build",
-            ok ? "Built Setup.exe in Build/Windows." : "Windows build failed. See the Console.",
-            "OK");
+        try
+        {
+            BuildReport report = WindowsPlayerBuilder.Build();
+            string outputDir = Path.Combine(Path.GetFullPath(Path.Combine(Application.dataPath, "..")), "Build", "Windows");
+            string error = null;
+            bool ok = report != null
+                      && report.summary.result == BuildResult.Succeeded
+                      && WindowsInstallerBuilder.TryValidateInstallerArtifacts(outputDir, out error);
+            EditorUtility.DisplayDialog(
+                "A-Math Windows build",
+                ok ? "Built and verified Setup.exe in Build/Windows." : $"Windows build failed. {error ?? "See the Console."}",
+                "OK");
+        }
+        catch (Exception ex)
+        {
+            Debug.LogError("A-Math Windows build failed: " + ex.Message);
+            EditorUtility.DisplayDialog("A-Math Windows build", "Windows build failed. " + ex.Message, "OK");
+        }
     }
 }
 
 internal static class WindowsInstallerBuilder
 {
+    public static void RemoveInstallerArtifacts(string outputDir)
+    {
+        if (string.IsNullOrWhiteSpace(outputDir))
+            return;
+
+        TryDeleteFile(Path.Combine(outputDir, "Setup.exe"));
+        TryDeleteFile(Path.Combine(outputDir, "Setup.exe.sha256"));
+        if (File.Exists(Path.Combine(outputDir, "Setup.exe"))
+            || File.Exists(Path.Combine(outputDir, "Setup.exe.sha256")))
+        {
+            throw new IOException("A previous installer artifact is locked and could not be removed.");
+        }
+    }
+
+    public static bool TryValidateInstallerArtifacts(string outputDir, out string error)
+    {
+        error = null;
+        try
+        {
+            string setupPath = Path.Combine(outputDir, "Setup.exe");
+            string hashPath = setupPath + ".sha256";
+            if (!File.Exists(setupPath) || !File.Exists(hashPath))
+            {
+                error = "Setup.exe or Setup.exe.sha256 was not produced.";
+                return false;
+            }
+
+            if (!TryBuildSha256Line(setupPath, out string expected, out error))
+                return false;
+
+            string actual = File.ReadAllText(hashPath).Trim();
+            if (!string.Equals(expected.Trim(), actual, StringComparison.OrdinalIgnoreCase))
+            {
+                error = "Setup.exe SHA-256 verification failed.";
+                return false;
+            }
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = "Could not validate installer artifacts: " + ex.Message;
+            return false;
+        }
+    }
+
     public static bool TryCompileInnoSetup(string projectRoot, string outputDir, string appVersion, out string error)
     {
         error = null;
@@ -259,9 +321,12 @@ internal static class WindowsInstallerBuilder
             foreach (string file in Directory.GetFiles(outputDir))
                 TryDeleteFile(file);
             foreach (string dir in Directory.GetDirectories(outputDir))
-                TryDeleteDirectory(dir);
+                if (!string.Equals(Path.GetFileName(dir), "save", StringComparison.OrdinalIgnoreCase))
+                    TryDeleteDirectory(dir);
 
-            if (Directory.GetFiles(outputDir).Length == 0 && Directory.GetDirectories(outputDir).Length == 0)
+            if (Directory.GetFiles(outputDir).Length == 0 &&
+                Array.TrueForAll(Directory.GetDirectories(outputDir),
+                    dir => string.Equals(Path.GetFileName(dir), "save", StringComparison.OrdinalIgnoreCase)))
                 return;
 
             System.Threading.Thread.Sleep(250);
@@ -310,9 +375,23 @@ internal static class WindowsPlayerBuilder
 {
     public static void BuildFromCli()
     {
-        BuildReport report = Build();
-        bool ok = report != null && report.summary.result == BuildResult.Succeeded;
-        EditorApplication.Exit(ok ? 0 : 1);
+        try
+        {
+            BuildReport report = Build();
+            string outputDir = Path.Combine(Path.GetFullPath(Path.Combine(Application.dataPath, "..")), "Build", "Windows");
+            string error = null;
+            bool ok = report != null
+                      && report.summary.result == BuildResult.Succeeded
+                      && WindowsInstallerBuilder.TryValidateInstallerArtifacts(outputDir, out error);
+            if (!ok)
+                Debug.LogError("[A-Math] Windows installer validation failed: " + (error ?? "Player build failed."));
+            EditorApplication.Exit(ok ? 0 : 1);
+        }
+        catch (Exception ex)
+        {
+            Debug.LogError("[A-Math] Windows build failed: " + ex.Message);
+            EditorApplication.Exit(1);
+        }
     }
 
     public static BuildReport Build()
@@ -321,7 +400,10 @@ internal static class WindowsPlayerBuilder
         string outputExe = Path.Combine(projectRoot, "Build", "Windows", "A-Math.exe");
         string outputDir = Path.GetDirectoryName(outputExe);
         if (!string.IsNullOrEmpty(outputDir))
+        {
             Directory.CreateDirectory(outputDir);
+            WindowsInstallerBuilder.RemoveInstallerArtifacts(outputDir);
+        }
 
         var scenes = new List<string>();
         foreach (EditorBuildSettingsScene scene in EditorBuildSettings.scenes)

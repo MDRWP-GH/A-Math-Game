@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using AMath.Core.Events;
+using AMath.Accounts;
 using AMath.Managers;
 using AMath.Replay;
 using AMath.Utilities;
@@ -29,6 +30,7 @@ namespace AMath.Save
         private readonly SaveMigrator _migrator;
         private readonly MatchHistoryStore _historyStore;
         private readonly string _saveDirectory;
+        private readonly string _initialStorageError;
 
         #endregion
 
@@ -59,8 +61,8 @@ namespace AMath.Save
             _historyStore = new MatchHistoryStore();
             // Register future ISaveMigrationStep implementations here as the schema evolves.
 
-            _saveDirectory = Path.Combine(Application.persistentDataPath, "Saves");
-            Directory.CreateDirectory(_saveDirectory);
+            if (!ProfileStorage.TryGetDirectory("Saves", out _saveDirectory, out _initialStorageError))
+                _saveDirectory = Path.Combine(PortableSaveStorage.Root, "Saves");
 
             _eventBus.Subscribe<TurnResolvedEvent>(OnTurnResolved);
             _eventBus.Subscribe<MatchFinishedEvent>(OnMatchFinished);
@@ -113,8 +115,24 @@ namespace AMath.Save
         /// reconnection pipeline the moment the connection is lost (backup).
         /// </summary>
         public void SaveNow()
+            => TrySaveNow(out _);
+
+        /// <summary>Writes a save and returns the storage error to callers that need UI feedback.</summary>
+        public bool TrySaveNow(out string error)
         {
-            if (_gameManager.Config == null) return;
+            error = null;
+            if (_gameManager.Config == null)
+            {
+                error = "No match is active.";
+                return false;
+            }
+
+            if (!TryEnsureSaveDirectory(out string storageError))
+            {
+                Debug.LogError($"[Save] Autosave unavailable: {storageError}");
+                error = storageError;
+                return false;
+            }
 
             var file = new SaveFile
             {
@@ -134,10 +152,19 @@ namespace AMath.Save
             {
                 WriteAtomic(path, JsonUtility.ToJson(file));
                 _eventBus.Publish(new SaveCompletedEvent { FilePath = path, TurnNumber = file.State.TurnNumber });
+                return true;
             }
             catch (IOException ex)
             {
                 Debug.LogError($"[Save] Autosave failed: {ex.Message}");
+                error = ex.Message;
+                return false;
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                Debug.LogError($"[Save] Autosave was denied: {ex.Message}");
+                error = ex.Message;
+                return false;
             }
         }
 
@@ -178,14 +205,29 @@ namespace AMath.Save
                 error = ex.Message;
                 return false;
             }
+            catch (UnauthorizedAccessException ex)
+            {
+                error = ex.Message;
+                return false;
+            }
 
             if (!_migrator.TryMigrate(json, out string migrated, out error))
                 return false;
 
-            file = JsonUtility.FromJson<SaveFile>(migrated);
-            if (file?.State == null)
+            try
             {
-                error = "Save file is corrupt.";
+                file = JsonUtility.FromJson<SaveFile>(migrated);
+            }
+            catch (ArgumentException ex)
+            {
+                error = $"Save file is corrupt: {ex.Message}";
+                return false;
+            }
+
+            string snapshotError = null;
+            if (file?.State == null || !file.State.TryValidate(out snapshotError))
+            {
+                error = $"Save file is corrupt: {snapshotError ?? "snapshot is missing"}.";
                 file = null;
                 return false;
             }
@@ -197,25 +239,43 @@ namespace AMath.Save
         public bool TryLoadForRoom(string roomCode, out SaveFile file, out string error) =>
             TryLoad(PathForRoom(roomCode), out file, out error);
 
+        /// <summary>Checks whether an autosave exists without parsing or changing it.</summary>
+
         /// <summary>Loads the most recently written save on this machine.</summary>
         public bool TryLoadLatest(out SaveFile file, out string error)
         {
             file = null;
             error = "No saves found.";
 
-            string bestPath = null;
-            DateTime bestTime = DateTime.MinValue;
-            foreach (string path in Directory.GetFiles(_saveDirectory, "match_*.json"))
-            {
-                DateTime writeTime = File.GetLastWriteTimeUtc(path);
-                if (writeTime > bestTime)
-                {
-                    bestTime = writeTime;
-                    bestPath = path;
-                }
-            }
+            if (!TryEnsureSaveDirectory(out error))
+                return false;
 
-            return bestPath != null && TryLoad(bestPath, out file, out error);
+            try
+            {
+                string bestPath = null;
+                DateTime bestTime = DateTime.MinValue;
+                foreach (string path in Directory.GetFiles(_saveDirectory, "match_*.json"))
+                {
+                    DateTime writeTime = File.GetLastWriteTimeUtc(path);
+                    if (writeTime > bestTime)
+                    {
+                        bestTime = writeTime;
+                        bestPath = path;
+                    }
+                }
+
+                return bestPath != null && TryLoad(bestPath, out file, out error);
+            }
+            catch (IOException ex)
+            {
+                error = ex.Message;
+                return false;
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                error = ex.Message;
+                return false;
+            }
         }
 
         /// <summary>Exposes archived match history for the history browser UI.</summary>
@@ -223,6 +283,28 @@ namespace AMath.Save
 
         private string PathForRoom(string roomCode) =>
             Path.Combine(_saveDirectory, $"match_{(string.IsNullOrEmpty(roomCode) ? "local" : roomCode)}.json");
+
+        private bool TryEnsureSaveDirectory(out string error)
+        {
+            error = _initialStorageError;
+            if (!string.IsNullOrEmpty(_initialStorageError))
+                return false;
+
+            try
+            {
+                Directory.CreateDirectory(_saveDirectory);
+                error = null;
+                return true;
+            }
+            catch (Exception ex) when (ex is IOException
+                                       || ex is UnauthorizedAccessException
+                                       || ex is NotSupportedException
+                                       || ex is ArgumentException)
+            {
+                error = ex.Message;
+                return false;
+            }
+        }
 
         #endregion
 

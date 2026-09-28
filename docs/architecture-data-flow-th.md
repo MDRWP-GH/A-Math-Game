@@ -18,7 +18,7 @@ flowchart TD
     serviceRegistry --> roomLayer[RoomManager_DiscoveryManager]
     serviceRegistry --> mirrorLayer[AMathNetworkManager_NetworkPlayer_NetworkGameState]
     serviceRegistry --> persistence[SaveManager_ReplayManager]
-    serviceRegistry --> recovery[ReconnectionManager_HostMigrationManager]
+    serviceRegistry --> recovery[ReconnectionManager_HostReconnectManager]
     serviceRegistry --> aiLayer[AiAssistantController_LiveGameContextProvider]
 
     playSession --> presenters[RoomBrowser_Lobby_MatchHud_Result_ConnectionLost]
@@ -232,7 +232,7 @@ flowchart LR
 flowchart LR
     disconnect[ClientDisconnectedEvent] --> backup[SaveManager_SaveNow_ifMatch]
     backup --> pause[ReconnectionManager_Pause]
-    pause --> reconnect[HostMigrationManager_Grace5s]
+    pause --> reconnect[HostReconnectManager_Grace10s]
     reconnect -->|roomFound| seatJoin[JoinRoom_sameToken]
     reconnect -->|fail| leave[LeaveRoom]
     leave --> fresh[FreshJoin_sameCode]
@@ -246,7 +246,7 @@ flowchart LR
 คำอธิบาย:
 1. ถ้า client หลุดจาก host (ทั้ง lobby และ mid-match) `ReconnectionManager` เริ่ม grace ~5 วินาที
 2. mid-match จะ backup save และ pause ก่อน
-3. `HostMigrationManager` ค้นหา room code เดิมแล้วลอง seat-token reconnect — **ไม่มีการ promote เป็น host ใหม่**
+3. `HostReconnectManager` ค้นหา room code เดิมแล้วลอง seat-token reconnect — **ไม่มีการ promote เป็น host ใหม่**
 4. ถ้า reconnect ไม่สำเร็จ จะ `LeaveRoom` แล้วพยายาม fresh join รหัสเดิมถ้า host ยังโฆษณาห้องอยู่
 5. ถ้า fresh join ไม่ได้ จะ publish `RoomDissolvedEvent` แล้ว UI กลับไปหน้า browser
 6. ถ้า host หลุดเน็ต (broadcast ล้มเหลวติดกัน) จะยุบทั้งห้องรอเล่นและห้องเล่นผ่าน `LeaveRoom` / หยุดโฆษณา
@@ -360,6 +360,6 @@ log ของ accepted turns ทั้งหมดในแมตช์:
 - `Assets/Scripts/Gameplay/CommandProcessor.cs`
 - `Assets/Scripts/Save/SaveManager.cs`
 - `Assets/Scripts/Networking/HostMigration/ReconnectionManager.cs`
-- `Assets/Scripts/Networking/HostMigration/HostMigrationManager.cs`
+- `Assets/Scripts/Networking/HostMigration/HostMigrationManager.cs` (`HostReconnectManager` และ compatibility wrapper เดิม)
 - `Assets/Script/Tutorial/TutorialSceneController.cs`
 - `Assets/Scripts/AI/Chat/AiAssistantController.cs`

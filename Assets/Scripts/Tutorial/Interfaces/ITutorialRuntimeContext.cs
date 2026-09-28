@@ -28,7 +28,7 @@ namespace AMath.Tutorial.Interfaces
         /// <summary>Highlight presentation service.</summary>
         ITutorialHighlightService Highlighter { get; }
 
-        /// <summary>Dialogue (+voice) presentation service.</summary>
+        /// <summary>Dialogue presentation service.</summary>
         ITutorialDialogueService Dialogue { get; }
 
         /// <summary>Tutorial UI presentation service (objective, progress, hints).</summary>

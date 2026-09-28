@@ -45,7 +45,11 @@ namespace AMath.UI
         public int LocalPlayerId => _playerManager?.LocalPlayerId ?? -1;
         public bool IsLocalTurn => LocalPlayerId >= 0 && LocalPlayerId == CurrentPlayerId;
         public int BagCount => _networkGameState != null ? _networkGameState.BagCount : _gameManager?.BagCount ?? 0;
-        public float RemainingTurnSeconds => _networkGameState != null ? _networkGameState.RemainingTurnSeconds : 0f;
+        public float RemainingTurnSeconds =>
+            _networkGameState != null
+                ? _networkGameState.RemainingTurnSeconds
+                : _turnManager?.RemainingSeconds ?? 0f;
+        public int TurnDurationSeconds => _turnManager?.TurnSeconds ?? GameRules.DefaultTurnSeconds;
         public TurnInputSession TurnInput => _turnInput;
         public PlayerManager Players => _playerManager;
         public GameManager Game => _gameManager;
@@ -136,6 +140,12 @@ namespace AMath.UI
 
         public void SelectRack(int index) => _turnInput?.SelectFromRack(index);
 
+        public void PlaceFromRack(int rackIndex, int x, int y)
+        {
+            SelectRack(rackIndex);
+            PlaceCell(x, y);
+        }
+
         public void PlaceCell(int x, int y)
         {
             if (_turnInput == null) return;
@@ -182,7 +192,10 @@ namespace AMath.UI
             }
         }
 
-        public void LeaveRoom() => _roomManager?.LeaveRoom();
+        public void LeaveRoom()
+        {
+            _roomManager?.LeaveRoom();
+        }
 
         /// <summary>
         /// Host override: stop waiting for the missing players and play on now.

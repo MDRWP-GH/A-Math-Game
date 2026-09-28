@@ -91,5 +91,80 @@ namespace AMath.Tests
             Assert.AreEqual(50, game.Result.TeamStandings[0].TotalScore);
             Assert.AreEqual(20, game.Result.TeamStandings[1].TotalScore);
         }
+
+        [Test]
+        public void EndMatch_IndividualTie_IsRecordedAsDraw()
+        {
+            var bus = new EventBus();
+            var stateMachine = new GameStateMachine(bus);
+            var board = new BoardManager();
+            var players = new PlayerManager(bus);
+            var turns = new TurnManager(bus);
+            var game = new GameManager(bus, stateMachine, board, players, turns) { IsAuthority = true };
+            var config = new MatchConfig
+            {
+                RandomSeed = 88,
+                TurnSeconds = 60,
+                GameVersion = "test",
+                Format = MatchFormat.Individual,
+                Players =
+                {
+                    new PlayerIdentity { PlayerId = 0, PersistentGuid = "a", DisplayName = "A" },
+                    new PlayerIdentity { PlayerId = 1, PersistentGuid = "b", DisplayName = "B" }
+                }
+            };
+
+            game.StartMatch(config);
+            foreach (PlayerState player in players.Players)
+            {
+                player.Rack.Clear();
+                player.Score = 25;
+            }
+            game.EndMatchManually();
+
+            Assert.IsTrue(game.Result.IsDraw);
+            Assert.AreEqual(-1, game.Result.WinnerPlayerId);
+            Assert.AreEqual(-1, game.Result.WinnerTeamId);
+        }
+
+        [Test]
+        public void EndMatch_TeamTie_IsRecordedAsDraw()
+        {
+            var bus = new EventBus();
+            var stateMachine = new GameStateMachine(bus);
+            var board = new BoardManager();
+            var players = new PlayerManager(bus);
+            var turns = new TurnManager(bus);
+            var game = new GameManager(bus, stateMachine, board, players, turns) { IsAuthority = true };
+            var config = new MatchConfig
+            {
+                RandomSeed = 89,
+                TurnSeconds = 60,
+                GameVersion = "test",
+                Format = MatchFormat.Team,
+                Players =
+                {
+                    new PlayerIdentity { PlayerId = 0, PersistentGuid = "a", DisplayName = "A", TeamId = 0 },
+                    new PlayerIdentity { PlayerId = 1, PersistentGuid = "b", DisplayName = "B", TeamId = 1 },
+                    new PlayerIdentity { PlayerId = 2, PersistentGuid = "c", DisplayName = "C", TeamId = 0 },
+                    new PlayerIdentity { PlayerId = 3, PersistentGuid = "d", DisplayName = "D", TeamId = 1 }
+                }
+            };
+
+            game.StartMatch(config);
+            foreach (PlayerState player in players.Players)
+                player.Rack.Clear();
+            players.GetById(0).Score = 30;
+            players.GetById(1).Score = 20;
+            players.GetById(2).Score = 10;
+            players.GetById(3).Score = 20;
+            game.EndMatchManually();
+
+            Assert.IsTrue(game.Result.IsDraw);
+            Assert.AreEqual(-1, game.Result.WinnerPlayerId);
+            Assert.AreEqual(-1, game.Result.WinnerTeamId);
+            Assert.AreEqual(40, game.Result.TeamStandings[0].TotalScore);
+            Assert.AreEqual(40, game.Result.TeamStandings[1].TotalScore);
+        }
     }
 }

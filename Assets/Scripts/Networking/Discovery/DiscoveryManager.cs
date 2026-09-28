@@ -10,7 +10,7 @@ namespace AMath.Networking.Discovery
     /// Facade over LAN discovery. Owns the broadcaster (host role), the
     /// listener (client role) and the registry of currently visible rooms.
     ///
-    /// The registry is keyed by host IP, entries expire after
+    /// The registry is keyed by host IP and game port, entries expire after
     /// <see cref="RoomStaleSeconds"/> without a broadcast, and every change is
     /// published as <see cref="RoomListUpdatedEvent"/>. It also resolves
     /// room codes to host IPs — codes are pure user convenience; the
@@ -34,7 +34,7 @@ namespace AMath.Networking.Discovery
         private readonly LanBroadcastService _broadcaster;
         private readonly LanListenerService _listener;
 
-        private readonly Dictionary<string, RoomInfo> _roomsByAddress = new();
+        private readonly Dictionary<string, RoomInfo> _roomsByEndpoint = new();
         private readonly List<RoomInfo> _roomList = new();
         private readonly Action<string, RoomAdvertisement> _onAdvertisement; // cached: no per-frame closure
         private float _nextExpiryCheck;
@@ -84,7 +84,7 @@ namespace AMath.Networking.Discovery
         #region Host role
 
         /// <summary>Starts advertising this machine's room (host only).</summary>
-        public void StartAdvertising(RoomAdvertisement advertisement) => _broadcaster.Start(advertisement);
+        public bool StartAdvertising(RoomAdvertisement advertisement) => _broadcaster.Start(advertisement);
 
         /// <summary>Updates the advertised payload (player count, match state...).</summary>
         public void UpdateAdvertisement(RoomAdvertisement advertisement)
@@ -103,7 +103,7 @@ namespace AMath.Networking.Discovery
         /// <summary>Starts listening for rooms on the LAN.</summary>
         public void StartSearching()
         {
-            _roomsByAddress.Clear();
+            _roomsByEndpoint.Clear();
             _roomList.Clear();
             SearchFailed = !_listener.Start();
             PublishRoomList();
@@ -114,7 +114,7 @@ namespace AMath.Networking.Discovery
         {
             _listener.Stop();
             SearchFailed = false;
-            _roomsByAddress.Clear();
+            _roomsByEndpoint.Clear();
             _roomList.Clear();
             PublishRoomList();
         }
@@ -174,7 +174,8 @@ namespace AMath.Networking.Discovery
 
         private bool UpsertRoom(string address, RoomAdvertisement advertisement, float now)
         {
-            if (_roomsByAddress.TryGetValue(address, out RoomInfo existing))
+            string endpoint = RoomEndpointKey(address, advertisement.Port);
+            if (_roomsByEndpoint.TryGetValue(endpoint, out RoomInfo existing))
             {
                 existing.Advertisement = advertisement;
                 existing.LastSeenTime = now;
@@ -187,7 +188,7 @@ namespace AMath.Networking.Discovery
                 Advertisement = advertisement,
                 LastSeenTime = now
             };
-            _roomsByAddress.Add(address, room);
+            _roomsByEndpoint.Add(endpoint, room);
             _roomList.Add(room);
             return true;
         }
@@ -199,7 +200,8 @@ namespace AMath.Networking.Discovery
             {
                 if (now - _roomList[i].LastSeenTime > RoomStaleSeconds)
                 {
-                    _roomsByAddress.Remove(_roomList[i].HostAddress);
+                    _roomsByEndpoint.Remove(RoomEndpointKey(
+                        _roomList[i].HostAddress, _roomList[i].Advertisement.Port));
                     _roomList.RemoveAt(i);
                     changed = true;
                 }
@@ -210,6 +212,8 @@ namespace AMath.Networking.Discovery
 
         private void PublishRoomList() =>
             _eventBus.Publish(new RoomListUpdatedEvent { Rooms = _roomList });
+
+        private static string RoomEndpointKey(string address, int port) => $"{address}:{port}";
 
         #endregion
 

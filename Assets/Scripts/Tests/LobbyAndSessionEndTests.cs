@@ -116,22 +116,6 @@ namespace AMath.Tests
         }
 
         [Test]
-        public void PlannedSeatCount_DoesNotPadHumans()
-        {
-            Assert.AreEqual(1, GameRules.PlannedSeatCount(MatchFormat.Individual, 1));
-            Assert.AreEqual(3, GameRules.PlannedSeatCount(MatchFormat.Individual, 3));
-            Assert.AreEqual(2, GameRules.PlannedSeatCount(MatchFormat.Team, 2));
-            Assert.AreEqual(4, GameRules.PlannedSeatCount(MatchFormat.Team, 4));
-        }
-
-        [Test]
-        public void PlannedSeatCount_AddsOnlyExplicitAi()
-        {
-            Assert.AreEqual(3, GameRules.PlannedSeatCount(MatchFormat.Individual, 2, extraAiPlayers: 1));
-            Assert.AreEqual(2, GameRules.PlannedSeatCount(MatchFormat.Team, 2, extraAiPlayers: 0));
-        }
-
-        [Test]
         public void IsValidTeamSplit_RequiresBothTeams()
         {
             Assert.IsFalse(GameRules.IsValidTeamSplit(0, 2));

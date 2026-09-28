@@ -26,7 +26,7 @@ namespace AMath.Gameplay.Interaction
         /// <summary>Whether passing the turn is allowed.</summary>
         bool AllowsPass(out string error);
 
-        /// <summary>Whether exchanging tiles is allowed.</summary>
-        bool AllowsExchange(out string error);
+        /// <summary>Whether exchanging the given rack indices is allowed.</summary>
+        bool AllowsExchange(IReadOnlyList<int> rackIndices, out string error);
     }
 }

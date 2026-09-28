@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
+using System;
 
 namespace AMath.Networking.Discovery
 {
@@ -11,6 +12,32 @@ namespace AMath.Networking.Discovery
     /// </summary>
     public static class LanBroadcastTargets
     {
+        /// <summary>True when at least one active, non-loopback IPv4 interface can carry LAN traffic.</summary>
+        public static bool HasUsableLanInterface()
+        {
+            try
+            {
+                foreach (NetworkInterface networkInterface in NetworkInterface.GetAllNetworkInterfaces())
+                {
+                    if (networkInterface.OperationalStatus != OperationalStatus.Up
+                        || networkInterface.NetworkInterfaceType == NetworkInterfaceType.Loopback)
+                        continue;
+
+                    foreach (UnicastIPAddressInformation unicast in networkInterface.GetIPProperties().UnicastAddresses)
+                    {
+                        if (unicast.Address.AddressFamily == AddressFamily.InterNetwork)
+                            return true;
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+
+            return false;
+        }
+
         /// <summary>
         /// Returns distinct broadcast endpoints for <paramref name="port"/>, including
         /// <see cref="IPAddress.Broadcast"/> and each subnet-directed address.
@@ -22,25 +49,29 @@ namespace AMath.Networking.Discovery
 
             AddEndpoint(endpoints, seen, IPAddress.Broadcast, port);
 
-            foreach (NetworkInterface networkInterface in NetworkInterface.GetAllNetworkInterfaces())
+            try
             {
-                if (networkInterface.OperationalStatus != OperationalStatus.Up)
-                    continue;
-
-                if (networkInterface.NetworkInterfaceType == NetworkInterfaceType.Loopback)
-                    continue;
-
-                IPInterfaceProperties properties = networkInterface.GetIPProperties();
-                foreach (UnicastIPAddressInformation unicast in properties.UnicastAddresses)
+                foreach (NetworkInterface networkInterface in NetworkInterface.GetAllNetworkInterfaces())
                 {
-                    if (unicast.Address.AddressFamily != AddressFamily.InterNetwork)
+                    if (networkInterface.OperationalStatus != OperationalStatus.Up)
                         continue;
 
-                    IPAddress broadcast = ComputeBroadcastAddress(unicast.Address, unicast.IPv4Mask);
-                    if (broadcast != null)
-                        AddEndpoint(endpoints, seen, broadcast, port);
+                    if (networkInterface.NetworkInterfaceType == NetworkInterfaceType.Loopback)
+                        continue;
+
+                    IPInterfaceProperties properties = networkInterface.GetIPProperties();
+                    foreach (UnicastIPAddressInformation unicast in properties.UnicastAddresses)
+                    {
+                        if (unicast.Address.AddressFamily != AddressFamily.InterNetwork)
+                            continue;
+
+                        IPAddress broadcast = ComputeBroadcastAddress(unicast.Address, unicast.IPv4Mask);
+                        if (broadcast != null)
+                            AddEndpoint(endpoints, seen, broadcast, port);
+                    }
                 }
             }
+            catch (Exception) { }
 
             return endpoints;
         }

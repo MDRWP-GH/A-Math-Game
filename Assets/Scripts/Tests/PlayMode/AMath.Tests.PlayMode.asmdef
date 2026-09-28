@@ -1,0 +1,23 @@
+{
+    "name": "AMath.Tests.PlayMode",
+    "rootNamespace": "AMath.Tests",
+    "references": [
+        "AMath.Views",
+        "AMath.UI",
+        "AMath.Settings",
+        "UnityEngine.TestRunner"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [
+        "nunit.framework.dll"
+    ],
+    "autoReferenced": false,
+    "defineConstraints": [
+        "UNITY_INCLUDE_TESTS"
+    ],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

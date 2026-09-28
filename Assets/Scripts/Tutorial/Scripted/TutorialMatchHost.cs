@@ -23,7 +23,7 @@ namespace AMath.Tutorial.Scripted
         private const float BotThinkSeconds = 0.75f;
 
         private readonly IEventBus _eventBus;
-        private readonly ScriptedTutorialMatchScript _script;
+        private ScriptedTutorialMatchScript _script;
         private readonly ScriptedTurnInputConstraint _constraint;
         private readonly CommandRejectionTracker _rejectionTracker;
 
@@ -35,18 +35,18 @@ namespace AMath.Tutorial.Scripted
         public TutorialMatchHost(IEventBus eventBus, ILocalizedTextProvider text, ScriptedTutorialMatchScript script)
         {
             _eventBus = eventBus ?? throw new ArgumentNullException(nameof(eventBus));
-            _script = script ?? throw new ArgumentNullException(nameof(script));
+            SetScript(script);
             _constraint = new ScriptedTurnInputConstraint(text);
             var stateMachine = new GameStateMachine(_eventBus);
             Board = new BoardManager();
             Players = new PlayerManager(_eventBus);
+            Players.LocalPlayerId = ScriptedTutorialMatchScript.HumanPlayerId;
             Turns = new TurnManager(_eventBus);
             Game = new GameManager(_eventBus, stateMachine, Board, Players, Turns) { IsAuthority = true };
             Input = new TurnInputSession(_eventBus, Board, Players, _constraint);
             _rejectionTracker = new CommandRejectionTracker(_eventBus);
             Readers = new TutorialMatchReaders(Board, Players, Game, Turns, _rejectionTracker);
 
-            Players.LocalPlayerId = ScriptedTutorialMatchScript.HumanPlayerId;
             Input.Changed += RaiseChanged;
 
             _eventBus.Subscribe<TutorialStepChangedEvent>(OnTutorialStepChanged);
@@ -55,37 +55,34 @@ namespace AMath.Tutorial.Scripted
             _eventBus.Subscribe<CommandRejectedEvent>(OnCommandRejected);
         }
 
-        /// <summary>Authoritative match.</summary>
         public GameManager Game { get; }
-
-        /// <summary>Board domain.</summary>
         public BoardManager Board { get; }
-
-        /// <summary>Roster and racks.</summary>
         public PlayerManager Players { get; }
-
-        /// <summary>Turn cursor.</summary>
         public TurnManager Turns { get; }
-
-        /// <summary>Local human draft.</summary>
         public TurnInputSession Input { get; }
-
-        /// <summary>Read-only views for tutorial actions.</summary>
         public TutorialMatchReaders Readers { get; }
-
-        /// <summary>True while the player may place the current scripted equation.</summary>
+        public byte? GuidedRackTileId { get; private set; }
+        public IReadOnlyList<int> GuidedExchangeIndices { get; private set; } = Array.Empty<int>();
         public bool IsPlayerInputEnabled => _constraint.InputEnabled;
+        public bool IsPassActionEnabled => _constraint.PassEnabled;
+        public bool IsExchangeActionEnabled => _constraint.ExchangeEnabled;
 
-        /// <summary>Authored cells still waiting in the current player draft.</summary>
         public IReadOnlyList<TilePlacement> RemainingGuidePlacements =>
-            _constraint.InputEnabled
-                ? ScriptedPlacementRules.Remaining(_constraint.Expected, Input.PendingPlacements)
+            _constraint.InputEnabled && _constraint.PlacementEnabled
+                ? (IReadOnlyList<TilePlacement>)ScriptedPlacementRules.Remaining(
+                    _constraint.Expected,
+                    Input.PendingPlacements)
                 : Array.Empty<TilePlacement>();
 
-        /// <summary>Raised when the board, rack, draft or turn changes.</summary>
         public event Action Changed;
 
-        /// <inheritdoc />
+        public void SetScript(ScriptedTutorialMatchScript script)
+        {
+            _script = script ?? throw new ArgumentNullException(nameof(script));
+            if (Players != null)
+                Players.LocalPlayerId = ScriptedTutorialMatchScript.HumanPlayerId;
+        }
+
         public void Tick(float deltaTime)
         {
             if (!_botPending || Game.Phase != MatchPhase.Playing)
@@ -98,7 +95,6 @@ namespace AMath.Tutorial.Scripted
             PlayScriptedTurn(_script.Turns[1]);
         }
 
-        /// <inheritdoc />
         public void Dispose()
         {
             if (_disposed) return;
@@ -118,13 +114,23 @@ namespace AMath.Tutorial.Scripted
             {
                 CancelBot();
                 LockInput();
+                GuidedRackTileId = null;
+                GuidedExchangeIndices = Array.Empty<int>();
                 RaiseChanged();
                 return;
             }
 
-            bool rebuild = _alignedStepIndex < 0 || evt.StepIndex <= _alignedStepIndex;
+            // The pass and exchange lessons use fresh authored racks and a
+            // separate board. Entering their introductions must reset the
+            // match even when the tutorial advances forward from placement.
+            bool enteringLesson = evt.StepId == PremiumTutorialSequence.PassIntroStepId
+                || evt.StepId == PremiumTutorialSequence.ExchangeIntroStepId;
+            bool rebuild = _alignedStepIndex < 0 || evt.StepIndex <= _alignedStepIndex || enteringLesson;
             if (rebuild)
+            {
                 RestartMatchAndFastForward(evt.StepId);
+                RestorePendingPlacements(evt.StepId);
+            }
 
             ConfigureForStep(evt.StepId);
             _alignedStepIndex = evt.StepIndex;
@@ -139,32 +145,180 @@ namespace AMath.Tutorial.Scripted
             if (Game.Phase == MatchPhase.Playing || Game.Phase == MatchPhase.Paused)
                 Game.EndMatchManually();
 
-            Game.StartMatch(_script.Config, _script.OpeningRacks);
+            if (TutorialStepRouting.IsExchangeLessonRestart(stepId))
+            {
+                StartLessonMatch(_script.ExchangeLessonRack, _script.LessonBoard);
+                return;
+            }
 
-            int completed = CompletedTurnsBefore(stepId);
-            for (int i = 0; i < completed; i++)
+            if (TutorialStepRouting.IsPassLessonRestart(stepId))
+            {
+                StartLessonMatch(_script.PassLessonRack, _script.LessonBoard);
+                return;
+            }
+
+            Game.StartMatch(_script.Config, _script.OpeningRacks);
+            ApplyBoard(_script.InitialBoard);
+
+            int completed = TutorialStepRouting.CompletedTurnsBefore(stepId);
+            for (int i = 0; i < completed && i < _script.Turns.Count; i++)
                 PlayScriptedTurn(_script.Turns[i]);
+        }
+
+        private void StartLessonMatch(IReadOnlyList<byte> rack, IReadOnlyList<TilePlacement> board)
+        {
+            IReadOnlyList<IReadOnlyList<byte>> racks = rack.Count > 0
+                ? _script.OpeningRacks.Count > 1
+                    ? new IReadOnlyList<byte>[] { rack, _script.OpeningRacks[1] }
+                    : new IReadOnlyList<byte>[] { rack }
+                : _script.OpeningRacks;
+
+            Game.StartMatch(_script.Config, racks);
+            ApplyBoard(board.Count > 0 ? board : _script.InitialBoard);
+        }
+
+        private void ApplyBoard(IReadOnlyList<TilePlacement> placements)
+        {
+            for (int i = 0; i < placements.Count; i++)
+            {
+                TilePlacement placement = placements[i];
+                Board.Grid.Place(in placement);
+            }
+        }
+
+        private void RestorePendingPlacements(string stepId)
+        {
+            int count = TutorialStepRouting.PendingPlacementsBefore(stepId);
+            if (count <= 0)
+                return;
+
+            IReadOnlyList<TilePlacement> turn = ActiveHumanTurnPlacements();
+            PlayerState local = Players.GetById(Players.LocalPlayerId);
+            if (local == null)
+                return;
+
+            _constraint.InputEnabled = true;
+            _constraint.PlacementEnabled = true;
+            _constraint.Expected = turn;
+
+            for (int i = 0; i < count && i < turn.Count; i++)
+            {
+                TilePlacement placement = turn[i];
+                int rackIndex = FindRackIndex(local.Rack, placement.TileId);
+                if (rackIndex < 0)
+                    break;
+
+                Input.SelectFromRack(rackIndex);
+                Input.PendingDeclaration = placement.DeclaredAs == TilePlacement.NoDeclaration
+                    ? null
+                    : placement.DeclaredAs;
+                if (!Input.TryPlaceOnCell(placement.X, placement.Y, out string error))
+                {
+                    UnityEngine.Debug.LogWarning(
+                        $"[Tutorial] Could not restore draft for '{stepId}': {error}");
+                    break;
+                }
+            }
+        }
+
+        private static int FindRackIndex(IReadOnlyList<byte> rack, byte tileId)
+        {
+            for (int i = 0; i < rack.Count; i++)
+            {
+                if (rack[i] == tileId)
+                    return i;
+            }
+
+            return -1;
         }
 
         private void ConfigureForStep(string stepId)
         {
             CancelBot();
-            Input.ClearDraft();
+            GuidedRackTileId = null;
+            GuidedExchangeIndices = Array.Empty<int>();
+            _constraint.ExpectedExchangeIndices = Array.Empty<int>();
+            _constraint.PassEnabled = false;
+            _constraint.ExchangeEnabled = false;
 
-            if (stepId == IntroTutorialSequence.PlayerPlaceStepId)
+            if (TutorialStepRouting.TryGetSelectTile(stepId, out byte tileId))
             {
                 _constraint.InputEnabled = true;
-                _constraint.Expected = _script.Turns[0].Placements;
+                _constraint.PlacementEnabled = false;
+                _constraint.Expected = ActiveHumanTurnPlacements();
+                GuidedRackTileId = tileId;
+                return;
+            }
+
+            if (TutorialStepRouting.TryGetPlaceCell(stepId, out int x, out int y))
+            {
+                _constraint.InputEnabled = true;
+                _constraint.PlacementEnabled = true;
+                _constraint.Expected = SingleExpectedPlacement(x, y);
+                if (_constraint.Expected.Count > 0)
+                    GuidedRackTileId = _constraint.Expected[0].TileId;
+                return;
+            }
+
+            if (TutorialStepRouting.IsConfirmStep(stepId))
+            {
+                _constraint.InputEnabled = true;
+                _constraint.PlacementEnabled = true;
+                _constraint.Expected = ActiveHumanTurnPlacements();
+                return;
+            }
+
+            if (TutorialStepRouting.IsPassStep(stepId))
+            {
+                _constraint.InputEnabled = false;
+                _constraint.PlacementEnabled = false;
+                _constraint.PassEnabled = true;
+                _constraint.Expected = Array.Empty<TilePlacement>();
+                return;
+            }
+
+            if (TutorialStepRouting.IsExchangeStep(stepId))
+            {
+                _constraint.InputEnabled = false;
+                _constraint.PlacementEnabled = false;
+                _constraint.ExchangeEnabled = true;
+                _constraint.Expected = Array.Empty<TilePlacement>();
+                GuidedExchangeIndices = TutorialAuthoredBoard.Premium.ExchangeIndices;
+                _constraint.ExpectedExchangeIndices = TutorialAuthoredBoard.Premium.ExchangeIndices;
                 return;
             }
 
             LockInput();
 
-            if (stepId == IntroTutorialSequence.OpponentStepId)
+            if (TutorialStepRouting.IsOpponentStep(stepId))
             {
                 _botPending = true;
                 _botThinkRemaining = BotThinkSeconds;
             }
+        }
+
+        private IReadOnlyList<TilePlacement> ActiveHumanTurnPlacements()
+        {
+            for (int i = 0; i < _script.Turns.Count; i++)
+            {
+                if (_script.Turns[i].PlayerId == ScriptedTutorialMatchScript.HumanPlayerId)
+                    return _script.Turns[i].Placements;
+            }
+
+            return Array.Empty<TilePlacement>();
+        }
+
+        private IReadOnlyList<TilePlacement> SingleExpectedPlacement(int x, int y)
+        {
+            IReadOnlyList<TilePlacement> turn = ActiveHumanTurnPlacements();
+            for (int i = 0; i < turn.Count; i++)
+            {
+                TilePlacement placement = turn[i];
+                if (placement.X == x && placement.Y == y)
+                    return new[] { placement };
+            }
+
+            return Array.Empty<TilePlacement>();
         }
 
         private void PlayScriptedTurn(ScriptedTutorialTurn turn)
@@ -203,6 +357,10 @@ namespace AMath.Tutorial.Scripted
         private void LockInput()
         {
             _constraint.InputEnabled = false;
+            _constraint.PlacementEnabled = true;
+            _constraint.PassEnabled = false;
+            _constraint.ExchangeEnabled = false;
+            _constraint.ExpectedExchangeIndices = Array.Empty<int>();
             _constraint.Expected = Array.Empty<TilePlacement>();
         }
 
@@ -210,13 +368,6 @@ namespace AMath.Tutorial.Scripted
         {
             _botPending = false;
             _botThinkRemaining = 0f;
-        }
-
-        private static int CompletedTurnsBefore(string stepId)
-        {
-            if (stepId == IntroTutorialSequence.OpponentStepId) return 1;
-            if (stepId == IntroTutorialSequence.CompleteStepId) return 2;
-            return 0;
         }
 
         private void RaiseChanged() => Changed?.Invoke();

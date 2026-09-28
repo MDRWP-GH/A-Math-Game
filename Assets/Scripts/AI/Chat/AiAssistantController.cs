@@ -21,7 +21,7 @@ namespace AMath.AI.Chat
         private readonly Dictionary<string, IAiAssistantMode> _modes = new();
         private readonly IGameContextProvider _contextProvider;
         private readonly IAiRestrictionGuard _restrictionGuard;
-        private readonly IAiChatView _view;
+        private IAiChatView _view;
         private readonly ILocalizedTextProvider _textProvider;
 
         private CancellationTokenSource _requestCancellation;
@@ -71,6 +71,28 @@ namespace AMath.AI.Chat
                 CancelRequest();
         }
 
+        /// <summary>
+        /// Replaces the scene-owned view. Any answer requested by the outgoing
+        /// view is cancelled so it cannot appear in a newly-created window.
+        /// </summary>
+        public void AttachView(IAiChatView view)
+        {
+            if (view == null) throw new ArgumentNullException(nameof(view));
+            if (ReferenceEquals(_view, view)) return;
+
+            CancelRequest();
+            _view = view;
+        }
+
+        /// <summary>Releases a view only when it is still the active one.</summary>
+        public void DetachView(IAiChatView view)
+        {
+            if (!ReferenceEquals(_view, view)) return;
+
+            CancelRequest();
+            _view = null;
+        }
+
         /// <summary>Selects a registered assistant mode by stable id.</summary>
         public bool TrySelectMode(string modeId)
         {
@@ -84,7 +106,7 @@ namespace AMath.AI.Chat
         /// <inheritdoc />
         public void OpenChat()
         {
-            if (IsAvailable)
+            if (IsAvailable && _view != null)
                 _view.Open();
         }
 
@@ -94,23 +116,27 @@ namespace AMath.AI.Chat
         /// </summary>
         public async Task AskAsync(string question)
         {
+            IAiChatView view = _view;
+            if (view == null)
+                return;
+
             if (!IsAvailable || _selectedMode == null)
             {
-                _view.ShowError(_textProvider.GetText(AiLocalizationKeys.ModeUnavailable));
+                view.ShowError(_textProvider.GetText(AiLocalizationKeys.ModeUnavailable));
                 return;
             }
 
             if (string.IsNullOrWhiteSpace(question))
             {
-                _view.ShowError(_textProvider.GetText(AiLocalizationKeys.EmptyQuestion));
+                view.ShowError(_textProvider.GetText(AiLocalizationKeys.EmptyQuestion));
                 return;
             }
 
             CancelRequest();
             _requestCancellation = new CancellationTokenSource();
             CancellationToken token = _requestCancellation.Token;
-            _view.ShowUserMessage(question.Trim());
-            _view.SetBusy(true);
+            view.ShowUserMessage(question.Trim());
+            view.SetBusy(true);
 
             try
             {
@@ -119,9 +145,9 @@ namespace AMath.AI.Chat
                 if (!token.IsCancellationRequested)
                 {
                     if (_restrictionGuard.TryFilter(response, out string safeResponse))
-                        _view.ShowAssistantMessage(safeResponse);
+                        view.ShowAssistantMessage(safeResponse);
                     else
-                        _view.ShowError(_textProvider.GetText(AiLocalizationKeys.UnsafeResponse));
+                        view.ShowError(_textProvider.GetText(AiLocalizationKeys.UnsafeResponse));
                 }
             }
             catch (OperationCanceledException)
@@ -131,7 +157,7 @@ namespace AMath.AI.Chat
             catch (AiModeNotReadyException)
             {
                 if (!token.IsCancellationRequested)
-                    _view.ShowError(_textProvider.GetText(AiLocalizationKeys.ModeNotReady));
+                    view.ShowError(_textProvider.GetText(AiLocalizationKeys.ModeNotReady));
             }
             catch (AiBackendException exception)
             {
@@ -139,7 +165,7 @@ namespace AMath.AI.Chat
                 {
                     UnityEngine.Debug.LogWarning(
                         $"[AI] Backend request failed with HTTP status {exception.StatusCode}.");
-                    _view.ShowError(_textProvider.GetText(AiLocalizationKeys.RequestFailed));
+                    view.ShowError(_textProvider.GetText(AiLocalizationKeys.RequestFailed));
                 }
             }
             catch (Exception)
@@ -147,13 +173,13 @@ namespace AMath.AI.Chat
                 if (!token.IsCancellationRequested)
                 {
                     UnityEngine.Debug.LogWarning("[AI] Assistant request failed.");
-                    _view.ShowError(_textProvider.GetText(AiLocalizationKeys.RequestFailed));
+                    view.ShowError(_textProvider.GetText(AiLocalizationKeys.RequestFailed));
                 }
             }
             finally
             {
                 if (!token.IsCancellationRequested)
-                    _view.SetBusy(false);
+                    view.SetBusy(false);
             }
         }
 
@@ -163,7 +189,7 @@ namespace AMath.AI.Chat
             _requestCancellation?.Cancel();
             _requestCancellation?.Dispose();
             _requestCancellation = null;
-            _view.SetBusy(false);
+            _view?.SetBusy(false);
         }
 
         /// <inheritdoc />

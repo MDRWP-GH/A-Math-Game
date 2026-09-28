@@ -1,7 +1,12 @@
 using System.Collections.Generic;
+using System;
+using AMath.Core;
 using AMath.Networking.HostMigration;
+using AMath.Networking.RPC;
 using AMath.Networking.Room;
 using NUnit.Framework;
+using Mirror;
+using UnityEngine;
 
 namespace AMath.Tests
 {
@@ -80,11 +85,60 @@ namespace AMath.Tests
         [Test]
         public void ReconnectGrace_AllowsSeveralAttemptsWithinTheWindow()
         {
-            Assert.AreEqual(10f, HostMigrationManager.GraceSeconds);
+            Assert.AreEqual(10f, HostReconnectManager.GraceSeconds);
 
             // One attempt is not enough: the first try usually lands while
             // Mirror is still tearing the old client down.
-            Assert.Greater(HostMigrationManager.MaxReconnectAttempts, 1);
+            Assert.Greater(HostReconnectManager.MaxReconnectAttempts, 1);
+        }
+
+        [Test]
+        public void LobbyFormat_RepeatedAndInvalidUpdatesAreIgnored()
+        {
+            var root = new GameObject("Network Player", typeof(NetworkIdentity));
+            try
+            {
+                var player = root.AddComponent<NetworkPlayer>();
+
+                Assert.IsTrue(player.TrySetLobbyMatchFormat(MatchFormat.Team));
+                Assert.AreEqual(MatchFormat.Team, player.LobbyMatchFormat);
+                Assert.IsFalse(player.TrySetLobbyMatchFormat(MatchFormat.Team));
+                Assert.IsFalse(player.TrySetLobbyMatchFormat((MatchFormat)255));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(root);
+            }
+        }
+
+        [Test]
+        public void LobbyTurnTime_RepeatedAndInvalidUpdatesAreIgnored()
+        {
+            var root = new GameObject("Network Player Turn Time", typeof(NetworkIdentity));
+            try
+            {
+                var player = root.AddComponent<NetworkPlayer>();
+
+                Assert.IsTrue(player.TrySetLobbyTurnTimePreset(TurnTimePreset.Long));
+                Assert.AreEqual(TurnTimePreset.Long, player.LobbyTurnTimePreset);
+                Assert.IsFalse(player.TrySetLobbyTurnTimePreset(TurnTimePreset.Long));
+                Assert.AreEqual(TurnTimePreset.Long, player.LobbyTurnTimePreset);
+                Assert.IsFalse(player.TrySetLobbyTurnTimePreset((TurnTimePreset)99));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(root);
+            }
+        }
+
+        [Test]
+        public void LegacyHostMigrationName_RemainsACompatibilityWrapper()
+        {
+#pragma warning disable CS0618
+            Type legacy = typeof(HostMigrationManager);
+#pragma warning restore CS0618
+            Assert.IsTrue(typeof(HostReconnectManager).IsAssignableFrom(legacy));
+            Assert.IsNotNull(Attribute.GetCustomAttribute(legacy, typeof(ObsoleteAttribute)));
         }
 
         #endregion

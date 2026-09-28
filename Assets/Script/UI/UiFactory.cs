@@ -1,9 +1,13 @@
 using System;
+using System.Runtime.CompilerServices;
 using AMath.Art;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 using UnityEngine.UI;
+
+[assembly: InternalsVisibleTo("AMath.Tests.EditMode")]
+[assembly: InternalsVisibleTo("AMath.Tests.PlayMode")]
 
 namespace AMath.UI
 {
@@ -63,6 +67,9 @@ namespace AMath.UI
             buttonObject.transform.SetParent(parent, false);
 
             var image = buttonObject.GetComponent<Image>();
+            image.sprite = PixelButtonSprite;
+            image.type = Image.Type.Sliced;
+            image.pixelsPerUnitMultiplier = 0.5f;
             image.color = Color.white;
 
             var button = buttonObject.GetComponent<Button>();
@@ -259,6 +266,8 @@ namespace AMath.UI
                 fitter.aspectRatio = sprite.rect.width / sprite.rect.height;
             }
 
+            BackgroundMotion.TryAttach(background, resourceName);
+
             return background;
         }
 
@@ -421,6 +430,76 @@ namespace AMath.UI
 
         private static Sprite _circleSprite;
 
+        /// <summary>A cached, point-filtered nine-slice with stepped corners and a pixel bevel.</summary>
+        internal static Sprite PixelButtonSprite
+        {
+            get
+            {
+                if (_pixelButtonSprite != null)
+                    return _pixelButtonSprite;
+
+                const int size = 24;
+                var texture = new Texture2D(size, size, TextureFormat.RGBA32, false)
+                {
+                    filterMode = FilterMode.Point,
+                    wrapMode = TextureWrapMode.Clamp
+                };
+                for (int y = 0; y < size; y++)
+                {
+                    int rowInset = y == 0 || y == size - 1 ? 6
+                        : y < 3 || y >= size - 3 ? 3
+                        : y < 6 || y >= size - 6 ? 1 : 0;
+                    for (int x = 0; x < size; x++)
+                    {
+                        if (x < rowInset || x >= size - rowInset)
+                        {
+                            texture.SetPixel(x, y, Color.clear);
+                            continue;
+                        }
+
+                        bool edge = x <= rowInset + 1 || x >= size - rowInset - 2
+                            || y <= 1 || y >= size - 2;
+                        float shade = edge
+                            ? (y < size / 2 && x < size - rowInset - 2 ? 0.88f : 0.56f)
+                            : (y == 3 ? 0.94f : 1f);
+                        texture.SetPixel(x, y, new Color(shade, shade, shade, 1f));
+                    }
+                }
+
+                texture.Apply(false, true);
+                _pixelButtonSprite = Sprite.Create(
+                    texture, new Rect(0f, 0f, size, size), new Vector2(0.5f, 0.5f),
+                    100f, 0, SpriteMeshType.FullRect, new Vector4(7f, 7f, 7f, 7f));
+                return _pixelButtonSprite;
+            }
+        }
+
+        private static Sprite _pixelButtonSprite;
+
+        /// <summary>Keeps an option visibly selected independent of Button hover or keyboard focus.</summary>
+        internal static void SetChoiceSelected(Button button, bool selected)
+        {
+            if (button == null)
+                return;
+
+            Transform existing = button.transform.Find("Selected Fill");
+            if (existing == null && !selected)
+                return;
+
+            Image fill = existing != null
+                ? existing.GetComponent<Image>()
+                : CreateImage("Selected Fill", button.transform, PixelButtonSprite, UiPalette.Primary);
+            if (existing == null)
+            {
+                fill.type = Image.Type.Sliced;
+                fill.pixelsPerUnitMultiplier = 0.5f;
+                fill.raycastTarget = false;
+                Stretch(fill.rectTransform);
+                fill.transform.SetAsFirstSibling();
+            }
+            fill.gameObject.SetActive(selected);
+        }
+
         /// <summary>Creates an icon-only button with the standard hover treatment.</summary>
         public static Button CreateIconButton(
             Transform parent,
@@ -582,6 +661,24 @@ namespace AMath.UI
             {
                 EventSystem.current.SetSelectedGameObject(selectable.gameObject);
             }
+        }
+
+        /// <summary>Selects the first visible, enabled candidate for keyboard/gamepad navigation.</summary>
+        public static Selectable SelectFirstInteractable(params Selectable[] candidates)
+        {
+            if (candidates == null)
+                return null;
+
+            foreach (Selectable candidate in candidates)
+            {
+                if (candidate == null || !candidate.IsActive() || !candidate.IsInteractable())
+                    continue;
+
+                Select(candidate);
+                return candidate;
+            }
+
+            return null;
         }
 
         /// <summary>Returns the project's UI Cancel action when one is configured.</summary>

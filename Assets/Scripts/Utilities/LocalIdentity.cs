@@ -1,4 +1,5 @@
 using System;
+using AMath.Accounts;
 using UnityEngine;
 
 namespace AMath.Utilities
@@ -38,6 +39,11 @@ namespace AMath.Utilities
         {
             get
             {
+                EnsureArgumentsParsed();
+                if (AccountSession.IsAuthenticated && string.IsNullOrEmpty(_commandLineGuid) &&
+                    PortableProfile.TryLoad(AccountSession.ProfileRoot, out PortableProfileData profile, out _))
+                    return profile.PersistentGuid;
+
                 if (!string.IsNullOrEmpty(_cachedGuid))
                     return _cachedGuid;
 
@@ -63,6 +69,10 @@ namespace AMath.Utilities
             get
             {
                 EnsureArgumentsParsed();
+                if (string.IsNullOrEmpty(_overrideName) && AccountSession.IsAuthenticated &&
+                    PortableProfile.TryLoad(AccountSession.ProfileRoot, out PortableProfileData profile, out _) &&
+                    !string.IsNullOrWhiteSpace(profile.PlayerName))
+                    return profile.PlayerName;
                 return string.IsNullOrEmpty(_overrideName)
                     ? PlayerPrefs.GetString(NameKey, SystemInfo.deviceName)
                     : _overrideName;
@@ -75,6 +85,14 @@ namespace AMath.Utilities
                 // let the menu quietly write over it.
                 if (!string.IsNullOrEmpty(_overrideName))
                     return;
+
+                if (AccountSession.IsAuthenticated &&
+                    PortableProfile.TryLoad(AccountSession.ProfileRoot, out PortableProfileData profile, out _))
+                {
+                    profile.PlayerName = value;
+                    PortableProfile.TrySave(AccountSession.ProfileRoot, profile, out _);
+                    return;
+                }
 
                 PlayerPrefs.SetString(NameKey, value);
                 PlayerPrefs.Save();
@@ -101,7 +119,10 @@ namespace AMath.Utilities
             for (int i = 0; i < args.Length - 1; i++)
             {
                 if (string.Equals(args[i], GuidArgument, StringComparison.OrdinalIgnoreCase))
+                {
                     _cachedGuid = args[i + 1];
+                    _commandLineGuid = _cachedGuid;
+                }
                 else if (string.Equals(args[i], NameArgument, StringComparison.OrdinalIgnoreCase))
                     _overrideName = args[i + 1];
             }
@@ -113,5 +134,7 @@ namespace AMath.Utilities
                     $"name: {(string.IsNullOrEmpty(_overrideName) ? "-" : _overrideName)}).");
             }
         }
+
+        private static string _commandLineGuid;
     }
 }

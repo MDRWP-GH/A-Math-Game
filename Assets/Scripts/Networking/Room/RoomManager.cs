@@ -31,6 +31,7 @@ namespace AMath.Networking.Room
         private readonly DiscoveryManager _discovery;
         private readonly GameManager _gameManager;
         private readonly AMathNetworkManager _networkManager;
+        private readonly Func<bool> _networkAvailable;
 
         // Kept so Dispose can unsubscribe the exact delegates that were registered.
         private readonly Action<PlayerRosterChangedEvent> _onRosterChanged;
@@ -45,13 +46,15 @@ namespace AMath.Networking.Room
             RoomSession session,
             DiscoveryManager discovery,
             GameManager gameManager,
-            AMathNetworkManager networkManager)
+            AMathNetworkManager networkManager,
+            Func<bool> networkAvailable = null)
         {
             _eventBus = eventBus;
             _session = session;
             _discovery = discovery;
             _gameManager = gameManager;
             _networkManager = networkManager;
+            _networkAvailable = networkAvailable ?? LanBroadcastTargets.HasUsableLanInterface;
 
             // Keep the advertised payload current without polling. The handlers
             // are stored so Dispose can unsubscribe the exact same delegates.
@@ -67,10 +70,19 @@ namespace AMath.Networking.Room
 
         /// <summary>Creates a room, starts hosting and begins advertising on the LAN.</summary>
         public bool CreateRoom(string roomName, int maxPlayers, ushort port = TransportConfigurator.DefaultPort)
+            => TryCreateRoom(roomName, maxPlayers, out _, port);
+
+        /// <summary>Creates a room and returns a stable reason when startup cannot complete.</summary>
+        public bool TryCreateRoom(
+            string roomName,
+            int maxPlayers,
+            out RoomOperationError error,
+            ushort port = TransportConfigurator.DefaultPort)
         {
-            if (NetworkServer.active || NetworkClient.active)
+            error = EvaluateCreateAvailability(
+                _session.IsActive, NetworkServer.active, NetworkClient.active, _networkAvailable());
+            if (error != RoomOperationError.None)
             {
-                Debug.LogWarning("[Room] Already in a session.");
                 return false;
             }
 
@@ -83,24 +95,34 @@ namespace AMath.Networking.Room
             _session.IsHost = true;
             _session.IsActive = true;
 
-            ConfigureTransport(port);
-            _networkManager.maxConnections = maxPlayers;
-            _networkManager.StartHost();
+            try
+            {
+                if (!ConfigureTransport(port))
+                    throw new InvalidOperationException("The active transport is not KCP.");
 
-            _discovery.StopSearching();
-            _discovery.StartAdvertising(BuildAdvertisement());
+                _networkManager.maxConnections = maxPlayers;
+                _discovery.StopSearching();
+                if (!_discovery.StartAdvertising(BuildAdvertisement()))
+                    throw new InvalidOperationException("LAN room advertising could not start.");
+
+                _networkManager.StartHost();
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[Room] Could not start host: {ex.Message}");
+                RollbackFailedStart();
+                error = _networkAvailable()
+                    ? RoomOperationError.TransportFailed
+                    : RoomOperationError.NetworkUnavailable;
+                return false;
+            }
 
             Debug.Log($"[Room] Hosting '{_session.RoomName}' code {_session.RoomCode} on port {port}.");
             return true;
         }
 
-        /// <summary>
-        /// Host-only: finalizes seats and starts the match. Seat order is host
-        /// first, then join order. Humans only unless
-        /// <paramref name="extraAiPlayers"/> adds scripted AI seats
-        /// (tutorial/rematch).
-        /// </summary>
-        public bool StartMatch(MatchFormat format = MatchFormat.Individual, int extraAiPlayers = 0)
+        /// <summary>Host-only: assigns human seats and starts the match.</summary>
+        public bool StartMatch(MatchFormat format = MatchFormat.Individual)
         {
             if (!NetworkServer.active)
             {
@@ -131,34 +153,14 @@ namespace AMath.Networking.Room
                 }
             }
 
-            int aiCount = extraAiPlayers > 0 ? extraAiPlayers : 0;
-            int totalSeats = members.Count + aiCount;
-
-            if (totalSeats > GameRules.MaxPlayers)
-            {
-                Debug.LogWarning($"[Room] Too many seats (max {GameRules.MaxPlayers}).");
-                return false;
-            }
-
-            var config = new MatchConfig
-            {
-                RandomSeed = Guid.NewGuid().GetHashCode(),
-                TurnSeconds = GameRules.DefaultTurnSeconds,
-                GameVersion = Application.version,
-                Format = format
-            };
-
-            // Colours the players picked in the lobby are frozen into the config
-            // here, and AI seats take whatever is left so no two seats clash.
-            var takenColors = new HashSet<byte>();
+            var humans = new List<PlayerIdentity>(members.Count);
 
             for (int seat = 0; seat < members.Count; seat++)
             {
                 members[seat].ServerAssignSeat(seat);
                 byte colorId = members[seat].ColorId;
-                takenColors.Add(colorId);
 
-                config.Players.Add(new PlayerIdentity
+                humans.Add(new PlayerIdentity
                 {
                     PlayerId = seat,
                     PersistentGuid = members[seat].PersistentGuid,
@@ -169,22 +171,12 @@ namespace AMath.Networking.Room
                 });
             }
 
-            for (int i = 0; i < aiCount; i++)
-            {
-                int seat = members.Count + i;
-                byte colorId = PlayerColorPalette.FirstUnused(takenColors.Contains, config.RandomSeed + seat);
-                takenColors.Add(colorId);
-
-                config.Players.Add(new PlayerIdentity
-                {
-                    PlayerId = seat,
-                    PersistentGuid = $"ai:{config.RandomSeed}:{seat}",
-                    DisplayName = aiCount == 1 ? "AI" : $"AI {i + 1}",
-                    IsAi = true,
-                    TeamId = format == MatchFormat.Team ? seat % GameRules.TeamCount : -1,
-                    ColorId = colorId
-                });
-            }
+            MatchConfig config = BuildMatchConfig(
+                humans,
+                format,
+                Guid.NewGuid().GetHashCode(),
+                GameRules.TurnSecondsFor(_session.SelectedTurnTimePreset),
+                Application.version);
 
             // NetworkGameState (server side) hears MatchStartedEvent and
             // broadcasts the config so every client starts identically.
@@ -240,33 +232,20 @@ namespace AMath.Networking.Room
 
         /// <summary>Joins a discovered room by connecting to its socket-verified address.</summary>
         public bool JoinRoom(RoomInfo room)
+            => TryJoinRoom(room, out _);
+
+        /// <summary>Connects to a discovered room and reports why it was rejected locally.</summary>
+        public bool TryJoinRoom(RoomInfo room, out RoomOperationError error)
         {
-            if (NetworkServer.active || NetworkClient.active)
-            {
-                Debug.LogWarning("[Room] Already in a session.");
+            error = EvaluateJoinAvailability(
+                room,
+                _session.IsActive,
+                NetworkServer.active,
+                NetworkClient.active,
+                _networkAvailable(),
+                _gameManager?.Config != null);
+            if (error != RoomOperationError.None)
                 return false;
-            }
-
-            if (room?.Advertisement == null || string.IsNullOrWhiteSpace(room.HostAddress))
-            {
-                Debug.LogWarning("[Room] Cannot join an invalid room advertisement.");
-                return false;
-            }
-
-            // A match advertisement is only a reconnect target. Reject a fresh
-            // join here so users do not wait for an authentication failure that
-            // cannot result in a seat.
-            if (room.Advertisement.MatchInProgress && _gameManager.Config == null)
-            {
-                Debug.LogWarning("[Room] Cannot join a match that is already in progress.");
-                return false;
-            }
-
-            if (!room.Advertisement.MatchInProgress && !room.IsJoinable)
-            {
-                Debug.LogWarning("[Room] Cannot join because the room is full.");
-                return false;
-            }
 
             _session.RoomName = room.Advertisement.RoomName;
             _session.RoomCode = room.Advertisement.RoomCode;
@@ -275,9 +254,23 @@ namespace AMath.Networking.Room
             _session.IsHost = false;
             _session.IsActive = true;
 
-            ConfigureTransport(_session.Port);
-            _networkManager.networkAddress = room.HostAddress;
-            _networkManager.StartClient();
+            try
+            {
+                if (!ConfigureTransport(_session.Port))
+                    throw new InvalidOperationException("The active transport is not KCP.");
+
+                _networkManager.networkAddress = room.HostAddress;
+                _networkManager.StartClient();
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[Room] Could not start client: {ex.Message}");
+                RollbackFailedStart();
+                error = _networkAvailable()
+                    ? RoomOperationError.TransportFailed
+                    : RoomOperationError.NetworkUnavailable;
+                return false;
+            }
 
             Debug.Log($"[Room] Joining '{room.Advertisement.RoomName}' at {room.HostAddress}:{room.Advertisement.Port}.");
             return true;
@@ -293,21 +286,26 @@ namespace AMath.Networking.Room
         /// </summary>
         public bool JoinByCode(string code, out string error)
         {
-            error = null;
+            bool joined = TryJoinByCode(code, out RoomOperationError operationError);
+            error = joined ? null : RoomOperationErrorText.LocalizationKey(operationError);
+            return joined;
+        }
 
+        public bool TryJoinByCode(string code, out RoomOperationError error)
+        {
             if (!RoomCodeGenerator.IsValidFormat(code))
             {
-                error = "ui.play.err_code_format";
+                error = RoomOperationError.CodeInvalid;
                 return false;
             }
 
             if (!_discovery.TryResolveRoomCode(code, out RoomInfo room))
             {
-                error = "ui.play.err_code_not_found";
+                error = RoomOperationError.CodeNotFound;
                 return false;
             }
 
-            return JoinRoom(room);
+            return TryJoinRoom(room, out error);
         }
 
         #endregion
@@ -349,12 +347,113 @@ namespace AMath.Networking.Room
 
         #region Internals
 
-        private void ConfigureTransport(ushort port)
+        private bool ConfigureTransport(ushort port)
         {
             if (Mirror.Transport.active is KcpTransport kcp)
+            {
                 TransportConfigurator.Configure(kcp, port);
-            else
-                Debug.LogError("[Room] Active transport is not KcpTransport.");
+                return true;
+            }
+
+            Debug.LogError("[Room] Active transport is not KcpTransport.");
+            return false;
+        }
+
+        internal static RoomOperationError EvaluateCreateAvailability(
+            bool sessionActive,
+            bool serverActive,
+            bool clientActive,
+            bool networkAvailable)
+        {
+            if (sessionActive || serverActive || clientActive)
+                return RoomOperationError.AlreadyInSession;
+            return networkAvailable ? RoomOperationError.None : RoomOperationError.NetworkUnavailable;
+        }
+
+        internal static RoomOperationError EvaluateJoinAvailability(
+            RoomInfo room,
+            bool sessionActive,
+            bool serverActive,
+            bool clientActive,
+            bool networkAvailable,
+            bool hasExistingMatch)
+        {
+            if (sessionActive || serverActive || clientActive)
+                return RoomOperationError.AlreadyInSession;
+            if (!networkAvailable)
+                return RoomOperationError.NetworkUnavailable;
+            if (room?.Advertisement == null
+                || string.IsNullOrWhiteSpace(room.HostAddress)
+                || room.Advertisement.Port <= 0
+                || room.Advertisement.Port > ushort.MaxValue
+                || !RoomCodeGenerator.IsValidFormat(room.Advertisement.RoomCode)
+                || room.Advertisement.MaxPlayers < GameRules.MinPlayers
+                || room.Advertisement.MaxPlayers > GameRules.MaxPlayers
+                || room.Advertisement.CurrentPlayers < 0)
+                return RoomOperationError.InvalidRoom;
+            if (room.Advertisement.MatchInProgress && !hasExistingMatch)
+                return RoomOperationError.MatchStarted;
+            if (!room.Advertisement.MatchInProgress && !room.IsJoinable)
+                return RoomOperationError.RoomFull;
+            return RoomOperationError.None;
+        }
+
+        internal static MatchConfig BuildMatchConfig(
+            IReadOnlyList<PlayerIdentity> humans,
+            MatchFormat format,
+            int randomSeed,
+            int turnSeconds,
+            string gameVersion)
+        {
+            if (humans == null)
+                throw new ArgumentNullException(nameof(humans));
+            if (!GameRules.IsValidHumanRoster(humans.Count))
+                throw new ArgumentOutOfRangeException(nameof(humans));
+
+            var config = new MatchConfig
+            {
+                RandomSeed = randomSeed,
+                TurnSeconds = turnSeconds,
+                GameVersion = gameVersion,
+                Format = format
+            };
+
+            for (int seat = 0; seat < humans.Count; seat++)
+            {
+                PlayerIdentity human = humans[seat]
+                    ?? throw new ArgumentException("Human identities cannot contain null entries.", nameof(humans));
+                config.Players.Add(new PlayerIdentity
+                {
+                    PlayerId = seat,
+                    PersistentGuid = human.PersistentGuid,
+                    DisplayName = human.DisplayName,
+                    IsAi = false,
+                    TeamId = format == MatchFormat.Team ? human.TeamId : -1,
+                    ColorId = human.ColorId
+                });
+            }
+
+            return config;
+        }
+
+        private void RollbackFailedStart()
+        {
+            _discovery.StopAdvertising();
+            _session.IsActive = false;
+
+            try
+            {
+                if (NetworkServer.active)
+                    _networkManager.StopHost();
+                else if (NetworkClient.active)
+                    _networkManager.StopClient();
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[Room] Transport rollback reported: {ex.Message}");
+            }
+
+            _session.Reset();
         }
 
         private RoomAdvertisement BuildAdvertisement() => new()

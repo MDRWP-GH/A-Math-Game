@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using AMath.Core;
 using AMath.Core.Commands;
 using AMath.Core.Events;
@@ -32,14 +33,20 @@ namespace AMath.Tests
             public ReplayManager Replay;
         }
 
-        private static Rig CreateRig(bool authority = true)
+        private sealed class FakeMatchClock : IMatchClock
+        {
+            public long UtcNowTicks { get; set; }
+            public double MonotonicSeconds { get; set; }
+        }
+
+        private static Rig CreateRig(bool authority = true, IMatchClock clock = null)
         {
             var bus = new EventBus();
             var stateMachine = new GameStateMachine(bus);
             var board = new BoardManager();
             var players = new PlayerManager(bus);
             var turns = new TurnManager(bus);
-            var game = new GameManager(bus, stateMachine, board, players, turns) { IsAuthority = authority };
+            var game = new GameManager(bus, stateMachine, board, players, turns, clock) { IsAuthority = authority };
             var replay = new ReplayManager(bus);
 
             return new Rig
@@ -115,6 +122,39 @@ namespace AMath.Tests
         }
 
         [Test]
+        public void TerminalTurn_ReachesReplayBeforeMatchFinishedObservers()
+        {
+            Rig rig = CreateRig();
+            var terminalOrder = new List<string>();
+            int replayCountAtFinish = -1;
+
+            rig.Bus.Subscribe<TurnResolvedEvent>(evt =>
+            {
+                if (evt.Record.EndedMatch)
+                    terminalOrder.Add("turn");
+            });
+            rig.Bus.Subscribe<MatchFinishedEvent>(_ =>
+            {
+                terminalOrder.Add("finished");
+                replayCountAtFinish = rig.Replay.Log.Events.Count;
+            });
+
+            rig.Game.StartMatch(TwoPlayerConfig(31415));
+            int submittedTurns = 0;
+            while (rig.Game.Phase == MatchPhase.Playing && submittedTurns < 10)
+            {
+                Assert.IsTrue(rig.Game.SubmitCommand(
+                    rig.Turns.CurrentPlayerId,
+                    new PassTurnCommand(),
+                    out _).Success);
+                submittedTurns++;
+            }
+
+            CollectionAssert.AreEqual(new[] { "turn", "finished" }, terminalOrder);
+            Assert.AreEqual(submittedTurns, replayCountAtFinish);
+        }
+
+        [Test]
         public void Replay_ReconstructsIdenticalState()
         {
             Rig live = CreateRig();
@@ -171,9 +211,14 @@ namespace AMath.Tests
                 Assert.IsTrue(migrated.Game.SubmitCommand(actor, new PassTurnCommand(), out _).Success);
             }
 
-            Assert.AreEqual(
-                JsonUtility.ToJson(live.Game.CaptureSnapshot()),
-                JsonUtility.ToJson(migrated.Game.CaptureSnapshot()));
+            GameStateSnapshot liveSnapshot = live.Game.CaptureSnapshot();
+            GameStateSnapshot migratedSnapshot = migrated.Game.CaptureSnapshot();
+            Assert.That(migratedSnapshot.MatchElapsedSeconds,
+                Is.EqualTo(liveSnapshot.MatchElapsedSeconds).Within(1d));
+            // Wall time is intentionally not deterministic match state.
+            liveSnapshot.MatchElapsedSeconds = 0d;
+            migratedSnapshot.MatchElapsedSeconds = 0d;
+            Assert.AreEqual(JsonUtility.ToJson(liveSnapshot), JsonUtility.ToJson(migratedSnapshot));
         }
 
         /// <summary>
@@ -223,6 +268,147 @@ namespace AMath.Tests
 
             Assert.IsFalse(ReplayReconstructor.TryReconstruct(log, int.MaxValue, out _, out string error));
             Assert.AreEqual("Replay has no events.", error);
+        }
+
+        [Test]
+        public void MatchDuration_UsesMonotonicClock_WhenUtcMovesBackward()
+        {
+            long started = new System.DateTime(2026, 9, 16, 0, 0, 0, System.DateTimeKind.Utc).Ticks;
+            var clock = new FakeMatchClock { UtcNowTicks = started, MonotonicSeconds = 100d };
+            Rig rig = CreateRig(clock: clock);
+            rig.Game.StartMatch(TwoPlayerConfig(71));
+
+            clock.MonotonicSeconds = 112.9d;
+            clock.UtcNowTicks = started - System.TimeSpan.TicksPerHour;
+            rig.Game.EndMatchManually();
+
+            Assert.AreEqual(12, rig.Game.Result.DurationSeconds);
+            Assert.GreaterOrEqual(rig.Game.Result.EndedUtcTicks, started + 12 * System.TimeSpan.TicksPerSecond);
+        }
+
+        [Test]
+        public void SnapshotRestore_ContinuesCapturedElapsedTime()
+        {
+            long started = new System.DateTime(2026, 9, 16, 0, 0, 0, System.DateTimeKind.Utc).Ticks;
+            var firstClock = new FakeMatchClock { UtcNowTicks = started, MonotonicSeconds = 10d };
+            Rig first = CreateRig(clock: firstClock);
+            first.Game.StartMatch(TwoPlayerConfig(72));
+            firstClock.MonotonicSeconds = 25.5d;
+            GameStateSnapshot snapshot = first.Game.CaptureSnapshot();
+
+            var restoredClock = new FakeMatchClock
+            {
+                UtcNowTicks = started + System.TimeSpan.TicksPerHour,
+                MonotonicSeconds = 100d
+            };
+            Rig restored = CreateRig(clock: restoredClock);
+            restored.Game.RestoreSnapshot(snapshot);
+            restoredClock.MonotonicSeconds = 104.75d;
+            restored.Game.EndMatchManually();
+
+            Assert.AreEqual(20, restored.Game.Result.DurationSeconds);
+        }
+
+        [Test]
+        public void AuthoritativeResult_IsPublishedOnce_AndReplacesClientTiming()
+        {
+            long started = new System.DateTime(2026, 9, 16, 0, 0, 0, System.DateTimeKind.Utc).Ticks;
+            var hostClock = new FakeMatchClock { UtcNowTicks = started, MonotonicSeconds = 0d };
+            var clientClock = new FakeMatchClock { UtcNowTicks = started + 100, MonotonicSeconds = 50d };
+            Rig host = CreateRig(clock: hostClock);
+            Rig client = CreateRig(authority: false, clock: clientClock);
+            host.Game.StartMatch(TwoPlayerConfig(73));
+            client.Game.StartMatch(TwoPlayerConfig(73));
+
+            int clientFinished = 0;
+            client.Bus.Subscribe<MatchFinishedEvent>(_ => clientFinished++);
+            hostClock.MonotonicSeconds = 42.8d;
+            hostClock.UtcNowTicks = started + 42 * System.TimeSpan.TicksPerSecond;
+            host.Game.EndMatchManually();
+
+            Assert.IsTrue(client.Game.ApplyAuthoritativeResult(host.Game.Result));
+            Assert.IsTrue(client.Game.ApplyAuthoritativeResult(host.Game.Result));
+            Assert.AreEqual(1, clientFinished);
+            Assert.AreEqual(42, client.Game.Result.DurationSeconds);
+            Assert.AreEqual(host.Game.Result.EndedUtcTicks, client.Game.Result.EndedUtcTicks);
+            Assert.AreEqual(MatchPhase.Finished, client.Game.Phase);
+        }
+
+        [Test]
+        public void ReplicatedFinishedPhase_BeforeTerminalTurn_StillRecordsFinalTurn()
+        {
+            Rig host = CreateRig();
+            Rig client = CreateRig(authority: false);
+            host.Game.StartMatch(TwoPlayerConfig(74));
+            client.Game.StartMatch(TwoPlayerConfig(74));
+
+            TurnRecord terminal = null;
+            for (int i = 0; i < 4; i++)
+            {
+                Assert.IsTrue(host.Game.SubmitCommand(
+                    host.Turns.CurrentPlayerId,
+                    new PassTurnCommand(),
+                    out TurnRecord record).Success);
+                if (record.EndedMatch)
+                    terminal = record;
+                else
+                    Assert.IsTrue(client.Game.ApplyReplicatedRecord(record));
+            }
+
+            Assert.NotNull(terminal);
+            client.StateMachine.RestoreTo(MatchPhase.Finished);
+            Assert.IsTrue(client.Game.ApplyReplicatedRecord(terminal));
+            Assert.AreEqual(4, client.Replay.Log.Events.Count);
+
+            int finished = 0;
+            client.Bus.Subscribe<MatchFinishedEvent>(_ => finished++);
+            client.Game.ApplyAuthoritativeResult(host.Game.Result);
+            Assert.AreEqual(1, finished);
+        }
+
+        [Test]
+        public void InvalidTerminalRecord_AfterFinishedPhase_DoesNotReopenTheMatch()
+        {
+            Rig host = CreateRig();
+            Rig client = CreateRig(authority: false);
+            host.Game.StartMatch(TwoPlayerConfig(75));
+            client.Game.StartMatch(TwoPlayerConfig(75));
+
+            TurnRecord terminal = null;
+            for (int i = 0; i < 4; i++)
+            {
+                Assert.IsTrue(host.Game.SubmitCommand(
+                    host.Turns.CurrentPlayerId, new PassTurnCommand(), out TurnRecord record).Success);
+                if (record.EndedMatch)
+                    terminal = record;
+                else
+                    Assert.IsTrue(client.Game.ApplyReplicatedRecord(record));
+            }
+
+            Assert.NotNull(terminal);
+            client.StateMachine.RestoreTo(MatchPhase.Finished);
+            var future = new TurnRecord
+            {
+                TurnNumber = terminal.TurnNumber + 1,
+                EndedMatch = true
+            };
+            Assert.IsFalse(client.Game.ApplyReplicatedRecord(future));
+            Assert.AreEqual(MatchPhase.Finished, client.Game.Phase);
+
+            var invalidActor = new TurnRecord
+            {
+                TurnNumber = terminal.TurnNumber,
+                PlayerId = 99,
+                CommandType = terminal.CommandType,
+                CommandPayload = terminal.CommandPayload,
+                EndedMatch = true
+            };
+            Assert.IsFalse(client.Game.ApplyReplicatedRecord(invalidActor));
+            Assert.AreEqual(MatchPhase.Finished, client.Game.Phase);
+
+            Assert.IsTrue(client.Game.ApplyReplicatedRecord(terminal));
+            Assert.AreEqual(MatchPhase.Finished, client.Game.Phase);
+            Assert.AreEqual(4, client.Replay.Log.Events.Count);
         }
     }
 }

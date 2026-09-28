@@ -13,10 +13,12 @@ namespace AMath.Tutorial.Definitions
             string objectiveTextKey,
             IReadOnlyList<ITutorialAction> actions,
             ITutorialCondition advanceCondition,
-            IReadOnlyList<TutorialHintDefinition> hints = null)
+            IReadOnlyList<TutorialHintDefinition> hints = null,
+            int milestoneIndex = 0)
         {
             StepId = stepId;
             ObjectiveTextKey = objectiveTextKey;
+            MilestoneIndex = milestoneIndex;
             Actions = actions ?? System.Array.Empty<ITutorialAction>();
             AdvanceCondition = advanceCondition;
             Hints = hints ?? System.Array.Empty<TutorialHintDefinition>();
@@ -27,6 +29,9 @@ namespace AMath.Tutorial.Definitions
 
         /// <inheritdoc />
         public string ObjectiveTextKey { get; }
+
+        /// <inheritdoc />
+        public int MilestoneIndex { get; }
 
         /// <inheritdoc />
         public IReadOnlyList<ITutorialAction> Actions { get; }

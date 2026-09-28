@@ -24,6 +24,7 @@ namespace AMath.Tutorial.Events
             _eventBus.Subscribe<ButtonPressedEvent>(OnButtonPressed);
             _eventBus.Subscribe<MenuOpenedEvent>(OnMenuOpened);
             _eventBus.Subscribe<TurnResolvedEvent>(OnTurnResolved);
+            _eventBus.Subscribe<DraftTilePlacedEvent>(OnDraftTilePlaced);
         }
 
         /// <inheritdoc />
@@ -34,6 +35,7 @@ namespace AMath.Tutorial.Events
             _eventBus.Unsubscribe<ButtonPressedEvent>(OnButtonPressed);
             _eventBus.Unsubscribe<MenuOpenedEvent>(OnMenuOpened);
             _eventBus.Unsubscribe<TurnResolvedEvent>(OnTurnResolved);
+            _eventBus.Unsubscribe<DraftTilePlacedEvent>(OnDraftTilePlaced);
         }
 
         private void OnBoardLoaded(BoardLoadedEvent evt) =>
@@ -53,6 +55,12 @@ namespace AMath.Tutorial.Events
             CommandType commandType = (CommandType)evt.Record.CommandType;
             Publish(TutorialGameplaySignalKind.TurnEnded, commandType: commandType);
         }
+
+        private void OnDraftTilePlaced(DraftTilePlacedEvent evt) =>
+            Publish(
+                TutorialGameplaySignalKind.TilePlacedOnBoard,
+                targetId: $"{evt.X},{evt.Y}",
+                tileId: evt.TileId);
 
         private void Publish(
             TutorialGameplaySignalKind kind,

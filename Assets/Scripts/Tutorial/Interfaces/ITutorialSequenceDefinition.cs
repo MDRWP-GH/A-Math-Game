@@ -15,6 +15,12 @@ namespace AMath.Tutorial.Interfaces
         /// <summary>Localization key for this tutorial's display title.</summary>
         string TitleKey { get; }
 
+        /// <summary>
+        /// Localization keys for the learner-facing milestones shown in the
+        /// coach panel. Several mechanical steps may belong to one milestone.
+        /// </summary>
+        IReadOnlyList<string> MilestoneTitleKeys { get; }
+
         /// <summary>Steps in play order.</summary>
         IReadOnlyList<ITutorialStepDefinition> Steps { get; }
     }

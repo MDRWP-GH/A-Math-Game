@@ -4,6 +4,7 @@ using AMath.Core;
 using AMath.Core.Events;
 using AMath.Networking;
 using AMath.Networking.Room;
+using AMath.Managers;
 using Mirror;
 using UnityEngine;
 
@@ -40,16 +41,19 @@ namespace AMath.UI
             ResultChanged?.Invoke(_result);
         }
 
-        public void Rematch(int extraAiPlayers = 0)
+        public void Rematch()
         {
             if (_roomManager == null)
                 return;
 
             MatchFormat format = NetworkContext.Services?.Resolve<RoomSession>()?.SelectedFormat
                                  ?? MatchFormat.Individual;
-            _roomManager.StartMatch(format, extraAiPlayers);
+            _roomManager.StartMatch(format);
         }
 
-        public void Leave() => _roomManager?.LeaveRoom();
+        public void Leave()
+        {
+            _roomManager?.LeaveRoom();
+        }
     }
 }

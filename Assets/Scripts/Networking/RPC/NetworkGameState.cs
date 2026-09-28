@@ -127,6 +127,7 @@ namespace AMath.Networking.RPC
             _eventBus.Subscribe<MatchRestoredEvent>(OnServerMatchRestored);
             _eventBus.Subscribe<TurnStartedEvent>(OnServerTurnStarted);
             _eventBus.Subscribe<TurnResolvedEvent>(OnServerTurnResolved);
+            _eventBus.Subscribe<MatchFinishedEvent>(OnServerMatchFinished);
             _eventBus.Subscribe<MatchPhaseChangedEvent>(OnServerPhaseChanged);
         }
 
@@ -149,6 +150,7 @@ namespace AMath.Networking.RPC
             _eventBus.Unsubscribe<MatchRestoredEvent>(OnServerMatchRestored);
             _eventBus.Unsubscribe<TurnStartedEvent>(OnServerTurnStarted);
             _eventBus.Unsubscribe<TurnResolvedEvent>(OnServerTurnResolved);
+            _eventBus.Unsubscribe<MatchFinishedEvent>(OnServerMatchFinished);
             _eventBus.Unsubscribe<MatchPhaseChangedEvent>(OnServerPhaseChanged);
         }
 
@@ -215,6 +217,17 @@ namespace AMath.Networking.RPC
             RpcApplyTurn(evt.Record);
         }
 
+        private void OnServerMatchFinished(MatchFinishedEvent evt)
+        {
+            if (evt.Result == null)
+                return;
+
+            RebuildScores();
+            // This RPC follows the terminal-turn RPC on the same reliable
+            // channel. Manual endings have no turn RPC and arrive here directly.
+            RpcFinalizeMatch(evt.Result);
+        }
+
         private void OnServerPhaseChanged(MatchPhaseChangedEvent evt)
         {
             _phase = (byte)evt.Current;
@@ -270,7 +283,15 @@ namespace AMath.Networking.RPC
         private void RpcApplyTurn(TurnRecord record)
         {
             if (isServer) return;
-            _gameManager.ApplyRecord(record);
+            _gameManager.ApplyReplicatedRecord(record);
+        }
+
+        /// <summary>Publishes the host-computed result on every non-host peer.</summary>
+        [ClientRpc]
+        private void RpcFinalizeMatch(MatchResult result)
+        {
+            if (isServer) return;
+            _gameManager.ApplyAuthoritativeResult(result);
         }
 
         #endregion
@@ -353,14 +374,26 @@ namespace AMath.Networking.RPC
         {
             if (isServer) return;
 
-            var snapshot = JsonUtility.FromJson<GameStateSnapshot>(_incomingSnapshot.ToString());
+            GameStateSnapshot snapshot;
+            try
+            {
+                snapshot = JsonUtility.FromJson<GameStateSnapshot>(_incomingSnapshot.ToString());
+            }
+            catch (System.ArgumentException ex)
+            {
+                Debug.LogError($"[Sync] Full state transfer is corrupt: {ex.Message}");
+                _incomingSnapshot.Clear();
+                _incomingReplay.Clear();
+                return;
+            }
             string replayJson = _incomingReplay.ToString();
             _incomingSnapshot.Clear();
             _incomingReplay.Clear();
 
-            if (snapshot?.Config == null)
+            string snapshotError = null;
+            if (snapshot == null || !snapshot.TryValidate(out snapshotError))
             {
-                Debug.LogError("[Sync] Full state transfer was incomplete or corrupt.");
+                Debug.LogError($"[Sync] Full state transfer was incomplete or corrupt: {snapshotError ?? "snapshot is missing"}.");
                 return;
             }
 

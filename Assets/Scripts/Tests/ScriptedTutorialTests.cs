@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using AMath.Core;
 using AMath.Core.Assistance;
 using AMath.Core.Commands;
@@ -69,6 +70,94 @@ namespace AMath.Tests
         }
 
         [Test]
+        public void EveryChapter_HasTwoVisibleSeats_AndOnlyAuthoredBotTurns()
+        {
+            ScriptedTutorialMatchScript[] scripts =
+            {
+                ScriptedTutorialMatchScript.Intro(),
+                ScriptedTutorialMatchScript.Connect(),
+                ScriptedTutorialMatchScript.PremiumSkills()
+            };
+            foreach (ScriptedTutorialMatchScript script in scripts)
+            {
+                Assert.AreEqual(2, script.Config.Players.Count);
+                Assert.AreEqual(2, script.OpeningRacks.Count);
+                Assert.IsTrue(script.Config.Players[1].IsAi);
+                Assert.AreEqual(0, script.Config.TurnSeconds);
+            }
+            Assert.AreEqual(1, scripts[0].Turns.Count(turn => turn.PlayerId == ScriptedTutorialMatchScript.BotPlayerId));
+            Assert.AreEqual(0, scripts[1].Turns.Count(turn => turn.PlayerId == ScriptedTutorialMatchScript.BotPlayerId));
+            Assert.AreEqual(0, scripts[2].Turns.Count(turn => turn.PlayerId == ScriptedTutorialMatchScript.BotPlayerId));
+        }
+
+        [Test]
+        public void PremiumPassAndExchangeRestarts_KeepTheBotSeat()
+        {
+            var bus = new EventBus();
+            using var host = new TutorialMatchHost(bus, new KeysAsText(), ScriptedTutorialMatchScript.PremiumSkills());
+            foreach (string stepId in new[] { PremiumTutorialSequence.PassStepId, PremiumTutorialSequence.ExchangeStepId })
+            {
+                bus.Publish(new TutorialStepChangedEvent
+                {
+                    TutorialId = PremiumTutorialSequence.PremiumTutorialId,
+                    StepId = stepId,
+                    StepIndex = 15,
+                    TotalSteps = 18,
+                    IsActive = true
+                });
+                Assert.AreEqual(2, host.Players.Players.Count, stepId);
+                Assert.IsTrue(host.Players.Players[1].IsAi, stepId);
+            }
+        }
+
+        [Test]
+        public void EveryChapter_GuidedPlacementStepsAcceptTheirTileAndCell()
+        {
+            var chapters = new[]
+            {
+                (ScriptedTutorialMatchScript.Intro(), new[]
+                {
+                    IntroTutorialSequence.Place1StepId, IntroTutorialSequence.PlacePlusStepId,
+                    IntroTutorialSequence.Place2StepId, IntroTutorialSequence.PlaceEqualsStepId,
+                    IntroTutorialSequence.Place3StepId
+                }),
+                (ScriptedTutorialMatchScript.Connect(), new[]
+                {
+                    ConnectTutorialSequence.PlacePlusStepId, ConnectTutorialSequence.Place4StepId,
+                    ConnectTutorialSequence.PlaceEqualsStepId, ConnectTutorialSequence.Place7StepId
+                }),
+                (ScriptedTutorialMatchScript.PremiumSkills(), new[]
+                {
+                    PremiumTutorialSequence.PlacePlusStepId, PremiumTutorialSequence.Place2StepId,
+                    PremiumTutorialSequence.PlaceEqualsStepId, PremiumTutorialSequence.Place5StepId
+                })
+            };
+
+            foreach (var (script, steps) in chapters)
+            {
+                var bus = new EventBus();
+                using var host = new TutorialMatchHost(bus, new KeysAsText(), script);
+                for (int i = 0; i < steps.Length; i++)
+                {
+                    bus.Publish(new TutorialStepChangedEvent
+                    {
+                        TutorialId = "test", StepId = steps[i], StepIndex = i,
+                        TotalSteps = steps.Length, IsActive = true
+                    });
+                    TilePlacement placement = script.Turns[0].Placements[i];
+                    var rack = host.Players.GetById(host.Players.LocalPlayerId).Rack;
+                    int rackIndex = -1;
+                    for (int j = 0; j < rack.Count; j++)
+                        if (rack[j] == placement.TileId) { rackIndex = j; break; }
+                    Assert.GreaterOrEqual(rackIndex, 0, steps[i]);
+                    host.Input.SelectFromRack(rackIndex);
+                    Assert.IsTrue(host.Input.TryPlaceOnCell(placement.X, placement.Y, out string error),
+                        steps[i] + ": " + error);
+                }
+            }
+        }
+
+        [Test]
         public void Constraint_RejectsOffScriptCell_AndAcceptsAuthoredEquation()
         {
             var text = new KeysAsText();
@@ -88,7 +177,7 @@ namespace AMath.Tests
             Assert.IsFalse(constraint.AllowsPass(out string passError));
             Assert.AreEqual("tutorial.error.pass_disabled", passError);
 
-            Assert.IsFalse(constraint.AllowsExchange(out string exchangeError));
+            Assert.IsFalse(constraint.AllowsExchange(System.Array.Empty<int>(), out string exchangeError));
             Assert.AreEqual("tutorial.error.exchange_disabled", exchangeError);
 
             IReadOnlyList<TilePlacement> expected = constraint.Expected;
@@ -145,9 +234,9 @@ namespace AMath.Tests
             bus.Publish(new TutorialStepChangedEvent
             {
                 TutorialId = "intro",
-                StepId = IntroTutorialSequence.PlayerPlaceStepId,
-                StepIndex = 2,
-                TotalSteps = 5,
+                StepId = IntroTutorialSequence.ConfirmStepId,
+                StepIndex = 13,
+                TotalSteps = 16,
                 IsActive = true
             });
 
@@ -159,8 +248,8 @@ namespace AMath.Tests
             {
                 TutorialId = "intro",
                 StepId = IntroTutorialSequence.OpponentStepId,
-                StepIndex = 3,
-                TotalSteps = 5,
+                StepIndex = 14,
+                TotalSteps = 16,
                 IsActive = true
             });
 
@@ -168,6 +257,53 @@ namespace AMath.Tests
             host.Tick(1f);
             Assert.AreEqual(ScriptedTutorialMatchScript.HumanPlayerId, host.Turns.CurrentPlayerId);
             Assert.Greater(host.Players.GetById(1).Score, 0);
+        }
+
+        [Test]
+        public void TutorialMatchHost_ResumeMidEquation_RestoresEarlierDraftTiles()
+        {
+            var bus = new EventBus();
+            using var host = new TutorialMatchHost(bus, new KeysAsText(), ScriptedTutorialMatchScript.Intro());
+
+            bus.Publish(new TutorialStepChangedEvent
+            {
+                TutorialId = IntroTutorialSequence.IntroTutorialId,
+                StepId = IntroTutorialSequence.SelectPlusStepId,
+                StepIndex = 5,
+                TotalSteps = 16,
+                IsActive = true
+            });
+
+            Assert.AreEqual(1, host.Input.PendingPlacements.Count);
+            TilePlacement restored = host.Input.PendingPlacements[0];
+            TilePlacement expected = ScriptedTutorialMatchScript.Intro().Turns[0].Placements[0];
+            Assert.AreEqual(expected.TileId, restored.TileId);
+            Assert.AreEqual(expected.X, restored.X);
+            Assert.AreEqual(expected.Y, restored.Y);
+        }
+
+        [Test]
+        public void ConnectAndPremiumScripts_AreAcceptedByTheMatchEngine()
+        {
+            AssertHumanTurnAccepted(ScriptedTutorialMatchScript.Connect());
+            AssertHumanTurnAccepted(ScriptedTutorialMatchScript.PremiumSkills());
+            Assert.AreEqual(
+                PremiumType.TileX2,
+                BoardGrid.PremiumAt(PremiumTutorialSequence.PremiumCellX, PremiumTutorialSequence.PremiumCellY));
+        }
+
+        [Test]
+        public void ExchangeConstraint_RejectsWrongRackIndices()
+        {
+            var constraint = new ScriptedTurnInputConstraint(new KeysAsText())
+            {
+                ExchangeEnabled = true,
+                ExpectedExchangeIndices = TutorialAuthoredBoard.Premium.ExchangeIndices
+            };
+
+            Assert.IsFalse(constraint.AllowsExchange(new[] { 2, 3 }, out string wrong));
+            Assert.AreEqual("tutorial.error.exchange_selection", wrong);
+            Assert.IsTrue(constraint.AllowsExchange(new[] { 0, 1 }, out string ok), ok);
         }
 
         [Test]
@@ -185,6 +321,26 @@ namespace AMath.Tests
             Assert.IsTrue(bag.TryTakeSpecific(new byte[] { 1, Plus, 2 }, taken));
             Assert.AreEqual(before - 3, bag.Count);
             CollectionAssert.AreEqual(new byte[] { 1, Plus, 2 }, taken);
+        }
+
+        private static void AssertHumanTurnAccepted(ScriptedTutorialMatchScript script)
+        {
+            var bus = new EventBus();
+            var board = new BoardManager();
+            var game = new GameManager(
+                bus, new GameStateMachine(bus), board,
+                new PlayerManager(bus), new TurnManager(bus))
+            {
+                IsAuthority = true
+            };
+            game.StartMatch(script.Config, script.OpeningRacks);
+            foreach (TilePlacement placement in script.InitialBoard)
+                board.Grid.Place(in placement);
+
+            var command = new PlaceTilesCommand();
+            command.Placements.AddRange(script.Turns[0].Placements);
+            CommandOutcome outcome = game.SubmitCommand(0, command, out _);
+            Assert.IsTrue(outcome.Success, outcome.Error);
         }
 
         private static void PlaceAll(

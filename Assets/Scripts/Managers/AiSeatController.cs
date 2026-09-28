@@ -46,6 +46,7 @@ namespace AMath.Managers
             _moveChooser = moveChooser ?? throw new ArgumentNullException(nameof(moveChooser));
 
             _eventBus.Subscribe<TurnStartedEvent>(OnTurnStarted);
+            _eventBus.Subscribe<MatchRestoredEvent>(OnMatchRestored);
             _eventBus.Subscribe<MatchPhaseChangedEvent>(OnPhaseChanged);
         }
 
@@ -102,17 +103,37 @@ namespace AMath.Managers
 
         private void OnPhaseChanged(MatchPhaseChangedEvent evt)
         {
-            if (evt.Current != MatchPhase.Playing)
+            if (evt.Current == MatchPhase.Playing)
+            {
+                OnTurnStarted(new TurnStartedEvent
+                {
+                    PlayerId = _turnManager.CurrentPlayerId,
+                    TurnNumber = _turnManager.TurnNumber,
+                    TurnSeconds = _turnManager.TurnSeconds
+                });
+            }
+            else
             {
                 _pending = false;
                 _pendingPlayerId = -1;
             }
         }
 
+        private void OnMatchRestored(MatchRestoredEvent _)
+        {
+            if (_gameManager.Phase == MatchPhase.Playing)
+                OnTurnStarted(new TurnStartedEvent
+                {
+                    PlayerId = _turnManager.CurrentPlayerId,
+                    TurnNumber = _turnManager.TurnNumber
+                });
+        }
+
         /// <inheritdoc />
         public void Dispose()
         {
             _eventBus.Unsubscribe<TurnStartedEvent>(OnTurnStarted);
+            _eventBus.Unsubscribe<MatchRestoredEvent>(OnMatchRestored);
             _eventBus.Unsubscribe<MatchPhaseChangedEvent>(OnPhaseChanged);
         }
     }

@@ -88,17 +88,18 @@ namespace AMath.Bootstrap
 
         /// <summary>
         /// Connects a runtime-created chat view after the play canvas exists.
-        /// Repeated calls keep the first configured view/controller pair.
+        /// Repeated calls replace the scene-owned view while retaining the
+        /// persistent controller and conversation services.
         /// </summary>
         public void AttachAiChatWindow(AiChatWindow chatWindow)
         {
             if (chatWindow == null || _services == null)
                 return;
 
-            _aiChatWindow ??= chatWindow;
+            _aiChatWindow = chatWindow;
             if (_services.TryResolve(out AiAssistantController existingController))
             {
-                _aiChatWindow.Configure(existingController);
+                chatWindow.Configure(existingController);
                 return;
             }
 
@@ -245,7 +246,7 @@ namespace AMath.Bootstrap
             var session = _services.Register(new RoomSession());
             var discovery = _services.Register(new DiscoveryManager(bus));
             var roomManager = _services.Register(new RoomManager(bus, session, discovery, gameManager, _networkManager));
-            var migrationManager = _services.Register(new HostMigrationManager(bus, discovery, roomManager, session));
+            var migrationManager = _services.Register(new HostReconnectManager(bus, discovery, roomManager, session));
             _services.Register(new ReconnectionManager(
                 bus, stateMachine, gameManager, playerManager, saveManager,
                 migrationManager, roomManager, discovery, session));

@@ -22,6 +22,18 @@ if not exist "%SOURCE%\A-Math.exe" (
   exit /b 1
 )
 
+set "APP_VERSION="
+for /f "tokens=2" %%V in ('findstr /c:"bundleVersion:" "%~dp0..\ProjectSettings\ProjectSettings.asset"') do set "APP_VERSION=%%V"
+if not defined APP_VERSION (
+  echo Could not read bundleVersion from ProjectSettings\ProjectSettings.asset.
+  exit /b 1
+)
+
+if exist "%SOURCE%\Setup.exe" del /f /q "%SOURCE%\Setup.exe"
+if exist "%SOURCE%\Setup.exe.sha256" del /f /q "%SOURCE%\Setup.exe.sha256"
+if exist "%SOURCE%\Setup.exe" exit /b 1
+if exist "%SOURCE%\Setup.exe.sha256" exit /b 1
+
 set "OUT=%TEMP%\amath-inno-out"
 if exist "%OUT%" rmdir /s /q "%OUT%"
 mkdir "%OUT%"
@@ -29,10 +41,24 @@ mkdir "%OUT%"
 set "SOURCE_FWD=%SOURCE:\=/%"
 set "OUT_FWD=%OUT:\=/%"
 
-"%ISCC%" "/DSourceDir=%SOURCE_FWD%" "/DOutputDir=%OUT_FWD%" "/DAppVersion=1.0" "%~dp0A-Math.iss"
+"%ISCC%" "/DSourceDir=%SOURCE_FWD%" "/DOutputDir=%OUT_FWD%" "/DAppVersion=%APP_VERSION%" "%~dp0A-Math.iss"
 if errorlevel 1 exit /b 1
 
 copy /y "%OUT%\Setup.exe" "%SOURCE%\Setup.exe" >nul
+if errorlevel 1 (
+  echo Could not copy Setup.exe to %SOURCE%.
+  exit /b 1
+)
+set "SHA256="
+set "SETUP_PATH=%SOURCE%\Setup.exe"
+for /f "delims=" %%H in ('powershell.exe -NoProfile -Command "(Get-FileHash -LiteralPath $env:SETUP_PATH -Algorithm SHA256).Hash.ToLowerInvariant()"') do set "SHA256=%%H"
+if not defined SHA256 (
+  echo Could not hash Setup.exe.
+  del /f /q "%SOURCE%\Setup.exe"
+  exit /b 1
+)
+>"%SOURCE%\Setup.exe.sha256" echo %SHA256%  Setup.exe
+if not exist "%SOURCE%\Setup.exe.sha256" exit /b 1
 echo Built:
 echo   %SOURCE%\Setup.exe
 endlocal

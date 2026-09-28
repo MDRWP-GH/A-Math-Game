@@ -14,7 +14,7 @@ namespace AMath.Networking.HostMigration
     /// to reconnect. There is no host promotion — if reconnect fails, recovery
     /// ends so the caller can leave and attempt a fresh join.
     /// </summary>
-    public sealed class HostMigrationManager : ITickable, System.IDisposable
+    public class HostReconnectManager : ITickable, System.IDisposable
     {
         #region Constants
 
@@ -60,7 +60,7 @@ namespace AMath.Networking.HostMigration
 
         #region Construction
 
-        public HostMigrationManager(
+        public HostReconnectManager(
             IEventBus eventBus,
             DiscoveryManager discovery,
             RoomManager roomManager,
@@ -235,5 +235,22 @@ namespace AMath.Networking.HostMigration
         }
 
         #endregion
+    }
+
+    /// <summary>
+    /// Source-compatibility name retained for one release. The service has
+    /// always reconnected to the existing host; it does not promote a client.
+    /// </summary>
+    [System.Obsolete("Use HostReconnectManager. This service does not perform host promotion.")]
+    public sealed class HostMigrationManager : HostReconnectManager
+    {
+        public HostMigrationManager(
+            IEventBus eventBus,
+            DiscoveryManager discovery,
+            RoomManager roomManager,
+            RoomSession session)
+            : base(eventBus, discovery, roomManager, session)
+        {
+        }
     }
 }

@@ -23,6 +23,7 @@ namespace AMath.Core.History
         public int LocalPlayerScore;
         public bool HasLocalPlayer;
         public bool DidWin;
+        public bool IsDraw;
         public List<PlayerResult> Players = new();
         public List<TeamResult> Teams = new();
     }

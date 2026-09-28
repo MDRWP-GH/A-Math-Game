@@ -7,10 +7,12 @@ using AMath.Bootstrap;
 using AMath.Core;
 using AMath.Core.Assistance;
 using AMath.Core.Events;
+using AMath.Core.Identity;
 using AMath.Core.StateMachines;
 using AMath.Gameplay.Board;
 using AMath.Gameplay.Interaction;
 using AMath.Gameplay.Players;
+using AMath.Managers;
 using AMath.Networking;
 using AMath.Networking.Discovery;
 using AMath.Networking.HostMigration;
@@ -22,6 +24,7 @@ using AMath.UI.Localization;
 using AMath.Utilities;
 using Mirror;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 using UnityEngine.UI;
 using static AMath.Gameplay.Board.AMathTileSet;
@@ -47,20 +50,21 @@ namespace AMath.UI
         }
 
         private const float TurnWarningSeconds = 10f;
+        private const float CommandDrawerAnimationSeconds = 0.30f;
 
         /// <summary>Horizontal distance between rack tiles.</summary>
-        private const float RackPitch = 78f;
+        private const float RackPitch = MatchHudLayout.RackPitch;
 
-        private const int VisibleSeatCount = 4;
+        private const int VisibleSeatCount = MatchHudLayout.VisibleSeatCount;
 
         /// <summary>Diameter of a colour swatch in the lobby picker.</summary>
-        private const float ColorSwatchSize = 42f;
+        private const float ColorSwatchSize = 38f;
 
         /// <summary>Outer ring around a swatch; doubles as the "selected" marker.</summary>
-        private const float ColorRingSize = 54f;
+        private const float ColorRingSize = 50f;
 
         /// <summary>Width the 13 swatches are spread across.</summary>
-        private const float ColorRowWidth = 660f;
+        private const float ColorRowWidth = 650f;
 
         /// <summary>Colour dot shown on each lobby member card.</summary>
         private const float MemberSwatchSize = 30f;
@@ -74,30 +78,8 @@ namespace AMath.UI
         /// still read as swatches against the panel behind them.
         /// </summary>
         private static readonly Color ColorRingIdle = new(0f, 0f, 0f, 0.55f);
+        private static readonly Color ColorRingHover = new(1f, 1f, 1f, 0.95f);
 
-        private static readonly Vector2[] SeatAnchors =
-        {
-            new(0f, 0f), // P1 bottom-left
-            new(0f, 1f), // P2 top-left
-            new(1f, 1f), // P3 top-right
-            new(1f, 0f)  // P4 bottom-right
-        };
-
-        private static readonly Vector2[] SeatPivots =
-        {
-            new(0f, 0f),
-            new(0f, 1f),
-            new(1f, 1f),
-            new(1f, 0f)
-        };
-
-        private static readonly Vector2[] SeatPositions =
-        {
-            new(28f, 28f),
-            new(28f, -28f),
-            new(-28f, -28f),
-            new(-28f, 28f)
-        };
 
         private UiFactory _ui;
         private ILocalizedTextProvider _text;
@@ -124,36 +106,58 @@ namespace AMath.UI
         private SettingsMenuController _matchSettings;
 
         private Button[] _colorButtons;
-        private Image[] _colorRings;
+        private ColorSwatchRingFeedback[] _colorRingFeedback;
         private GameObject _teamPickerRoot;
         private Button _team1Button;
         private Button _team2Button;
 
         private Text _browserStatus;
+        private Text _hostStatus;
+        private Text _hostPlayerNameError;
+        private Text _browserPlayerNameError;
         private Text _lobbyStatus;
         private Text _lobbyCode;
         private Transform _lobbyMembersRoot;
         private Button _formatIndividualButton;
         private Button _formatTeamButton;
+        private Button _turnRushButton;
+        private Button _turnShortButton;
+        private Button _turnNormalButton;
+        private Button _turnLongButton;
+        private Button _lobbyStartButton;
+        private Button _lobbyLeaveButton;
         private Transform _roomListRoot;
         private InputField _roomNameField;
+        private InputField _hostPlayerNameField;
+        private InputField _browserPlayerNameField;
         private InputField _joinCodeField;
+        private Button _hostCreateButton;
+        private Button _browserJoinCodeButton;
+        private readonly List<Button> _browserRoomButtons = new();
+        private bool _connectionAttemptPending;
 
         private Text _matchStatus;
+        private Image _matchTimerPanel;
         private Text _matchTimer;
+        private Image _matchTimerFill;
         private Text _bagLabel;
         private Text _matchPreview;
         private Transform _rackRoot;
+        private MatchCommandDrawerAnimator _commandDrawer;
+        private Button _commandDrawerToggle;
+        private Text _commandDrawerToggleLabel;
         private Button _confirmButton;
         private Button _clearButton;
         private Button _passButton;
         private Button _exchangeButton;
         private MatchBoardView _boardView;
+        private TilePreviewPanel _tilePreviewPanel;
+        private TilePlacementInput _tilePlacementInput;
         private readonly List<int> _exchangeSelection = new();
         private readonly List<Button> _rackButtons = new(GameRules.RackSize);
         private readonly List<Text> _rackLabels = new(GameRules.RackSize);
         private readonly List<Image> _rackImages = new(GameRules.RackSize);
-        private readonly PlayerSeatHud[] _seats = new PlayerSeatHud[VisibleSeatCount];
+        private readonly MatchHudElements.Seat[] _seats = new MatchHudElements.Seat[VisibleSeatCount];
         private bool _exchangeMode;
         private Transform _declareRoot;
 
@@ -161,18 +165,12 @@ namespace AMath.UI
         private Button _pausePlayOnButton;
         private Button _pauseSettingsButton;
         private Button _pauseLeaveButton;
+        private Button _resultRematchButton;
+        private Button _resultLeaveButton;
         private readonly List<Button> _visiblePauseButtons = new(4);
 
-        private sealed class PlayerSeatHud
-        {
-            public GameObject Root;
-            public Image Avatar;
-            public Text Label;
-            public Text Score;
-            public Image TurnRing;
-        }
-
         private Text _resultWinner;
+        private Text _resultWinnerCaption;
         private Text _resultMeta;
         private Text _resultBody;
         private Text _recoveryStatus;
@@ -199,6 +197,7 @@ namespace AMath.UI
         private Action<MatchRestoredEvent> _onMatchRestored;
         private Action<HostStoppedEvent> _onHostStopped;
         private Action<ConnectionRejectedEvent> _onConnectionRejected;
+        private Action<RoomOperationFailedEvent> _onRoomOperationFailed;
         private Action<string> _onBrowserError;
         private Action<IReadOnlyList<NetworkPlayer>> _onMembersChanged;
         private Action<string> _onMatchError;
@@ -220,8 +219,6 @@ namespace AMath.UI
             if (_mainMenu != null)
                 _mainMenu.gameObject.SetActive(false);
 
-            LocalIdentity.DisplayName = GameSettings.PlayerName;
-
             NetworkedGameContext.EnsureExists();
             EnsureBuilt();
             ShowStartChoice();
@@ -242,7 +239,7 @@ namespace AMath.UI
 
             // Score previews and rejection reasons come from the gameplay layer;
             // route their language through the same settings switch as the UI.
-            PlacementPreviewFormatter.ThaiSelector = static () => GameSettings.LanguageIndex == 1;
+            PlacementPreviewFormatter.ThaiSelector = () => GameSettings.LanguageIndex == 1;
 
             gameObject.AddComponent<RoomBrowserPresenter>();
             gameObject.AddComponent<LobbyPresenter>();
@@ -256,7 +253,6 @@ namespace AMath.UI
             _matchPresenter = GetComponent<MatchHudPresenter>();
             _resultPresenter = GetComponent<MatchResultPresenter>();
             _recoveryPresenter = GetComponent<ConnectionLostPresenter>();
-
             BuildStartChoice();
             BuildHostSetup();
             BuildBrowser();
@@ -268,7 +264,12 @@ namespace AMath.UI
 
             _onBrowserError = msg =>
             {
-                SetBrowserNotice(_text.GetText(msg));
+                SetConnectionPending(false);
+                string localized = _text.GetText(msg);
+                if (_screen == ScreenId.HostSetup && _hostStatus != null)
+                    _hostStatus.text = localized;
+                else
+                    SetBrowserNotice(localized);
                 UpdateBrowserStatus(string.Empty);
             };
             _onMembersChanged = _ => RefreshLobby();
@@ -285,7 +286,12 @@ namespace AMath.UI
 
                 // A rejected join already put the host's own explanation on the
                 // browser; the generic message must not replace it.
-                if (_screen == ScreenId.Browser) return;
+                if (_screen == ScreenId.Browser)
+                {
+                    _browserPresenter?.StartSearching();
+                    UpdateBrowserStatus(_text.GetText(GetBrowserStatusLocalizationKey()));
+                    return;
+                }
 
                 SetBrowserNotice(_text.GetText("ui.play.connection_lost"));
                 ShowBrowser();
@@ -323,15 +329,31 @@ namespace AMath.UI
                 _onMatchRestored = _ => ShowMatch();
                 _onHostStopped = _ => ReturnToMenu();
 
-                // The host's refusal text explains things the client cannot
-                // deduce (wrong version, duplicate identity, room full), so it
-                // is shown verbatim instead of a generic "could not join".
+                // The host explains failures the client cannot deduce. Known
+                // reasons are localization keys; legacy prose remains readable
+                // because the provider returns unknown keys unchanged.
                 _onConnectionRejected = evt =>
                 {
+                    SetConnectionPending(false);
                     SetBrowserNotice(string.IsNullOrEmpty(evt.Reason)
                         ? _text.GetText("ui.play.err_join")
-                        : evt.Reason);
+                        : _text.GetText(evt.Reason));
                     ShowBrowser();
+                };
+                _onRoomOperationFailed = evt =>
+                {
+                    SetConnectionPending(false);
+                    string message = _text.GetText(RoomOperationErrorText.LocalizationKey(evt.Error));
+                    if (_screen == ScreenId.HostSetup && _hostStatus != null)
+                        _hostStatus.text = message;
+                    else
+                    {
+                        SetBrowserNotice(message);
+                        if (_screen == ScreenId.Browser)
+                            UpdateBrowserStatus(message);
+                        else
+                            ShowBrowser();
+                    }
                 };
 
                 _eventBus.Subscribe(_onHostStarted);
@@ -340,6 +362,7 @@ namespace AMath.UI
                 _eventBus.Subscribe(_onMatchRestored);
                 _eventBus.Subscribe(_onHostStopped);
                 _eventBus.Subscribe(_onConnectionRejected);
+                _eventBus.Subscribe(_onRoomOperationFailed);
             }
         }
 
@@ -377,6 +400,7 @@ namespace AMath.UI
                 _eventBus.Unsubscribe(_onMatchRestored);
                 _eventBus.Unsubscribe(_onHostStopped);
                 _eventBus.Unsubscribe(_onConnectionRejected);
+                _eventBus.Unsubscribe(_onRoomOperationFailed);
             }
         }
 
@@ -432,16 +456,56 @@ namespace AMath.UI
 
         private void UpdateTimerAndBag()
         {
-            if (_matchTimer == null) return;
+            if (_matchTimer == null || _matchPresenter == null) return;
 
             float remaining = _matchPresenter.RemainingTurnSeconds;
-            _matchTimer.text = $"{Mathf.CeilToInt(remaining)}s";
-            _matchTimer.color = remaining <= TurnWarningSeconds && remaining > 0f
-                ? UiPalette.TimerWarning
-                : UiPalette.Primary;
+            float progress = NormalizeTurnClock(remaining, _matchPresenter.TurnDurationSeconds);
+            bool warning = _matchPresenter.Phase == MatchPhase.Playing
+                && remaining <= TurnWarningSeconds
+                && remaining > 0f;
+
+            _matchTimer.text = FormatTurnClock(remaining);
+            _matchTimer.color = warning ? UiPalette.TimerWarning : UiPalette.Primary;
+
+            if (_matchTimerFill != null)
+            {
+                RectTransform fillRect = _matchTimerFill.rectTransform;
+                fillRect.anchorMax = new Vector2(progress, 1f);
+                _matchTimerFill.color = warning ? UiPalette.TimerWarning : UiPalette.Primary;
+            }
+
+            if (_matchTimerPanel != null)
+            {
+                float pulse = warning
+                    ? 0.5f + 0.5f * Mathf.Sin(Time.unscaledTime * 8f)
+                    : 0f;
+                _matchTimerPanel.rectTransform.localScale = Vector3.one * (1f + pulse * 0.025f);
+                _matchTimerPanel.color = warning
+                    ? Color.Lerp(
+                        UiPalette.GlassStrong,
+                        new Color(UiPalette.TimerWarning.r, UiPalette.TimerWarning.g, UiPalette.TimerWarning.b, 0.72f),
+                        0.22f + pulse * 0.18f)
+                    : UiPalette.GlassStrong;
+            }
 
             if (_bagLabel != null)
                 _bagLabel.text = _matchPresenter.BagCount.ToString();
+        }
+
+        private static string FormatTurnClock(float remainingSeconds)
+        {
+            int totalSeconds = Mathf.Max(0, Mathf.CeilToInt(remainingSeconds));
+            int minutes = totalSeconds / 60;
+            int seconds = totalSeconds % 60;
+            return $"{minutes:00}:{seconds:00}";
+        }
+
+        private static float NormalizeTurnClock(float remainingSeconds, float durationSeconds)
+        {
+            if (durationSeconds <= 0f)
+                return 0f;
+
+            return Mathf.Clamp01(remainingSeconds / durationSeconds);
         }
 
         private void HandlePauseInput()
@@ -467,6 +531,10 @@ namespace AMath.UI
 
         private void OnSettingsChanged()
         {
+            _tilePreviewPanel?.RefreshLanguage();
+            _hostPlayerNameField?.SetTextWithoutNotify(GameSettings.PlayerName);
+            _browserPlayerNameField?.SetTextWithoutNotify(GameSettings.PlayerName);
+
             // Language may have changed: re-render every dynamic string on the
             // active screen (static labels update through LocalizedText).
             switch (_screen)
@@ -497,10 +565,9 @@ namespace AMath.UI
             _screen = ScreenId.StartChoice;
             HideRecovery();
             _browserPresenter?.StopSearching();
-            SetActiveScreens(start: true);
+            SetActiveScreens(start: true, focus: _startHostButton);
             if (_startEntrance != null)
                 _startEntrance.Play();
-            UiFactory.Select(_startHostButton);
         }
 
         private void ShowHostSetup()
@@ -508,16 +575,22 @@ namespace AMath.UI
             _screen = ScreenId.HostSetup;
             HideRecovery();
             _browserPresenter?.StopSearching();
-            SetActiveScreens(host: true);
-            if (_roomNameField != null)
-                UiFactory.Select(_roomNameField);
+            SetConnectionPending(false);
+            if (_hostStatus != null)
+                _hostStatus.text = string.Empty;
+            _hostPlayerNameField?.SetTextWithoutNotify(GameSettings.PlayerName);
+            SetActiveScreens(host: true, focus: _hostPlayerNameField);
+            _hostRoot.GetComponent<MenuEntranceAnimator>()?.Play();
         }
 
         private void ShowBrowser()
         {
             _screen = ScreenId.Browser;
             HideRecovery();
-            SetActiveScreens(browser: true);
+            SetConnectionPending(false);
+            _browserPlayerNameField?.SetTextWithoutNotify(GameSettings.PlayerName);
+            SetActiveScreens(browser: true, focus: _browserPlayerNameField);
+            _browserRoot.GetComponent<MenuEntranceAnimator>()?.Play();
             _browserPresenter.StartSearching();
             UpdateBrowserStatus(_text.GetText(GetBrowserStatusLocalizationKey()));
         }
@@ -550,8 +623,75 @@ namespace AMath.UI
         private void ShowConnectingStatus()
         {
             ClearBrowserNotice();
-            if (_browserStatus != null)
+            if (_screen == ScreenId.HostSetup && _hostStatus != null)
+                _hostStatus.text = _text.GetText("ui.play.connecting");
+            else if (_browserStatus != null)
                 _browserStatus.text = _text.GetText("ui.play.connecting");
+        }
+
+        private bool BeginConnectionAttempt()
+        {
+            if (_connectionAttemptPending)
+                return false;
+
+            SetConnectionPending(true);
+            ShowConnectingStatus();
+            return true;
+        }
+
+        private bool TryCommitPlayerName(InputField field, bool hostScreen)
+        {
+            string raw = field != null ? field.text : string.Empty;
+            if (!GameSettings.TrySetPlayerName(raw, out PlayerNameValidationError error))
+            {
+                string message = _text.GetText(PlayerNameValidationUi.LocalizationKey(error));
+                Text inlineError = hostScreen ? _hostPlayerNameError : _browserPlayerNameError;
+                if (inlineError != null)
+                    inlineError.text = message;
+                if (hostScreen && _hostStatus != null)
+                    _hostStatus.text = message;
+                else
+                {
+                    SetBrowserNotice(message);
+                    UpdateBrowserStatus(message);
+                }
+
+                if (field != null)
+                {
+                    field.Select();
+                    UiFactory.Select(field);
+                }
+                return false;
+            }
+
+            string normalized = GameSettings.PlayerName;
+            if (_hostPlayerNameError != null)
+                _hostPlayerNameError.text = string.Empty;
+            if (_browserPlayerNameError != null)
+                _browserPlayerNameError.text = string.Empty;
+            if (hostScreen && _hostStatus != null)
+                _hostStatus.text = string.Empty;
+            field?.SetTextWithoutNotify(normalized);
+            _hostPlayerNameField?.SetTextWithoutNotify(normalized);
+            _browserPlayerNameField?.SetTextWithoutNotify(normalized);
+            LocalIdentity.DisplayName = normalized;
+            return true;
+        }
+
+        private void SetConnectionPending(bool pending)
+        {
+            _connectionAttemptPending = pending;
+
+            if (_hostCreateButton != null)
+                _hostCreateButton.interactable = !pending;
+            if (_browserJoinCodeButton != null)
+                _browserJoinCodeButton.interactable = !pending;
+
+            for (int i = 0; i < _browserRoomButtons.Count; i++)
+            {
+                if (_browserRoomButtons[i] != null)
+                    _browserRoomButtons[i].interactable = !pending;
+            }
         }
 
         /// <summary>
@@ -575,23 +715,38 @@ namespace AMath.UI
         private void ShowLobby()
         {
             _screen = ScreenId.Lobby;
+            SetConnectionPending(false);
             _browserPresenter.StopSearching();
             SetActiveScreens(lobby: true);
+            _lobbyRoot.GetComponent<MenuEntranceAnimator>()?.Play();
             _lobbyPresenter?.RefreshMembers();
             RefreshLobby();
+            UiFactory.SelectFirstInteractable(
+                _lobbyStartButton,
+                _formatIndividualButton,
+                _formatTeamButton,
+                _team1Button,
+                _team2Button,
+                _lobbyLeaveButton);
         }
 
         private void ShowMatch()
         {
             _screen = ScreenId.Match;
             SetActiveScreens(match: true);
+            _matchPresenter?.ClearDraft();
+            _tilePreviewPanel?.Hide();
+            _commandDrawer?.SetExpandedInstant(false);
+            UpdateCommandDrawerToggleLabel();
             _eventBus?.Publish(new BoardLoadedEvent());
             RefreshMatch();
+            UiFactory.SelectFirstInteractable(_commandDrawerToggle);
         }
 
         private void ShowResult()
         {
             _screen = ScreenId.Result;
+            _tilePreviewPanel?.Hide();
             // The recovery overlay covers the whole screen and swallows every
             // click, so it must never outlive the screen it was shown over.
             HideRecovery();
@@ -603,8 +758,10 @@ namespace AMath.UI
             // the mockup (winner text on top of the still-visible match).
             _matchRoot.SetActive(true);
             OverlayFade.Ensure(_resultRoot).FadeIn();
+            _resultRoot.GetComponent<MenuEntranceAnimator>()?.Play();
             OverlayFade.Ensure(_pauseRoot)?.HideInstant();
             RefreshResult();
+            UiFactory.SelectFirstInteractable(_resultRematchButton, _resultLeaveButton);
         }
 
         private void HideRecovery()
@@ -619,14 +776,18 @@ namespace AMath.UI
             bool browser = false,
             bool lobby = false,
             bool match = false,
-            bool result = false)
+            bool result = false,
+            Selectable focus = null)
         {
+            if (!match)
+                _tilePreviewPanel?.Hide();
             if (_startRoot != null) _startRoot.SetActive(start);
             if (_hostRoot != null) _hostRoot.SetActive(host);
             _browserRoot.SetActive(browser);
             _lobbyRoot.SetActive(lobby);
             _matchRoot.SetActive(match);
             _resultRoot.SetActive(result);
+            UiFactory.SelectFirstInteractable(focus);
         }
 
         private void ReturnToMenu()
@@ -651,32 +812,79 @@ namespace AMath.UI
         private void BuildStartChoice()
         {
             _startRoot = ForestScreen("Start Choice");
-            var title = _ui.CreateOutlinedTitle(_startRoot.transform, "Title", string.Empty, 72);
+            var title = _ui.CreateOutlinedTitle(_startRoot.transform, "Title", string.Empty, 68);
             title.font = GameFonts.JainiPurva;
             UiFactory.SetAnchoredRect(
                 title.rectTransform,
                 new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0.5f, 1f),
-                new Vector2(980f, 100f), new Vector2(0f, -72f));
+                new Vector2(980f, 88f), new Vector2(0f, -54f));
             LocalizedText.Bind(title, "ui.menu.title");
 
-            _startHostButton = _ui.CreateTextMenuButton(_startRoot.transform, "Host", string.Empty, 46, ShowHostSetup);
-            UiFactory.SetCenteredRect(_startHostButton.GetComponent<RectTransform>(), new Vector2(0f, 80f), new Vector2(560f, 72f));
+            var subtitle = _ui.CreateText(
+                "Subtitle", _startRoot.transform, string.Empty, 30, FontStyle.Normal,
+                UiPalette.LightText, TextAnchor.MiddleCenter);
+            UiFactory.SetAnchoredRect(
+                subtitle.rectTransform,
+                new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0.5f, 1f),
+                new Vector2(1100f, 48f), new Vector2(0f, -126f));
+            LocalizedText.Bind(subtitle, "ui.play.subtitle");
+
+            var panel = UiFactory.CreateImage("Panel", _startRoot.transform, Color.clear);
+            panel.raycastTarget = false;
+            UiFactory.SetCenteredRect(panel.rectTransform, new Vector2(0f, -30f), new Vector2(1220f, 650f));
+
+            var hostCard = UiFactory.CreateGlassPanel(panel.transform, "Host Card", UiPalette.GlassStrong);
+            UiFactory.SetCenteredRect(hostCard.rectTransform, new Vector2(-290f, 15f), new Vector2(520f, 430f));
+            var hostHeading = _ui.CreateText(
+                "Heading", hostCard.transform, string.Empty, 42, FontStyle.Bold,
+                Color.white, TextAnchor.MiddleCenter);
+            UiFactory.SetCenteredRect(hostHeading.rectTransform, new Vector2(0f, 118f), new Vector2(440f, 58f));
+            LocalizedText.Bind(hostHeading, "ui.play.create");
+            var hostDescription = _ui.CreateText(
+                "Description", hostCard.transform, string.Empty, 27, FontStyle.Normal,
+                UiPalette.LightText, TextAnchor.UpperCenter);
+            hostDescription.horizontalOverflow = HorizontalWrapMode.Wrap;
+            UiFactory.SetCenteredRect(hostDescription.rectTransform, new Vector2(0f, 28f), new Vector2(420f, 116f));
+            LocalizedText.Bind(hostDescription, "ui.play.host_description");
+
+            _startHostButton = _ui.CreateAccentButton(
+                hostCard.transform, "Host", string.Empty,
+                UiPalette.Success, UiPalette.SuccessHighlight, ShowHostSetup, 30);
+            UiFactory.SetCenteredRect(_startHostButton.GetComponent<RectTransform>(), new Vector2(0f, -132f), new Vector2(360f, 68f));
             LocalizedText.Bind(_startHostButton.GetComponentInChildren<Text>(), "ui.play.host");
 
-            _startJoinButton = _ui.CreateTextMenuButton(_startRoot.transform, "Join", string.Empty, 46, ShowBrowser);
-            UiFactory.SetCenteredRect(_startJoinButton.GetComponent<RectTransform>(), new Vector2(0f, 0f), new Vector2(560f, 72f));
+            var joinCard = UiFactory.CreateGlassPanel(panel.transform, "Join Card", UiPalette.GlassStrong);
+            UiFactory.SetCenteredRect(joinCard.rectTransform, new Vector2(290f, 15f), new Vector2(520f, 430f));
+            var joinHeading = _ui.CreateText(
+                "Heading", joinCard.transform, string.Empty, 42, FontStyle.Bold,
+                Color.white, TextAnchor.MiddleCenter);
+            UiFactory.SetCenteredRect(joinHeading.rectTransform, new Vector2(0f, 118f), new Vector2(440f, 58f));
+            LocalizedText.Bind(joinHeading, "ui.play.join");
+            var joinDescription = _ui.CreateText(
+                "Description", joinCard.transform, string.Empty, 27, FontStyle.Normal,
+                UiPalette.LightText, TextAnchor.UpperCenter);
+            joinDescription.horizontalOverflow = HorizontalWrapMode.Wrap;
+            UiFactory.SetCenteredRect(joinDescription.rectTransform, new Vector2(0f, 28f), new Vector2(420f, 116f));
+            LocalizedText.Bind(joinDescription, "ui.play.join_description");
+
+            _startJoinButton = _ui.CreateAccentButton(
+                joinCard.transform, "Join", string.Empty,
+                UiPalette.Primary, UiPalette.PrimaryHighlight, ShowBrowser, 30);
+            UiFactory.SetCenteredRect(_startJoinButton.GetComponent<RectTransform>(), new Vector2(0f, -132f), new Vector2(360f, 68f));
             LocalizedText.Bind(_startJoinButton.GetComponentInChildren<Text>(), "ui.play.join");
 
-            _startBackButton = _ui.CreateTextMenuButton(_startRoot.transform, "Back", string.Empty, 46, ReturnToMenu);
-            UiFactory.SetCenteredRect(_startBackButton.GetComponent<RectTransform>(), new Vector2(0f, -80f), new Vector2(560f, 72f));
+            _startBackButton = _ui.CreateAccentButton(panel.transform, "Back", string.Empty,
+                UiPalette.Danger, UiPalette.DangerHighlight, ReturnToMenu, 34);
+            UiFactory.SetCenteredRect(_startBackButton.GetComponent<RectTransform>(), new Vector2(0f, -270f), new Vector2(320f, 58f));
             LocalizedText.Bind(_startBackButton.GetComponentInChildren<Text>(), "ui.play.back");
 
-            UiFactory.SetVerticalNavigation(_startHostButton, _startBackButton, _startJoinButton);
-            UiFactory.SetVerticalNavigation(_startJoinButton, _startHostButton, _startBackButton);
-            UiFactory.SetVerticalNavigation(_startBackButton, _startJoinButton, _startHostButton);
+            SetNavigation(_startHostButton, null, _startBackButton, null, _startJoinButton);
+            SetNavigation(_startJoinButton, null, _startBackButton, _startHostButton, null);
+            SetNavigation(_startBackButton, _startHostButton, null, _startHostButton, _startJoinButton);
 
             _startEntrance = _startRoot.AddComponent<MenuEntranceAnimator>();
-            _startEntrance.SetTargets(title, _startHostButton, _startJoinButton, _startBackButton);
+            _startEntrance.SetTargets(title, subtitle, hostCard, joinCard, _startBackButton);
+            _startEntrance.Configure(0.26f, 0.03f, 0f);
             _startRoot.SetActive(false);
         }
 
@@ -688,46 +896,97 @@ namespace AMath.UI
             UiFactory.SetAnchoredRect(
                 title.rectTransform,
                 new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0.5f, 1f),
-                new Vector2(900f, 90f), new Vector2(0f, -80f));
+                new Vector2(900f, 82f), new Vector2(0f, -58f));
             LocalizedText.Bind(title, "ui.play.host_title");
 
+            var subtitle = _ui.CreateText(
+                "Subtitle", _hostRoot.transform, string.Empty, 29, FontStyle.Normal,
+                UiPalette.LightText, TextAnchor.MiddleCenter);
+            UiFactory.SetAnchoredRect(
+                subtitle.rectTransform,
+                new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0.5f, 1f),
+                new Vector2(1000f, 44f), new Vector2(0f, -126f));
+            LocalizedText.Bind(subtitle, "ui.play.host_setup_subtitle");
+
+            var panel = UiFactory.CreateGlassPanel(_hostRoot.transform, "Panel", UiPalette.GlassStrong);
+            UiFactory.SetCenteredRect(panel.rectTransform, new Vector2(0f, -30f), new Vector2(920f, 650f));
+
+            var playerNameLabel = _ui.CreateText(
+                "PlayerNameLabel", panel.transform, string.Empty, 29, FontStyle.Bold,
+                Color.white, TextAnchor.MiddleLeft);
+            UiFactory.SetCenteredRect(playerNameLabel.rectTransform, new Vector2(0f, 250f), new Vector2(720f, 42f));
+            LocalizedText.Bind(playerNameLabel, "ui.play.player_name");
+
+            _hostPlayerNameField = _ui.CreateInputField(panel.transform, "PlayerName", GameSettings.PlayerName,
+                _text.GetText("ui.settings.name_placeholder"), 30);
+            _hostPlayerNameField.textComponent.font = GameFonts.K2D;
+            if (_hostPlayerNameField.placeholder is Text hostNamePlaceholder)
+                hostNamePlaceholder.font = GameFonts.K2D;
+            _hostPlayerNameField.characterLimit = 64;
+            UiFactory.SetCenteredRect(_hostPlayerNameField.GetComponent<RectTransform>(), new Vector2(0f, 202f), new Vector2(720f, 58f));
+            _hostPlayerNameField.onEndEdit.AddListener(_ => TryCommitPlayerName(_hostPlayerNameField, true));
+
+            _hostPlayerNameError = _ui.CreateText(
+                "PlayerNameError", panel.transform, string.Empty, 21, FontStyle.Normal,
+                UiPalette.TimerWarning, TextAnchor.MiddleLeft);
+            UiFactory.SetCenteredRect(_hostPlayerNameError.rectTransform, new Vector2(0f, 158f), new Vector2(720f, 28f));
+
             var nameLabel = _ui.CreateText(
-                "RoomLabel", _hostRoot.transform, string.Empty, 32, FontStyle.Normal,
-                Color.white, TextAnchor.MiddleRight);
-            UiFactory.SetCenteredRect(nameLabel.rectTransform, new Vector2(-220f, 40f), new Vector2(280f, 48f));
+                "RoomLabel", panel.transform, string.Empty, 32, FontStyle.Bold,
+                Color.white, TextAnchor.MiddleLeft);
+            UiFactory.SetCenteredRect(nameLabel.rectTransform, new Vector2(0f, 118f), new Vector2(720f, 42f));
             UiFactory.AddDoubleOutline(nameLabel.gameObject, new Vector2(2.5f, -2.5f), new Vector2(1.2f, -1.2f));
             LocalizedText.Bind(nameLabel, "ui.play.room_name");
 
             // Left empty on purpose: the placeholder shows the name the room
             // gets if the host just presses play, so naming it is optional
             // rather than something they have to clear first.
-            _roomNameField = _ui.CreateInputField(_hostRoot.transform, "RoomName", string.Empty, RoomSession.DefaultRoomName);
-            UiFactory.SetCenteredRect(_roomNameField.GetComponent<RectTransform>(), new Vector2(160f, 40f), new Vector2(420f, 56f));
+            _roomNameField = _ui.CreateInputField(panel.transform, "RoomName", string.Empty, RoomSession.DefaultRoomName);
+            UiFactory.SetCenteredRect(_roomNameField.GetComponent<RectTransform>(), new Vector2(0f, 68f), new Vector2(720f, 58f));
+
+            var hint = _ui.CreateText(
+                "RoomHint", panel.transform, string.Empty, 25, FontStyle.Normal,
+                UiPalette.MutedText, TextAnchor.UpperLeft);
+            hint.horizontalOverflow = HorizontalWrapMode.Wrap;
+            UiFactory.SetCenteredRect(hint.rectTransform, new Vector2(0f, 4f), new Vector2(720f, 48f));
+            LocalizedText.Bind(hint, "ui.play.room_name_hint");
+
+            var capacity = _ui.CreateText(
+                "Capacity", panel.transform, string.Empty, 26, FontStyle.Normal,
+                UiPalette.LightText, TextAnchor.MiddleLeft);
+            UiFactory.SetCenteredRect(capacity.rectTransform, new Vector2(0f, -48f), new Vector2(720f, 42f));
+            LocalizedText.Bind(capacity, "ui.play.room_capacity");
+
+            _hostStatus = _ui.CreateText(
+                "Status", panel.transform, string.Empty, 24, FontStyle.Normal,
+                UiPalette.Primary, TextAnchor.MiddleCenter);
+            UiFactory.SetCenteredRect(_hostStatus.rectTransform, new Vector2(0f, -103f), new Vector2(720f, 48f));
 
             var back = _ui.CreateAccentButton(
-                _hostRoot.transform, "Back", string.Empty,
+                panel.transform, "Back", string.Empty,
                 UiPalette.Danger, UiPalette.DangerHighlight, ShowStartChoice, 28);
-            UiFactory.SetAnchoredRect(
-                back.GetComponent<RectTransform>(),
-                new Vector2(0f, 0f), new Vector2(0f, 0f), new Vector2(0f, 0f),
-                new Vector2(200f, 64f), new Vector2(72f, 56f));
+            UiFactory.SetCenteredRect(back.GetComponent<RectTransform>(), new Vector2(-190f, -218f), new Vector2(300f, 64f));
             LocalizedText.Bind(back.GetComponentInChildren<Text>(), "ui.play.back");
 
-            var play = _ui.CreateAccentButton(
-                _hostRoot.transform, "Play", string.Empty,
+            _hostCreateButton = _ui.CreateAccentButton(
+                panel.transform, "Create Room", string.Empty,
                 UiPalette.Success, UiPalette.SuccessHighlight, () =>
                 {
-                    ShowConnectingStatus();
+                    if (!TryCommitPlayerName(_hostPlayerNameField, true)) return;
+                    if (!BeginConnectionAttempt()) return;
                     _browserPresenter.CreateRoom(
                         _roomNameField != null ? _roomNameField.text : string.Empty,
                         GameRules.MaxPlayers);
                 }, 28);
-            UiFactory.SetAnchoredRect(
-                play.GetComponent<RectTransform>(),
-                new Vector2(1f, 0f), new Vector2(1f, 0f), new Vector2(1f, 0f),
-                new Vector2(200f, 64f), new Vector2(-72f, 56f));
-            LocalizedText.Bind(play.GetComponentInChildren<Text>(), "ui.play.play_action");
+            UiFactory.SetCenteredRect(_hostCreateButton.GetComponent<RectTransform>(), new Vector2(190f, -218f), new Vector2(360f, 64f));
+            LocalizedText.Bind(_hostCreateButton.GetComponentInChildren<Text>(), "ui.play.create");
 
+            SetNavigation(_hostPlayerNameField, null, _roomNameField, null, null);
+            SetNavigation(_roomNameField, _hostPlayerNameField, _hostCreateButton, null, null);
+            SetNavigation(back, _roomNameField, null, null, _hostCreateButton);
+            SetNavigation(_hostCreateButton, _roomNameField, null, back, null);
+
+            ConfigureScreenEntrance(_hostRoot, title, subtitle, panel);
             _hostRoot.SetActive(false);
         }
 
@@ -739,21 +998,37 @@ namespace AMath.UI
             UiFactory.SetAnchoredRect(
                 title.rectTransform,
                 new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0.5f, 1f),
-                new Vector2(720f, 90f), new Vector2(0f, -64f));
+                new Vector2(900f, 82f), new Vector2(0f, -52f));
             LocalizedText.Bind(title, "ui.play.browser_title");
 
-            var panel = UiFactory.CreateGlassPanel(_browserRoot.transform, "Panel", UiPalette.Glass);
-            UiFactory.SetCenteredRect(panel.rectTransform, new Vector2(0f, -20f), new Vector2(860f, 560f));
+            var subtitle = _ui.CreateText(
+                "Subtitle", _browserRoot.transform, string.Empty, 29, FontStyle.Normal,
+                UiPalette.LightText, TextAnchor.MiddleCenter);
+            UiFactory.SetAnchoredRect(
+                subtitle.rectTransform,
+                new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0.5f, 1f),
+                new Vector2(1100f, 44f), new Vector2(0f, -116f));
+            LocalizedText.Bind(subtitle, "ui.play.browser_subtitle");
+
+            var panel = UiFactory.CreateImage("Panel", _browserRoot.transform, Color.clear);
+            panel.raycastTarget = false;
+            UiFactory.SetCenteredRect(panel.rectTransform, new Vector2(0f, -32f), new Vector2(1280f, 760f));
 
             _browserStatus = _ui.CreateText(
                 "Status", panel.transform, string.Empty, 28, FontStyle.Normal,
                 Color.white, TextAnchor.MiddleCenter);
-            UiFactory.SetCenteredRect(_browserStatus.rectTransform, new Vector2(0f, 220f), new Vector2(760f, 48f));
+            UiFactory.SetCenteredRect(_browserStatus.rectTransform, new Vector2(0f, 320f), new Vector2(1120f, 48f));
             UiFactory.AddDoubleOutline(_browserStatus.gameObject, new Vector2(2.5f, -2.5f), new Vector2(1.2f, -1.2f));
+
+            var roomsTitle = _ui.CreateText(
+                "RoomsTitle", panel.transform, string.Empty, 27, FontStyle.Bold,
+                UiPalette.LightText, TextAnchor.MiddleLeft);
+            UiFactory.SetCenteredRect(roomsTitle.rectTransform, new Vector2(0f, 270f), new Vector2(1140f, 40f));
+            LocalizedText.Bind(roomsTitle, "ui.play.available_rooms");
 
             var viewport = UiFactory.CreateImage("Viewport", panel.transform, UiPalette.GlassRow);
             viewport.raycastTarget = true;
-            UiFactory.SetCenteredRect(viewport.rectTransform, new Vector2(0f, 20f), new Vector2(780f, 280f));
+            UiFactory.SetCenteredRect(viewport.rectTransform, new Vector2(0f, 62f), new Vector2(1160f, 350f));
             viewport.gameObject.AddComponent<RectMask2D>();
 
             var content = UiFactory.CreateRect("List", viewport.transform);
@@ -762,7 +1037,7 @@ namespace AMath.UI
             content.pivot = new Vector2(0.5f, 1f);
             content.anchoredPosition = Vector2.zero;
             content.sizeDelta = Vector2.zero;
-            UiFactory.AddVerticalLayout(content.gameObject, 8f, new RectOffset(8, 8, 8, 8));
+            UiFactory.AddVerticalLayout(content.gameObject, 10f, new RectOffset(10, 10, 10, 10));
             var fitter = content.gameObject.AddComponent<ContentSizeFitter>();
             fitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
             fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
@@ -774,22 +1049,55 @@ namespace AMath.UI
             scroll.horizontal = false;
             scroll.vertical = true;
             scroll.movementType = ScrollRect.MovementType.Clamped;
-            scroll.scrollSensitivity = 28f;
+            scroll.scrollSensitivity = 34f;
 
-            _joinCodeField = _ui.CreateInputField(panel.transform, "JoinCode", string.Empty, string.Empty);
-            UiFactory.SetCenteredRect(_joinCodeField.GetComponent<RectTransform>(), new Vector2(-120f, -200f), new Vector2(420f, 56f));
+            var manualCard = UiFactory.CreateGlassPanel(panel.transform, "Manual Code", UiPalette.GlassStrong);
+            UiFactory.SetCenteredRect(manualCard.rectTransform, new Vector2(0f, -248f), new Vector2(1160f, 220f));
+
+            var playerNameTitle = _ui.CreateText(
+                "Player Name Title", manualCard.transform, string.Empty, 24, FontStyle.Bold,
+                UiPalette.LightText, TextAnchor.MiddleLeft);
+            UiFactory.SetCenteredRect(playerNameTitle.rectTransform, new Vector2(-430f, 67f), new Vector2(190f, 34f));
+            LocalizedText.Bind(playerNameTitle, "ui.play.player_name");
+
+            _browserPlayerNameField = _ui.CreateInputField(
+                manualCard.transform, "PlayerName", GameSettings.PlayerName,
+                _text.GetText("ui.settings.name_placeholder"), 26);
+            _browserPlayerNameField.textComponent.font = GameFonts.K2D;
+            if (_browserPlayerNameField.placeholder is Text browserNamePlaceholder)
+                browserNamePlaceholder.font = GameFonts.K2D;
+            _browserPlayerNameField.characterLimit = 64;
+            UiFactory.SetCenteredRect(_browserPlayerNameField.GetComponent<RectTransform>(),
+                new Vector2(105f, 67f), new Vector2(850f, 52f));
+            _browserPlayerNameField.onEndEdit.AddListener(_ => TryCommitPlayerName(_browserPlayerNameField, false));
+
+            _browserPlayerNameError = _ui.CreateText(
+                "PlayerNameError", manualCard.transform, string.Empty, 20, FontStyle.Normal,
+                UiPalette.TimerWarning, TextAnchor.MiddleLeft);
+            UiFactory.SetCenteredRect(_browserPlayerNameError.rectTransform,
+                new Vector2(105f, 31f), new Vector2(850f, 24f));
+
+            var manualTitle = _ui.CreateText(
+                "Title", manualCard.transform, string.Empty, 24, FontStyle.Bold,
+                UiPalette.LightText, TextAnchor.MiddleLeft);
+            UiFactory.SetCenteredRect(manualTitle.rectTransform, new Vector2(-430f, -50f), new Vector2(190f, 34f));
+            LocalizedText.Bind(manualTitle, "ui.play.room_code");
+
+            _joinCodeField = _ui.CreateInputField(manualCard.transform, "JoinCode", string.Empty, string.Empty, 28);
+            UiFactory.SetCenteredRect(_joinCodeField.GetComponent<RectTransform>(), new Vector2(-70f, -50f), new Vector2(500f, 52f));
             if (_joinCodeField.placeholder is Text joinCodeHint)
                 LocalizedText.Bind(joinCodeHint, "ui.play.room_code");
 
-            var joinButton = _ui.CreateAccentButton(
-                panel.transform, "JoinCodeBtn", string.Empty,
+            _browserJoinCodeButton = _ui.CreateAccentButton(
+                manualCard.transform, "JoinCodeBtn", string.Empty,
                 UiPalette.Success, UiPalette.SuccessHighlight, () =>
                 {
-                    ShowConnectingStatus();
+                    if (!TryCommitPlayerName(_browserPlayerNameField, false)) return;
+                    if (!BeginConnectionAttempt()) return;
                     _browserPresenter.JoinByCode(_joinCodeField.text);
                 }, 24);
-            UiFactory.SetCenteredRect(joinButton.GetComponent<RectTransform>(), new Vector2(220f, -200f), new Vector2(220f, 56f));
-            LocalizedText.Bind(joinButton.GetComponentInChildren<Text>(), "ui.play.join_code");
+            UiFactory.SetCenteredRect(_browserJoinCodeButton.GetComponent<RectTransform>(), new Vector2(390f, -50f), new Vector2(240f, 52f));
+            LocalizedText.Bind(_browserJoinCodeButton.GetComponentInChildren<Text>(), "ui.play.join_code");
 
             var back = _ui.CreateAccentButton(
                 _browserRoot.transform, "Back", string.Empty,
@@ -801,19 +1109,27 @@ namespace AMath.UI
             UiFactory.SetAnchoredRect(
                 back.GetComponent<RectTransform>(),
                 new Vector2(0f, 0f), new Vector2(0f, 0f), new Vector2(0f, 0f),
-                new Vector2(200f, 64f), new Vector2(72f, 40f));
+                new Vector2(220f, 60f), new Vector2(72f, 30f));
             LocalizedText.Bind(back.GetComponentInChildren<Text>(), "ui.play.back");
 
+            SetNavigation(_browserPlayerNameField, null, _joinCodeField, null, null);
+            SetNavigation(_joinCodeField, _browserPlayerNameField, _browserJoinCodeButton, null, _browserJoinCodeButton);
+            SetNavigation(_browserJoinCodeButton, _joinCodeField, back, _joinCodeField, null);
+            SetNavigation(back, _browserJoinCodeButton, null, null, null);
+
+            ConfigureScreenEntrance(_browserRoot, title, subtitle, panel, back);
             _browserRoot.SetActive(false);
         }
 
         private void RefreshRoomList(IReadOnlyList<RoomInfo> rooms)
         {
+            _browserRoomButtons.Clear();
             for (int i = _roomListRoot.childCount - 1; i >= 0; i--)
                 Destroy(_roomListRoot.GetChild(i).gameObject);
 
             if (rooms == null || rooms.Count == 0)
             {
+                SetNavigation(_joinCodeField, null, _browserJoinCodeButton, null, _browserJoinCodeButton);
                 UpdateBrowserStatus(_text.GetText(GetBrowserStatusLocalizationKey()));
                 return;
             }
@@ -822,20 +1138,61 @@ namespace AMath.UI
             foreach (RoomInfo room in rooms)
             {
                 RoomInfo captured = room;
-                string label = $"{room.Advertisement.RoomName}  [{room.Advertisement.RoomCode}]  {room.Advertisement.CurrentPlayers}/{room.Advertisement.MaxPlayers}";
                 var row = UiFactory.CreateGlassPanel(_roomListRoot, "Room", UiPalette.GlassRow);
-                UiFactory.SetLayoutSize(row.gameObject, 0f, 56f, 1f);
+                UiFactory.SetLayoutSize(row.gameObject, 0f, 88f, 1f);
 
-                var button = _ui.CreateFlatButton(row.transform, "Join", label, 22, TextAnchor.MiddleLeft, () =>
+                var roomName = _ui.CreateText(
+                    "Room Name", row.transform, room.Advertisement.RoomName, 28,
+                    FontStyle.Bold, Color.white, TextAnchor.MiddleLeft);
+                UiFactory.SetAnchoredRect(
+                    roomName.rectTransform,
+                    new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0f, 1f),
+                    new Vector2(-240f, 38f), new Vector2(24f, -10f));
+
+                var roomMeta = _ui.CreateText(
+                    "Room Meta", row.transform,
+                    string.Format(
+                        _text.GetText("ui.play.room_players"),
+                        room.Advertisement.RoomCode,
+                        room.Advertisement.CurrentPlayers,
+                        room.Advertisement.MaxPlayers),
+                    22, FontStyle.Normal, UiPalette.MutedText, TextAnchor.MiddleLeft);
+                UiFactory.SetAnchoredRect(
+                    roomMeta.rectTransform,
+                    new Vector2(0f, 0f), new Vector2(1f, 0f), new Vector2(0f, 0f),
+                    new Vector2(-240f, 34f), new Vector2(24f, 10f));
+
+                var button = _ui.CreateAccentButton(
+                    row.transform, "Join", string.Empty,
+                    UiPalette.Primary, UiPalette.PrimaryHighlight, () =>
                 {
-                    ShowConnectingStatus();
+                    if (!TryCommitPlayerName(_browserPlayerNameField, false)) return;
+                    if (!BeginConnectionAttempt()) return;
                     _browserPresenter.JoinRoom(captured);
-                });
-                UiFactory.Stretch(button.GetComponent<RectTransform>());
-                var labelText = button.GetComponentInChildren<Text>();
-                if (labelText != null)
-                    labelText.color = Color.white;
+                }, 24);
+                UiFactory.SetAnchoredRect(
+                    button.GetComponent<RectTransform>(),
+                    new Vector2(1f, 0.5f), new Vector2(1f, 0.5f), new Vector2(1f, 0.5f),
+                    new Vector2(190f, 54f), new Vector2(-20f, 0f));
+                LocalizedText.Bind(button.GetComponentInChildren<Text>(), "ui.play.join");
+                button.interactable = !_connectionAttemptPending;
+                _browserRoomButtons.Add(button);
             }
+
+            for (int i = 0; i < _browserRoomButtons.Count; i++)
+            {
+                Selectable up = i > 0 ? _browserRoomButtons[i - 1] : null;
+                Selectable down = i + 1 < _browserRoomButtons.Count
+                    ? _browserRoomButtons[i + 1]
+                    : _joinCodeField;
+                SetNavigation(_browserRoomButtons[i], up, down, null, null);
+            }
+
+            Selectable lastRoom = _browserRoomButtons.Count > 0
+                ? _browserRoomButtons[_browserRoomButtons.Count - 1]
+                : null;
+            SetNavigation(_browserPlayerNameField, lastRoom, _joinCodeField, null, null);
+            SetNavigation(_joinCodeField, _browserPlayerNameField, _browserJoinCodeButton, null, _browserJoinCodeButton);
         }
 
         #endregion
@@ -846,68 +1203,119 @@ namespace AMath.UI
         {
             _lobbyRoot = ForestScreen("Lobby");
 
-            var title = _ui.CreateOutlinedTitle(_lobbyRoot.transform, "Title", string.Empty, 60);
+            var title = _ui.CreateOutlinedTitle(_lobbyRoot.transform, "Title", string.Empty, 62);
             UiFactory.SetAnchoredRect(
                 title.rectTransform,
                 new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0.5f, 1f),
-                new Vector2(720f, 80f), new Vector2(0f, -48f));
+                new Vector2(900f, 76f), new Vector2(0f, -42f));
             LocalizedText.Bind(title, "ui.play.lobby_title");
 
-            // Taller than the rest of the flow's panels to make room for the
-            // colour picker without squeezing the member list.
-            var panel = UiFactory.CreateGlassPanel(_lobbyRoot.transform, "Panel", UiPalette.GlassStrong);
-            UiFactory.SetCenteredRect(panel.rectTransform, new Vector2(0f, -10f), new Vector2(820f, 860f));
+            var subtitle = _ui.CreateText(
+                "Subtitle", _lobbyRoot.transform, string.Empty, 27, FontStyle.Normal,
+                UiPalette.LightText, TextAnchor.MiddleCenter);
+            UiFactory.SetAnchoredRect(
+                subtitle.rectTransform,
+                new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0.5f, 1f),
+                new Vector2(1100f, 42f), new Vector2(0f, -106f));
+            LocalizedText.Bind(subtitle, "ui.play.lobby_subtitle");
 
-            _lobbyCode = _ui.CreateText("Code", panel.transform, string.Empty, 40, FontStyle.Normal, UiPalette.Primary, TextAnchor.MiddleCenter);
-            UiFactory.SetCenteredRect(_lobbyCode.rectTransform, new Vector2(0f, 310f), new Vector2(720f, 56f));
+            var panel = UiFactory.CreateImage("Panel", _lobbyRoot.transform, Color.clear);
+            panel.raycastTarget = false;
+            UiFactory.SetCenteredRect(panel.rectTransform, new Vector2(0f, -42f), new Vector2(1400f, 820f));
+
+            var membersCard = UiFactory.CreateGlassPanel(panel.transform, "Members Card", UiPalette.Glass);
+            UiFactory.SetCenteredRect(membersCard.rectTransform, new Vector2(-365f, 0f), new Vector2(600f, 700f));
+
+            var setupCard = UiFactory.CreateGlassPanel(panel.transform, "Setup Card", UiPalette.Glass);
+            UiFactory.SetCenteredRect(setupCard.rectTransform, new Vector2(335f, 0f), new Vector2(700f, 700f));
+
+            _lobbyCode = _ui.CreateText("Code", membersCard.transform, string.Empty, 38, FontStyle.Bold, UiPalette.Primary, TextAnchor.MiddleCenter);
+            UiFactory.SetCenteredRect(_lobbyCode.rectTransform, new Vector2(0f, 286f), new Vector2(520f, 56f));
             UiFactory.AddDoubleOutline(_lobbyCode.gameObject, new Vector2(2.5f, -2.5f), new Vector2(1.2f, -1.2f));
 
-            var membersTitle = _ui.CreateText("MembersTitle", panel.transform, string.Empty, 24, FontStyle.Normal, UiPalette.MutedText, TextAnchor.MiddleCenter);
-            UiFactory.SetCenteredRect(membersTitle.rectTransform, new Vector2(0f, 262f), new Vector2(660f, 36f));
+            var membersTitle = _ui.CreateText("MembersTitle", membersCard.transform, string.Empty, 27, FontStyle.Bold, UiPalette.LightText, TextAnchor.MiddleLeft);
+            UiFactory.SetCenteredRect(membersTitle.rectTransform, new Vector2(0f, 218f), new Vector2(520f, 40f));
             LocalizedText.Bind(membersTitle, "ui.play.members");
 
-            _lobbyMembersRoot = UiFactory.CreateRect("Members", panel.transform).transform;
-            UiFactory.SetCenteredRect((RectTransform)_lobbyMembersRoot, new Vector2(0f, 120f), new Vector2(700f, 240f));
+            _lobbyMembersRoot = UiFactory.CreateRect("Members", membersCard.transform).transform;
+            UiFactory.SetCenteredRect((RectTransform)_lobbyMembersRoot, new Vector2(0f, -8f), new Vector2(540f, 410f));
 
-            BuildColorPicker(panel.transform);
-            BuildTeamPicker(panel.transform);
+            var setupTitle = _ui.CreateText("SetupTitle", setupCard.transform, string.Empty, 30, FontStyle.Bold, Color.white, TextAnchor.MiddleCenter);
+            UiFactory.SetCenteredRect(setupTitle.rectTransform, new Vector2(0f, 306f), new Vector2(620f, 44f));
+            LocalizedText.Bind(setupTitle, "ui.play.match_setup");
 
-            var formatTitle = _ui.CreateText("FormatTitle", panel.transform, string.Empty, 22, FontStyle.Normal, UiPalette.MutedText, TextAnchor.MiddleCenter);
-            UiFactory.SetCenteredRect(formatTitle.rectTransform, new Vector2(0f, -208f), new Vector2(660f, 32f));
+            BuildColorPicker(setupCard.transform);
+            BuildTeamPicker(setupCard.transform);
+
+            var formatTitle = _ui.CreateText("FormatTitle", setupCard.transform, string.Empty, 24, FontStyle.Bold, UiPalette.LightText, TextAnchor.MiddleLeft);
+            UiFactory.SetCenteredRect(formatTitle.rectTransform, new Vector2(0f, 142f), new Vector2(620f, 34f));
             LocalizedText.Bind(formatTitle, "ui.play.format");
 
             _formatIndividualButton = _ui.CreateButton(
-                panel.transform, "FormatIndividual", string.Empty,
+                setupCard.transform, "FormatIndividual", string.Empty,
                 UiPalette.Secondary, UiPalette.SecondaryHighlight, () => SetMatchFormat(MatchFormat.Individual));
-            UiFactory.SetCenteredRect(_formatIndividualButton.GetComponent<RectTransform>(), new Vector2(-160f, -256f), new Vector2(280f, 56f));
+            UiFactory.SetCenteredRect(_formatIndividualButton.GetComponent<RectTransform>(), new Vector2(-160f, 92f), new Vector2(290f, 56f));
             LocalizedText.Bind(_formatIndividualButton.GetComponentInChildren<Text>(), "ui.play.format_individual");
 
             _formatTeamButton = _ui.CreateButton(
-                panel.transform, "FormatTeam", string.Empty,
+                setupCard.transform, "FormatTeam", string.Empty,
                 UiPalette.Secondary, UiPalette.SecondaryHighlight, () => SetMatchFormat(MatchFormat.Team));
-            UiFactory.SetCenteredRect(_formatTeamButton.GetComponent<RectTransform>(), new Vector2(160f, -256f), new Vector2(280f, 56f));
+            UiFactory.SetCenteredRect(_formatTeamButton.GetComponent<RectTransform>(), new Vector2(160f, 92f), new Vector2(290f, 56f));
             LocalizedText.Bind(_formatTeamButton.GetComponentInChildren<Text>(), "ui.play.format_team");
 
-            _lobbyStatus = _ui.CreateText("Status", panel.transform, string.Empty, 22, FontStyle.Normal, UiPalette.MutedText, TextAnchor.MiddleCenter);
-            UiFactory.SetCenteredRect(_lobbyStatus.rectTransform, new Vector2(0f, -304f), new Vector2(660f, 40f));
+            var turnTimeTitle = _ui.CreateText(
+                "TurnTimeTitle", setupCard.transform, string.Empty, 24, FontStyle.Bold,
+                UiPalette.LightText, TextAnchor.MiddleLeft);
+            UiFactory.SetCenteredRect(turnTimeTitle.rectTransform, new Vector2(0f, 48f), new Vector2(620f, 34f));
+            LocalizedText.Bind(turnTimeTitle, "ui.play.turn_time");
 
-            var startButton = _ui.CreateAccentButton(
-                panel.transform, "StartMatch", string.Empty,
-                UiPalette.Success, UiPalette.SuccessHighlight, () => _lobbyPresenter.StartMatch(), 28);
-            UiFactory.SetCenteredRect(startButton.GetComponent<RectTransform>(), new Vector2(0f, -358f), new Vector2(400f, 64f));
-            LocalizedText.Bind(startButton.GetComponentInChildren<Text>(), "ui.play.start_match");
+            _turnRushButton = CreateTurnTimeButton(
+                setupCard.transform, "TurnRush", TurnTimePreset.Rush, "ui.play.turn_rush", new Vector2(-232f, 4f));
+            _turnShortButton = CreateTurnTimeButton(
+                setupCard.transform, "TurnShort", TurnTimePreset.Short, "ui.play.turn_short", new Vector2(-78f, 4f));
+            _turnNormalButton = CreateTurnTimeButton(
+                setupCard.transform, "TurnNormal", TurnTimePreset.Normal, "ui.play.turn_normal", new Vector2(76f, 4f));
+            _turnLongButton = CreateTurnTimeButton(
+                setupCard.transform, "TurnLong", TurnTimePreset.Long, "ui.play.turn_long", new Vector2(230f, 4f));
 
-            var leaveButton = _ui.CreateAccentButton(
-                panel.transform, "Leave", string.Empty,
+            _lobbyStatus = _ui.CreateText("Status", setupCard.transform, string.Empty, 22, FontStyle.Normal, UiPalette.MutedText, TextAnchor.MiddleCenter);
+            _lobbyStatus.horizontalOverflow = HorizontalWrapMode.Wrap;
+            UiFactory.SetCenteredRect(_lobbyStatus.rectTransform, new Vector2(0f, -148f), new Vector2(620f, 66f));
+
+            _lobbyStartButton = _ui.CreateAccentButton(
+                setupCard.transform, "StartMatch", string.Empty,
+                UiPalette.Success, UiPalette.SuccessHighlight, StartLobbyMatch, 28);
+            UiFactory.SetCenteredRect(_lobbyStartButton.GetComponent<RectTransform>(), new Vector2(0f, -244f), new Vector2(480f, 66f));
+            LocalizedText.Bind(_lobbyStartButton.GetComponentInChildren<Text>(), "ui.play.start_match");
+
+            _lobbyLeaveButton = _ui.CreateAccentButton(
+                setupCard.transform, "Leave", string.Empty,
                 UiPalette.Danger, UiPalette.DangerHighlight, () =>
                 {
                     _lobbyPresenter.LeaveRoom();
                     ReturnToMenu();
                 }, 26);
-            UiFactory.SetCenteredRect(leaveButton.GetComponent<RectTransform>(), new Vector2(0f, -420f), new Vector2(280f, 56f));
-            LocalizedText.Bind(leaveButton.GetComponentInChildren<Text>(), "ui.play.leave");
+            UiFactory.SetCenteredRect(_lobbyLeaveButton.GetComponent<RectTransform>(), new Vector2(0f, -322f), new Vector2(360f, 56f));
+            LocalizedText.Bind(_lobbyLeaveButton.GetComponentInChildren<Text>(), "ui.play.leave");
 
+            SetNavigation(_formatIndividualButton, null, _turnRushButton, null, _formatTeamButton);
+            SetNavigation(_formatTeamButton, null, _turnLongButton, _formatIndividualButton, null);
+            SetNavigation(_turnRushButton, _formatIndividualButton, _turnShortButton, null, _turnNormalButton);
+            SetNavigation(_turnShortButton, _turnRushButton, _turnNormalButton, null, _turnLongButton);
+            SetNavigation(_turnNormalButton, _turnShortButton, _turnLongButton, _turnRushButton, null);
+            SetNavigation(_turnLongButton, _turnNormalButton, _team1Button, _turnShortButton, null);
+            SetNavigation(_team1Button, _turnLongButton, _lobbyStartButton, null, _team2Button);
+            SetNavigation(_team2Button, _turnLongButton, _lobbyStartButton, _team1Button, null);
+            SetNavigation(_lobbyStartButton, _team1Button, _lobbyLeaveButton, null, null);
+            SetNavigation(_lobbyLeaveButton, _lobbyStartButton, null, null, null);
+
+            ConfigureScreenEntrance(_lobbyRoot, title, subtitle, panel);
             _lobbyRoot.SetActive(false);
+        }
+
+        private void StartLobbyMatch()
+        {
+            _lobbyPresenter.StartMatch();
         }
 
         /// <summary>
@@ -917,16 +1325,16 @@ namespace AMath.UI
         /// </summary>
         private void BuildColorPicker(Transform panel)
         {
-            var title = _ui.CreateText("ColorTitle", panel, string.Empty, 22, FontStyle.Normal, UiPalette.MutedText, TextAnchor.MiddleCenter);
-            UiFactory.SetCenteredRect(title.rectTransform, new Vector2(0f, -20f), new Vector2(660f, 32f));
+            var title = _ui.CreateText("ColorTitle", panel, string.Empty, 24, FontStyle.Bold, UiPalette.LightText, TextAnchor.MiddleLeft);
+            UiFactory.SetCenteredRect(title.rectTransform, new Vector2(0f, 246f), new Vector2(620f, 34f));
             LocalizedText.Bind(title, "ui.play.your_color");
 
             var row = UiFactory.CreateRect("Colors", panel);
-            UiFactory.SetCenteredRect(row, new Vector2(0f, -66f), new Vector2(ColorRowWidth, ColorRingSize));
+            UiFactory.SetCenteredRect(row, new Vector2(0f, 198f), new Vector2(ColorRowWidth, ColorRingSize));
 
             int count = PlayerColorPalette.Count;
             _colorButtons = new Button[count];
-            _colorRings = new Image[count];
+            _colorRingFeedback = new ColorSwatchRingFeedback[count];
 
             // Spread evenly across the row so the spacing adapts if the palette
             // ever grows or shrinks.
@@ -944,18 +1352,26 @@ namespace AMath.UI
                 // grey swatches would disappear into the panel.
                 var ring = UiFactory.CreateImage("Ring", cell, UiFactory.CircleSprite, ColorRingIdle);
                 UiFactory.Stretch(ring.rectTransform);
-                _colorRings[i] = ring;
 
-                _colorButtons[i] = CreateColorSwatch(cell, colorId, () => _lobbyPresenter.RequestColor(colorId));
+                _colorButtons[i] = CreateColorSwatch(
+                    cell,
+                    colorId,
+                    ring,
+                    () => _lobbyPresenter.RequestColor(colorId));
+                _colorRingFeedback[i] = _colorButtons[i].GetComponent<ColorSwatchRingFeedback>();
             }
         }
 
         /// <summary>
-        /// Circular swatch button. The image stays white and the palette colour
-        /// is applied through the tint block, so uGUI's hover / disabled states
-        /// shade the actual colour instead of overwriting it.
+        /// Circular swatch button. The fill stays the palette colour in every
+        /// interactable state; hover and ownership are drawn on the ring so the
+        /// colour itself stays readable.
         /// </summary>
-        private static Button CreateColorSwatch(Transform parent, byte colorId, UnityEngine.Events.UnityAction onClick)
+        private static Button CreateColorSwatch(
+            Transform parent,
+            byte colorId,
+            Image ring,
+            UnityEngine.Events.UnityAction onClick)
         {
             Color color = PlayerColorPalette.ColorOf(colorId);
 
@@ -981,40 +1397,45 @@ namespace AMath.UI
             button.colors = new ColorBlock
             {
                 normalColor = color,
-                highlightedColor = Color.Lerp(color, Color.white, 0.35f),
-                pressedColor = Color.Lerp(color, Color.black, 0.20f),
-                selectedColor = Color.Lerp(color, Color.white, 0.35f),
+                highlightedColor = color,
+                pressedColor = color,
+                selectedColor = color,
                 // Taken colours stay recognisable but visibly muted.
                 disabledColor = new Color(color.r, color.g, color.b, 0.28f),
                 colorMultiplier = 1f,
                 fadeDuration = 0.1f
             };
             button.onClick.AddListener(onClick);
+
+            var feedback = buttonObject.AddComponent<ColorSwatchRingFeedback>();
+            feedback.Configure(ring, ColorRingIdle, ColorRingHover, UiPalette.WinnerGold);
             return button;
         }
 
         /// <summary>
         /// Team 1 / Team 2 buttons for the local player in team mode. Hidden
-        /// in individual mode and for guests who only need to see badges.
+        /// in individual mode; every machine can pick a team once the host
+        /// switches the lobby to team format.
         /// </summary>
         private void BuildTeamPicker(Transform panel)
         {
             _teamPickerRoot = UiFactory.CreateRect("TeamPicker", panel).gameObject;
+            UiFactory.Stretch(_teamPickerRoot.GetComponent<RectTransform>());
 
-            var title = _ui.CreateText("TeamTitle", _teamPickerRoot.transform, string.Empty, 22, FontStyle.Normal, UiPalette.MutedText, TextAnchor.MiddleCenter);
-            UiFactory.SetCenteredRect(title.rectTransform, new Vector2(0f, -110f), new Vector2(660f, 32f));
+            var title = _ui.CreateText("TeamTitle", _teamPickerRoot.transform, string.Empty, 24, FontStyle.Bold, UiPalette.LightText, TextAnchor.MiddleLeft);
+            UiFactory.SetCenteredRect(title.rectTransform, new Vector2(0f, -44f), new Vector2(620f, 34f));
             LocalizedText.Bind(title, "ui.play.pick_team");
 
             _team1Button = _ui.CreateButton(
                 _teamPickerRoot.transform, "Team1", string.Empty,
                 UiPalette.Secondary, UiPalette.SecondaryHighlight, () => _lobbyPresenter.RequestTeam(0));
-            UiFactory.SetCenteredRect(_team1Button.GetComponent<RectTransform>(), new Vector2(-160f, -156f), new Vector2(280f, 56f));
+            UiFactory.SetCenteredRect(_team1Button.GetComponent<RectTransform>(), new Vector2(-160f, -94f), new Vector2(290f, 56f));
             LocalizedText.Bind(_team1Button.GetComponentInChildren<Text>(), "ui.play.team_one");
 
             _team2Button = _ui.CreateButton(
                 _teamPickerRoot.transform, "Team2", string.Empty,
                 UiPalette.Secondary, UiPalette.SecondaryHighlight, () => _lobbyPresenter.RequestTeam(1));
-            UiFactory.SetCenteredRect(_team2Button.GetComponent<RectTransform>(), new Vector2(160f, -156f), new Vector2(280f, 56f));
+            UiFactory.SetCenteredRect(_team2Button.GetComponent<RectTransform>(), new Vector2(160f, -94f), new Vector2(290f, 56f));
             LocalizedText.Bind(_team2Button.GetComponentInChildren<Text>(), "ui.play.team_two");
         }
 
@@ -1027,6 +1448,35 @@ namespace AMath.UI
                 return;
 
             _lobbyPresenter.SelectedFormat = format;
+            _lobbyPresenter.RefreshMembers();
+            RefreshLobby();
+        }
+
+        private Button CreateTurnTimeButton(
+            Transform parent,
+            string name,
+            TurnTimePreset preset,
+            string localizationKey,
+            Vector2 position)
+        {
+            var button = _ui.CreateButton(
+                parent,
+                name,
+                string.Empty,
+                UiPalette.Secondary,
+                UiPalette.SecondaryHighlight,
+                () => SetTurnTimePreset(preset));
+            UiFactory.SetCenteredRect(button.GetComponent<RectTransform>(), position, new Vector2(148f, 48f));
+            LocalizedText.Bind(button.GetComponentInChildren<Text>(), localizationKey);
+            return button;
+        }
+
+        private void SetTurnTimePreset(TurnTimePreset preset)
+        {
+            if (_lobbyPresenter == null || !_lobbyPresenter.IsHost)
+                return;
+
+            _lobbyPresenter.SelectedTurnTimePreset = preset;
             _lobbyPresenter.RefreshMembers();
             RefreshLobby();
         }
@@ -1047,18 +1497,18 @@ namespace AMath.UI
                 Destroy(row.gameObject);
             }
 
-            float y = 90f;
+            float y = 150f;
             var members = _lobbyPresenter.Members
-                .Where(static player => player != null)
-                .OrderByDescending(static player => player.IsHost)
-                .ThenByDescending(static player => player.isLocalPlayer)
+                .Where(player => player != null)
+                .OrderByDescending(player => player.IsHost)
+                .ThenByDescending(player => player.isLocalPlayer)
                 .ToList();
             MatchFormat format = _lobbyPresenter.SelectedFormat;
             for (int index = 0; index < members.Count; index++)
             {
                 NetworkPlayer player = members[index];
                 var card = UiFactory.CreateGlassPanel(_lobbyMembersRoot, "MemberCard", UiPalette.GlassRow);
-                UiFactory.SetCenteredRect(card.rectTransform, new Vector2(0f, y), new Vector2(660f, 56f));
+                UiFactory.SetCenteredRect(card.rectTransform, new Vector2(0f, y), new Vector2(520f, 68f));
 
                 bool isYou = player.isLocalPlayer;
                 bool isHost = player.IsHost;
@@ -1075,11 +1525,23 @@ namespace AMath.UI
                 string displayName = string.IsNullOrEmpty(player.DisplayName) && isYou
                     ? LocalIdentity.DisplayName
                     : player.DisplayName;
-                var label = _ui.CreateText("Name", card.transform, displayName + badges, 26, FontStyle.Bold, UiPalette.LightText, TextAnchor.MiddleLeft);
+                var label = _ui.CreateText("Name", card.transform, displayName + badges, 24, FontStyle.Bold, UiPalette.LightText, TextAnchor.MiddleLeft);
                 label.supportRichText = true;
                 UiFactory.SetStretchRect(label.rectTransform, 72f, 0f, 24f, 0f);
 
-                y -= 64f;
+                y -= 78f;
+            }
+
+            for (int index = members.Count; index < GameRules.MaxPlayers; index++)
+            {
+                var card = UiFactory.CreateGlassPanel(_lobbyMembersRoot, "EmptyMemberCard", new Color(1f, 1f, 1f, 0.035f));
+                UiFactory.SetCenteredRect(card.rectTransform, new Vector2(0f, y), new Vector2(520f, 68f));
+                var label = _ui.CreateText(
+                    "Waiting", card.transform, string.Empty, 23, FontStyle.Normal,
+                    UiPalette.MutedText, TextAnchor.MiddleCenter);
+                UiFactory.Stretch(label.rectTransform);
+                LocalizedText.Bind(label, "ui.play.waiting_player_slot");
+                y -= 78f;
             }
 
             RefreshColorPicker();
@@ -1094,6 +1556,21 @@ namespace AMath.UI
             HighlightFormatButton(_formatIndividualButton, format == MatchFormat.Individual);
             HighlightFormatButton(_formatTeamButton, format == MatchFormat.Team);
 
+            TurnTimePreset turnPreset = _lobbyPresenter.SelectedTurnTimePreset;
+            if (_turnRushButton != null)
+                _turnRushButton.interactable = weAreHost;
+            if (_turnShortButton != null)
+                _turnShortButton.interactable = weAreHost;
+            if (_turnNormalButton != null)
+                _turnNormalButton.interactable = weAreHost;
+            if (_turnLongButton != null)
+                _turnLongButton.interactable = weAreHost;
+
+            HighlightFormatButton(_turnRushButton, turnPreset == TurnTimePreset.Rush);
+            HighlightFormatButton(_turnShortButton, turnPreset == TurnTimePreset.Short);
+            HighlightFormatButton(_turnNormalButton, turnPreset == TurnTimePreset.Normal);
+            HighlightFormatButton(_turnLongButton, turnPreset == TurnTimePreset.Long);
+
             // Guests wait; hosts are told exactly what is missing, so a
             // greyed-out start button never looks like a broken one.
             string blockedReason = _lobbyPresenter.StartBlockedReason;
@@ -1106,11 +1583,10 @@ namespace AMath.UI
                     ? _text.GetText("ui.play.team_hint")
                     : string.Empty;
 
-            var start = _lobbyRoot.transform.Find("Panel/StartMatch")?.GetComponent<Button>();
-            if (start != null)
+            if (_lobbyStartButton != null)
             {
-                start.interactable = blockedReason == null;
-                start.gameObject.SetActive(weAreHost);
+                _lobbyStartButton.interactable = weAreHost && blockedReason == null;
+                _lobbyStartButton.gameObject.SetActive(weAreHost);
             }
         }
 
@@ -1152,10 +1628,10 @@ namespace AMath.UI
                 bool isMine = colorId == mine;
 
                 if (_colorButtons[i] != null)
-                    _colorButtons[i].interactable = !isMine && !_lobbyPresenter.IsColorTaken(colorId);
+                    _colorButtons[i].interactable = !_lobbyPresenter.IsColorTaken(colorId);
 
-                if (_colorRings[i] != null)
-                    _colorRings[i].color = isMine ? UiPalette.WinnerGold : ColorRingIdle;
+                if (_colorRingFeedback[i] != null)
+                    _colorRingFeedback[i].SetOwned(isMine);
             }
         }
 
@@ -1166,11 +1642,18 @@ namespace AMath.UI
             MatchFormat format = _lobbyPresenter.SelectedFormat;
             bool showPicker = format == MatchFormat.Team;
             _teamPickerRoot.SetActive(showPicker);
-            if (!showPicker) return;
+            if (!showPicker)
+            {
+                SetNavigation(_turnLongButton, _turnNormalButton, _lobbyStartButton, _turnShortButton, null);
+                SetNavigation(_lobbyStartButton, _turnLongButton, _lobbyLeaveButton, null, null);
+                return;
+            }
 
             byte mine = _lobbyPresenter.LocalTeamId;
             HighlightFormatButton(_team1Button, mine == 0);
             HighlightFormatButton(_team2Button, mine == 1);
+            SetNavigation(_turnLongButton, _turnNormalButton, _team1Button, _turnShortButton, null);
+            SetNavigation(_lobbyStartButton, _team1Button, _lobbyLeaveButton, null, null);
         }
 
         private static void HighlightFormatButton(Button button, bool selected)
@@ -1179,9 +1662,12 @@ namespace AMath.UI
                 return;
 
             var colors = button.colors;
-            colors.normalColor = selected ? UiPalette.Primary : UiPalette.Secondary;
-            colors.highlightedColor = selected ? UiPalette.PrimaryHighlight : UiPalette.SecondaryHighlight;
+            colors.normalColor = UiPalette.Secondary;
+            colors.highlightedColor = UiPalette.SecondaryHighlight;
+            colors.pressedColor = Color.Lerp(UiPalette.Secondary, Color.black, 0.16f);
+            colors.selectedColor = UiPalette.SecondaryHighlight;
             button.colors = colors;
+            UiFactory.SetChoiceSelected(button, selected);
         }
 
         #endregion
@@ -1194,28 +1680,26 @@ namespace AMath.UI
             _matchRoot.transform.SetParent(_canvas.transform, false);
             UiFactory.Stretch(_matchRoot.GetComponent<RectTransform>());
 
-            UiFactory.CreateFullScreenBackground(
+            Image matchBackground = UiFactory.CreateFullScreenBackground(
                 _matchRoot.transform,
                 "In Game Backgrounds",
                 UiPalette.Background);
+            matchBackground.raycastTarget = true;
+            matchBackground.gameObject.AddComponent<TilePreviewBackground>()
+                .Configure(() => _tilePreviewPanel?.Hide());
 
             _matchStatus = _ui.CreateText(
                 "Status", _matchRoot.transform, string.Empty, 26, FontStyle.Bold,
                 Color.white, TextAnchor.MiddleCenter);
-            UiFactory.SetAnchoredRect(
-                _matchStatus.rectTransform,
-                new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0.5f, 1f),
-                new Vector2(720f, 40f), new Vector2(0f, -28f));
+            MatchHudLayout.Standard.Status.Apply(_matchStatus.rectTransform);
             UiFactory.AddDoubleOutline(_matchStatus.gameObject, new Vector2(3f, -3f), new Vector2(1.5f, -1.5f));
 
-            _matchTimer = _ui.CreateText(
-                "Timer", _matchRoot.transform, string.Empty, 36, FontStyle.Bold,
-                UiPalette.Primary, TextAnchor.MiddleCenter);
-            UiFactory.SetAnchoredRect(
-                _matchTimer.rectTransform,
-                new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0.5f, 1f),
-                new Vector2(140f, 44f), new Vector2(0f, -68f));
-            UiFactory.AddDoubleOutline(_matchTimer.gameObject, new Vector2(3f, -3f), new Vector2(1.5f, -1.5f));
+            MatchHudElements.Timer timer = MatchHudElements.CreateTimer(
+                _ui, _matchRoot.transform, string.Empty, "01:00");
+            _matchTimerPanel = timer.Panel;
+            _matchTimer = timer.Value;
+            _matchTimerFill = timer.Fill;
+            LocalizedText.Bind(timer.Caption, "ui.match.time");
 
             var menuButton = _ui.CreateAccentButton(
                 _matchRoot.transform, "Menu", string.Empty,
@@ -1228,27 +1712,29 @@ namespace AMath.UI
 
             BuildPlayerSeats();
             BuildBagHud();
+            _tilePreviewPanel = new TilePreviewPanel(
+                _ui, _text, _matchRoot.transform, MatchHudLayout.Standard.TilePreview);
 
-            var boardFrame = UiFactory.CreateImage(
-                "Board Frame",
-                _matchRoot.transform,
-                UiPalette.BoardFrame);
-            UiFactory.SetCenteredRect(boardFrame.rectTransform, new Vector2(0f, 48f), new Vector2(736f, 736f));
-            UiFactory.AddShadow(boardFrame.gameObject, new Color(0f, 0f, 0f, 0.35f), new Vector2(0f, -10f));
+            var boardFrame = MatchHudElements.CreateBoardFrame(_matchRoot.transform);
 
             var boardRoot = UiFactory.CreateRect("Board", boardFrame.transform);
-            UiFactory.SetCenteredRect(boardRoot, Vector2.zero, new Vector2(700f, 700f));
-            _boardView = new MatchBoardView(_ui, boardRoot, OnCellClicked);
+            UiFactory.SetCenteredRect(boardRoot, Vector2.zero, MatchHudLayout.Standard.BoardSize);
+            _boardView = new MatchBoardView(
+                _ui,
+                boardRoot,
+                OnCellClicked,
+                MatchHudLayout.Standard.BoardCellSize,
+                onTileClicked: tileId => _tilePreviewPanel.Show(tileId),
+                onEmptyCellClicked: () => _tilePreviewPanel.Hide());
+            _tilePlacementInput = new TilePlacementInput(
+                _boardView,
+                CanPlaceTiles,
+                () => _matchPresenter?.TurnInput?.SelectedRackIndex,
+                PlaceFromRack,
+                RefreshBoardVisual);
+            _boardView.ConfigureCells(_tilePlacementInput.AttachBoardCell);
 
-            var rackShelf = UiFactory.CreateImage(
-                "Rack Shelf",
-                _matchRoot.transform,
-                UiPalette.RackShelf);
-            UiFactory.SetAnchoredRect(
-                rackShelf.rectTransform,
-                new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0.5f, 0f),
-                new Vector2(720f, 96f), new Vector2(0f, 118f));
-            UiFactory.AddShadow(rackShelf.gameObject, new Color(0f, 0f, 0f, 0.28f), new Vector2(0f, -6f));
+            var rackShelf = MatchHudElements.CreateRackShelf(_matchRoot.transform);
 
             _rackRoot = UiFactory.CreateRect("Rack", rackShelf.transform).transform;
             UiFactory.Stretch((RectTransform)_rackRoot);
@@ -1258,24 +1744,49 @@ namespace AMath.UI
                 Color.white, TextAnchor.MiddleCenter);
             _matchPreview.horizontalOverflow = HorizontalWrapMode.Wrap;
             _matchPreview.verticalOverflow = VerticalWrapMode.Overflow;
-            UiFactory.SetAnchoredRect(
-                _matchPreview.rectTransform,
-                new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0.5f, 0f),
-                new Vector2(640f, 40f), new Vector2(0f, 258f));
+            MatchHudLayout.Standard.Preview.Apply(_matchPreview.rectTransform);
             UiFactory.AddOutline(_matchPreview.gameObject, Color.black, new Vector2(1.5f, -1.5f));
 
             _declareRoot = UiFactory.CreateRect("Declare", _matchRoot.transform).transform;
-            UiFactory.SetAnchoredRect(
-                (RectTransform)_declareRoot,
-                new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0.5f, 0f),
-                new Vector2(1000f, 100f), new Vector2(0f, 300f));
+            MatchHudLayout.Standard.Declare.Apply((RectTransform)_declareRoot);
             _declareRoot.gameObject.SetActive(false);
 
-            float bx = -340f;
-            _confirmButton = CreateMatchAction("Confirm", "ui.match.confirm", UiPalette.Success, UiPalette.SuccessHighlight, () => _matchPresenter.ConfirmPlace(), ref bx);
-            _clearButton = CreateMatchAction("Clear", "ui.match.clear", UiPalette.Secondary, UiPalette.SecondaryHighlight, () => _matchPresenter.ClearDraft(), ref bx);
-            _passButton = CreateMatchAction("Pass", "ui.match.pass", UiPalette.Secondary, UiPalette.SecondaryHighlight, () => _matchPresenter.Pass(), ref bx);
-            _exchangeButton = CreateMatchAction("Exchange", "ui.match.exchange", UiPalette.Primary, UiPalette.PrimaryHighlight, ToggleExchangeMode, ref bx);
+            RectTransform commandDrawerRoot = UiFactory.CreateRect("Command Drawer", _matchRoot.transform);
+            Vector2 drawerExpandedPosition = MatchHudLayout.Standard.CommandDrawer.Position;
+            MatchHudLayout.Standard.CommandDrawer.Apply(commandDrawerRoot);
+
+            Image commandPanel = UiFactory.CreateGlassPanel(
+                commandDrawerRoot,
+                "Panel",
+                new Color(UiPalette.GlassStrong.r, UiPalette.GlassStrong.g, UiPalette.GlassStrong.b, 0.94f));
+            UiFactory.Stretch(commandPanel.rectTransform);
+            UiFactory.AddOutline(commandPanel.gameObject, new Color(1f, 1f, 1f, 0.16f), new Vector2(1.5f, -1.5f));
+
+            int actionIndex = 0;
+            _confirmButton = CreateMatchAction(commandDrawerRoot, "Confirm", "ui.match.confirm", UiPalette.Success, UiPalette.SuccessHighlight, () => _matchPresenter.ConfirmPlace(), actionIndex++);
+            _clearButton = CreateMatchAction(commandDrawerRoot, "Clear", "ui.match.clear", UiPalette.Secondary, UiPalette.SecondaryHighlight, () => _matchPresenter.ClearDraft(), actionIndex++);
+            _passButton = CreateMatchAction(commandDrawerRoot, "Pass", "ui.match.pass", UiPalette.Secondary, UiPalette.SecondaryHighlight, () => _matchPresenter.Pass(), actionIndex++);
+            _exchangeButton = CreateMatchAction(commandDrawerRoot, "Exchange", "ui.match.exchange", UiPalette.Primary, UiPalette.PrimaryHighlight, ToggleExchangeMode, actionIndex);
+
+            _commandDrawer = commandDrawerRoot.gameObject.AddComponent<MatchCommandDrawerAnimator>();
+            _commandDrawer.Configure(
+                drawerExpandedPosition,
+                MatchHudLayout.Standard.CommandDrawerCollapsedPosition,
+                CommandDrawerAnimationSeconds);
+            _commandDrawer.SetExpandedInstant(false);
+
+            _commandDrawerToggle = _ui.CreateAccentButton(
+                _matchRoot.transform,
+                "Command Drawer Toggle",
+                string.Empty,
+                UiPalette.Primary,
+                UiPalette.PrimaryHighlight,
+                ToggleCommandDrawer,
+                18);
+            MatchHudLayout.Standard.CommandToggle.Apply(
+                _commandDrawerToggle.GetComponent<RectTransform>());
+            _commandDrawerToggleLabel = _commandDrawerToggle.GetComponentInChildren<Text>();
+            UpdateCommandDrawerToggleLabel();
 
             _matchRoot.SetActive(false);
         }
@@ -1283,94 +1794,52 @@ namespace AMath.UI
         private void BuildPlayerSeats()
         {
             for (int i = 0; i < VisibleSeatCount; i++)
-            {
-                var seat = new PlayerSeatHud();
-                var root = UiFactory.CreateRect($"Seat{i + 1}", _matchRoot.transform);
-                Vector2 anchor = SeatAnchors[i];
-                UiFactory.SetAnchoredRect(
-                    root,
-                    anchor, anchor, SeatPivots[i],
-                    new Vector2(170f, 170f),
-                    SeatPositions[i]);
-
-                bool scoreBelow = anchor.y > 0.5f;
-                float avatarY = scoreBelow ? 28f : -28f;
-                float scoreY = scoreBelow ? -52f : 52f;
-
-                var ring = UiFactory.CreateImage(
-                    "TurnRing", root, UiFactory.CircleSprite, new Color(UiPalette.TurnRing.r, UiPalette.TurnRing.g, UiPalette.TurnRing.b, 0f));
-                UiFactory.SetCenteredRect(ring.rectTransform, new Vector2(0f, avatarY), new Vector2(126f, 126f));
-
-                // Constant dark band between the turn ring and the avatar, so a
-                // player who picked black or grey still has a visible outline.
-                var outline = UiFactory.CreateImage("AvatarOutline", root, UiFactory.CircleSprite, ColorRingIdle);
-                UiFactory.SetCenteredRect(outline.rectTransform, new Vector2(0f, avatarY), new Vector2(112f, 112f));
-
-                // Actual colour is applied per player in RefreshPlayerSeats.
-                var avatar = UiFactory.CreateImage("Avatar", root, UiFactory.CircleSprite, UiPalette.MutedText);
-                UiFactory.SetCenteredRect(avatar.rectTransform, new Vector2(0f, avatarY), new Vector2(104f, 104f));
-                UiFactory.AddShadow(avatar.gameObject, new Color(0f, 0f, 0f, 0.30f), new Vector2(0f, -4f));
-
-                var label = _ui.CreateText(
-                    "Label", root, $"P{i + 1}", 34, FontStyle.Bold,
-                    Color.black, TextAnchor.MiddleCenter);
-                UiFactory.SetCenteredRect(label.rectTransform, new Vector2(0f, avatarY), new Vector2(100f, 48f));
-
-                var score = _ui.CreateText(
-                    "Score", root, string.Empty, 22, FontStyle.Bold,
-                    Color.white, TextAnchor.MiddleCenter);
-                UiFactory.SetCenteredRect(score.rectTransform, new Vector2(0f, scoreY), new Vector2(160f, 36f));
-                UiFactory.AddDoubleOutline(score.gameObject, new Vector2(2.5f, -2.5f), new Vector2(1.2f, -1.2f));
-
-                seat.Root = root.gameObject;
-                seat.Avatar = avatar;
-                seat.Label = label;
-                seat.Score = score;
-                seat.TurnRing = ring;
-                seat.Root.SetActive(false);
-                _seats[i] = seat;
-            }
+                _seats[i] = MatchHudElements.CreateSeat(_ui, _matchRoot.transform, i);
         }
 
         private void BuildBagHud()
         {
-            var bagRoot = UiFactory.CreateRect("Bag", _matchRoot.transform);
-            UiFactory.SetAnchoredRect(
-                bagRoot,
-                new Vector2(1f, 0.5f), new Vector2(1f, 0.5f), new Vector2(1f, 0.5f),
-                new Vector2(150f, 150f), new Vector2(-36f, 40f));
-
-            Sprite bagSprite = TileIcons.Bag();
-            Image bagIcon = bagSprite != null
-                ? UiFactory.CreateImage("Icon", bagRoot, bagSprite)
-                : UiFactory.CreateImage("Icon", bagRoot, new Color(0.95f, 0.55f, 0.70f, 1f));
-            bagIcon.preserveAspect = true;
-            UiFactory.SetCenteredRect(bagIcon.rectTransform, new Vector2(0f, 10f), new Vector2(130f, 120f));
-
-            _bagLabel = _ui.CreateText(
-                "Count", bagRoot, "0", 28, FontStyle.Bold,
-                Color.white, TextAnchor.MiddleCenter);
-            UiFactory.SetCenteredRect(_bagLabel.rectTransform, new Vector2(0f, -58f), new Vector2(120f, 36f));
-            UiFactory.AddDoubleOutline(_bagLabel.gameObject, new Vector2(2.5f, -2.5f), new Vector2(1.2f, -1.2f));
+            _bagLabel = MatchHudElements.CreateBag(_ui, _matchRoot.transform);
         }
 
         private Button CreateMatchAction(
+            Transform parent,
             string name,
             string labelKey,
             Color color,
             Color highlight,
             UnityEngine.Events.UnityAction action,
-            ref float x)
+            int index)
         {
-            var button = _ui.CreateAccentButton(
-                _matchRoot.transform, name, string.Empty, color, highlight, () => action(), 18);
-            UiFactory.SetAnchoredRect(
-                button.GetComponent<RectTransform>(),
-                new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0.5f, 0f),
-                new Vector2(160f, 50f), new Vector2(x, 230f));
+            var button = MatchHudElements.CreateAction(
+                _ui, parent, name, string.Empty, color, highlight, () => action(), index);
             LocalizedText.Bind(button.GetComponentInChildren<Text>(), labelKey);
-            x += 172f;
             return button;
+        }
+
+        private void ToggleCommandDrawer()
+        {
+            if (_commandDrawer == null)
+                return;
+
+            _commandDrawer.Toggle();
+            UpdateCommandDrawerToggleLabel();
+
+            if (_commandDrawer.IsExpanded)
+                UiFactory.SelectFirstInteractable(_confirmButton, _clearButton, _passButton, _exchangeButton);
+            else
+                UiFactory.SelectFirstInteractable(_commandDrawerToggle);
+        }
+
+        private void UpdateCommandDrawerToggleLabel()
+        {
+            if (_commandDrawerToggleLabel == null || _text == null)
+                return;
+
+            string key = _commandDrawer != null && _commandDrawer.IsExpanded
+                ? "ui.match.commands_hide"
+                : "ui.match.commands_open";
+            _commandDrawerToggleLabel.text = _text.GetText(key);
         }
 
         private void PulseTurnRings()
@@ -1378,7 +1847,7 @@ namespace AMath.UI
             float pulse = 0.72f + 0.28f * (0.5f + 0.5f * Mathf.Sin(Time.unscaledTime * 4.2f));
             for (int i = 0; i < VisibleSeatCount; i++)
             {
-                PlayerSeatHud seat = _seats[i];
+                MatchHudElements.Seat seat = _seats[i];
                 if (seat?.TurnRing == null || !seat.Root.activeSelf)
                     continue;
 
@@ -1409,9 +1878,23 @@ namespace AMath.UI
             RefreshMatch();
         }
 
+        private bool CanPlaceTiles() =>
+            _matchPresenter != null && _matchPresenter.IsMyTurnReady && !_exchangeMode;
+
+        private void PlaceFromRack(int rackIndex, int x, int y) =>
+            _matchPresenter?.PlaceFromRack(rackIndex, x, y);
+
+        private void RefreshBoardVisual()
+        {
+            BoardManager boardManager = null;
+            NetworkContext.Services?.TryResolve(out boardManager);
+            TurnInputSession input = _matchPresenter?.TurnInput;
+            _boardView?.Refresh(boardManager?.Grid, input);
+        }
+
         private void OnCellClicked(int x, int y)
         {
-            if (_matchPresenter == null || !_matchPresenter.IsMyTurnReady) return;
+            if (!CanPlaceTiles()) return;
 
             TurnInputSession input = _matchPresenter.TurnInput;
             if (input == null) return;
@@ -1424,6 +1907,11 @@ namespace AMath.UI
                     return;
                 }
             }
+
+            BoardManager boardManager = null;
+            NetworkContext.Services?.TryResolve(out boardManager);
+            if (boardManager?.Grid != null && boardManager.Grid.IsOccupied(x, y))
+                return;
 
             _matchPresenter.PlaceCell(x, y);
         }
@@ -1454,6 +1942,7 @@ namespace AMath.UI
 
             UpdateTimerAndBag();
             RefreshPlayerSeats();
+            UpdateCommandDrawerToggleLabel();
 
             // Action buttons only work on your turn; graying them out makes the
             // turn state readable at a glance.
@@ -1534,7 +2023,7 @@ namespace AMath.UI
 
             for (int i = 0; i < VisibleSeatCount; i++)
             {
-                PlayerSeatHud seat = _seats[i];
+                MatchHudElements.Seat seat = _seats[i];
                 if (seat == null) continue;
 
                 if (i >= ordered.Count)
@@ -1560,7 +2049,7 @@ namespace AMath.UI
 
                 // The palette spans white-ish yellow to near-black, so the seat
                 // number has to flip rather than stay a fixed colour.
-                seat.Label.color = ContrastingTextColor(seat.Avatar.color);
+                seat.Label.color = MatchHudElements.ContrastingTextColor(seat.Avatar.color);
 
                 Color ring = UiPalette.TurnRing;
                 ring.a = isCurrent ? 0.95f : 0f;
@@ -1604,9 +2093,7 @@ namespace AMath.UI
                 {
                     image.sprite = sprite;
                     image.preserveAspect = true;
-                    image.color = selected
-                        ? new Color(1f, 0.92f, 0.55f, 1f)
-                        : Color.white;
+                    image.color = selected ? UiPalette.CellSelected : Color.white;
                     label.text = string.Empty;
                 }
                 else
@@ -1618,10 +2105,24 @@ namespace AMath.UI
                     label.text = $"{SymbolOf(tileId)}\n{PointsOf(tileId)}";
                 }
 
+                var rackRect = button.GetComponent<RectTransform>();
                 UiFactory.SetCenteredRect(
-                    button.GetComponent<RectTransform>(),
+                    rackRect,
                     new Vector2(start + i * RackPitch, 0f),
                     new Vector2(70f, 84f));
+                rackRect.localScale = Vector3.one;
+
+                int rackIndex = i;
+                _tilePlacementInput?.AttachRackButton(
+                    button,
+                    rackIndex,
+                    CaptureRackSpriteProvider(rackIndex, index =>
+                    {
+                        PlayerState rackOwner = _matchPresenter.Players?.GetById(_matchPresenter.LocalPlayerId);
+                        if (rackOwner == null || index >= rackOwner.Rack.Count)
+                            return null;
+                        return TileIcons.ForTile(rackOwner.Rack[index]);
+                    }));
             }
         }
 
@@ -1645,7 +2146,34 @@ namespace AMath.UI
                 _rackButtons.Add(button);
                 _rackLabels.Add(label);
                 _rackImages.Add(button.GetComponent<Image>());
+                button.gameObject.AddComponent<TilePreviewRackTarget>().Configure(
+                    () =>
+                    {
+                        PlayerState owner = _matchPresenter?.Players?.GetById(_matchPresenter.LocalPlayerId);
+                        return owner != null && index < owner.Rack.Count
+                            ? (byte?)owner.Rack[index]
+                            : null;
+                    },
+                    tileId => _tilePreviewPanel.Show(tileId));
+                _tilePlacementInput?.AttachRackButton(
+                    button,
+                    index,
+                    CaptureRackSpriteProvider(index, rackIndex =>
+                    {
+                        PlayerState rackOwner = _matchPresenter?.Players?.GetById(_matchPresenter.LocalPlayerId);
+                        if (rackOwner == null || rackIndex >= rackOwner.Rack.Count)
+                            return null;
+                        return TileIcons.ForTile(rackOwner.Rack[rackIndex]);
+                    }));
             }
+        }
+
+        internal static Func<Sprite> CaptureRackSpriteProvider(
+            int rackIndex,
+            Func<int, Sprite> spriteProvider)
+        {
+            if (spriteProvider == null) throw new ArgumentNullException(nameof(spriteProvider));
+            return () => spriteProvider(rackIndex);
         }
 
         private static void SetRackButtonColor(Button button, Color normal)
@@ -1686,7 +2214,7 @@ namespace AMath.UI
 
             _declareRoot.gameObject.SetActive(true);
             var title = _ui.CreateText("DeclareTitle", _declareRoot, _text.GetText("ui.match.declare"), 20, FontStyle.Bold, UiPalette.MutedText, TextAnchor.MiddleCenter);
-            UiFactory.SetCenteredRect(title.rectTransform, new Vector2(0f, 34f), new Vector2(500f, 34f));
+            UiFactory.SetCenteredRect(title.rectTransform, new Vector2(0f, 24f), new Vector2(500f, 28f));
 
             byte tileId = selected.Value;
             float x = -420f;
@@ -1697,7 +2225,7 @@ namespace AMath.UI
                 {
                     _matchPresenter.SetDeclaration(value);
                 }, 22);
-                UiFactory.SetCenteredRect(button.GetComponent<RectTransform>(), new Vector2(x, -16f), new Vector2(52f, 48f));
+                UiFactory.SetCenteredRect(button.GetComponent<RectTransform>(), new Vector2(x, -14f), new Vector2(52f, 42f));
                 x += 58f;
             }
 
@@ -1752,15 +2280,19 @@ namespace AMath.UI
             _pauseSettingsButton = _ui.CreateTextMenuButton(_pauseRoot.transform, "Settings", string.Empty, 42, OpenMatchSettings);
             LocalizedText.Bind(_pauseSettingsButton.GetComponentInChildren<Text>(), "ui.pause.settings");
 
-            _pauseLeaveButton = _ui.CreateTextMenuButton(_pauseRoot.transform, "Leave", string.Empty, 42, () =>
+            _pauseLeaveButton = _ui.CreateAccentButton(_pauseRoot.transform, "Leave", string.Empty,
+                UiPalette.Danger, UiPalette.DangerHighlight, () =>
             {
                 OverlayFade.Ensure(_pauseRoot)?.HideInstant();
                 _matchPresenter.LeaveRoom();
                 ReturnToMenu();
-            });
+            }, 42);
             LocalizedText.Bind(_pauseLeaveButton.GetComponentInChildren<Text>(), "ui.pause.leave");
 
             OverlayFade.Ensure(_pauseRoot);
+            var pauseEntrance = _pauseRoot.AddComponent<MenuEntranceAnimator>();
+            pauseEntrance.SetTargets(title, _pauseResumeButton, _pausePlayOnButton, _pauseSettingsButton, _pauseLeaveButton);
+            pauseEntrance.Configure(0.22f, 0.03f, 0f);
             _pauseRoot.SetActive(false);
         }
 
@@ -1768,6 +2300,7 @@ namespace AMath.UI
         {
             if (_screen != ScreenId.Match) return;
             OverlayFade.Ensure(_pauseRoot).FadeIn();
+            _pauseRoot.GetComponent<MenuEntranceAnimator>()?.Play();
             LayoutPauseButtons();
             UiFactory.Select(_pauseResumeButton);
         }
@@ -1828,7 +2361,10 @@ namespace AMath.UI
             OverlayFade.Ensure(_pauseRoot)?.HideInstant();
             if (_matchSettings == null)
             {
-                _matchSettings = SettingsMenuController.Create(transform, _ui.Font);
+                _matchSettings = SettingsMenuController.Create(
+                    transform,
+                    _ui.Font,
+                    SettingsBackdropMode.LiveMatchOverlay);
                 _matchSettings.Closed += OnMatchSettingsClosed;
             }
 
@@ -1855,55 +2391,65 @@ namespace AMath.UI
             _resultRoot.transform.SetParent(_canvas.transform, false);
             UiFactory.Stretch(_resultRoot.GetComponent<RectTransform>());
 
-            var overlay = UiFactory.CreateImage("Overlay", _resultRoot.transform, UiPalette.Overlay);
+            var overlay = UiFactory.CreateImage("Overlay", _resultRoot.transform,
+                new Color(0.01f, 0.015f, 0.025f, 0.86f));
             UiFactory.Stretch(overlay.rectTransform);
             overlay.raycastTarget = true;
 
-            var winnerLabel = _ui.CreateOutlinedTitle(
-                _resultRoot.transform, "WinnerLabel", string.Empty, 56);
-            winnerLabel.color = UiPalette.WinnerGold;
-            UiFactory.SetCenteredRect(winnerLabel.rectTransform, new Vector2(0f, 160f), new Vector2(720f, 72f));
-            LocalizedText.Bind(winnerLabel, "ui.result.winner");
+            RectTransform resultContent = UiFactory.CreateRect("Result Content", _resultRoot.transform);
+            UiFactory.SetCenteredRect(resultContent, new Vector2(0f, 90f), new Vector2(780f, 800f));
+
+            _resultWinnerCaption = _ui.CreateOutlinedTitle(
+                resultContent, "WinnerLabel", string.Empty, 56);
+            _resultWinnerCaption.color = UiPalette.WinnerGold;
+            UiFactory.SetCenteredRect(_resultWinnerCaption.rectTransform, new Vector2(0f, 160f), new Vector2(720f, 72f));
+            _resultWinnerCaption.text = _text.GetText("ui.result.winner");
 
             _resultWinner = _ui.CreateOutlinedTitle(
-                _resultRoot.transform, "Winner", string.Empty, 48);
+                resultContent, "Winner", string.Empty, 48);
             UiFactory.SetCenteredRect(_resultWinner.rectTransform, new Vector2(0f, 80f), new Vector2(720f, 64f));
 
             _resultMeta = _ui.CreateText(
-                "Meta", _resultRoot.transform, string.Empty, 28, FontStyle.Normal,
+                "Meta", resultContent, string.Empty, 28, FontStyle.Normal,
                 Color.white, TextAnchor.MiddleCenter);
             UiFactory.SetCenteredRect(_resultMeta.rectTransform, new Vector2(0f, 20f), new Vector2(720f, 48f));
             UiFactory.AddDoubleOutline(_resultMeta.gameObject, new Vector2(2.5f, -2.5f), new Vector2(1.2f, -1.2f));
 
             _resultBody = _ui.CreateText(
-                "Body", _resultRoot.transform, string.Empty, 26, FontStyle.Normal,
+                "Body", resultContent, string.Empty, 26, FontStyle.Normal,
                 UiPalette.LightText, TextAnchor.UpperCenter);
             _resultBody.horizontalOverflow = HorizontalWrapMode.Wrap;
             _resultBody.verticalOverflow = VerticalWrapMode.Overflow;
             _resultBody.supportRichText = true;
             UiFactory.SetCenteredRect(_resultBody.rectTransform, new Vector2(0f, -120f), new Vector2(640f, 220f));
 
-            var rematchButton = _ui.CreateAccentButton(
-                _resultRoot.transform, "Rematch", string.Empty,
+            _resultRematchButton = _ui.CreateAccentButton(
+                resultContent, "Rematch", string.Empty,
                 UiPalette.Success, UiPalette.SuccessHighlight, () =>
                 {
                     if (_resultPresenter.CanRematch)
+                    {
                         _resultPresenter.Rematch();
+                    }
                 }, 26);
-            UiFactory.SetCenteredRect(rematchButton.GetComponent<RectTransform>(), new Vector2(0f, -280f), new Vector2(360f, 60f));
-            LocalizedText.Bind(rematchButton.GetComponentInChildren<Text>(), "ui.result.rematch");
+            UiFactory.SetCenteredRect(_resultRematchButton.GetComponent<RectTransform>(), new Vector2(0f, -280f), new Vector2(360f, 60f));
+            LocalizedText.Bind(_resultRematchButton.GetComponentInChildren<Text>(), "ui.result.rematch");
 
-            var leaveButton = _ui.CreateAccentButton(
-                _resultRoot.transform, "Leave", string.Empty,
-                UiPalette.Secondary, UiPalette.SecondaryHighlight, () =>
+            _resultLeaveButton = _ui.CreateAccentButton(
+                resultContent, "Leave", string.Empty,
+                UiPalette.Danger, UiPalette.DangerHighlight, () =>
                 {
                     _resultPresenter.Leave();
                     ReturnToMenu();
                 }, 26);
-            UiFactory.SetCenteredRect(leaveButton.GetComponent<RectTransform>(), new Vector2(0f, -360f), new Vector2(320f, 56f));
-            LocalizedText.Bind(leaveButton.GetComponentInChildren<Text>(), "ui.result.leave");
+            UiFactory.SetCenteredRect(_resultLeaveButton.GetComponent<RectTransform>(), new Vector2(0f, -360f), new Vector2(320f, 56f));
+            LocalizedText.Bind(_resultLeaveButton.GetComponentInChildren<Text>(), "ui.result.leave");
 
             OverlayFade.Ensure(_resultRoot);
+            var resultEntrance = _resultRoot.AddComponent<MenuEntranceAnimator>();
+            resultEntrance.SetTargets(_resultWinnerCaption, _resultWinner, _resultMeta,
+                _resultBody, _resultRematchButton, _resultLeaveButton);
+            resultEntrance.Configure(0.22f, 0.03f, 0f);
             _resultRoot.SetActive(false);
         }
 
@@ -1918,6 +2464,8 @@ namespace AMath.UI
                 return;
             }
 
+            _resultWinnerCaption.text = _text.GetText(result.IsDraw ? "ui.result.outcome" : "ui.result.winner");
+
             PlayerResult winner = null;
             foreach (PlayerResult row in result.Standings)
             {
@@ -1928,7 +2476,11 @@ namespace AMath.UI
                 }
             }
 
-            if (result.Format == MatchFormat.Team && result.WinnerTeamId >= 0)
+            if (result.IsDraw)
+            {
+                _resultWinner.text = _text.GetText("ui.result.draw");
+            }
+            else if (result.Format == MatchFormat.Team && result.WinnerTeamId >= 0)
             {
                 _resultWinner.text = string.Format(
                     _text.GetText("ui.result.team_winner"),
@@ -1957,7 +2509,7 @@ namespace AMath.UI
                 foreach (TeamResult team in result.TeamStandings)
                 {
                     string line = $"{_text.GetText("ui.play.team_badge")} {team.TeamId + 1}: {team.TotalScore}";
-                    if (team.TeamId == result.WinnerTeamId)
+                    if (!result.IsDraw && team.TeamId == result.WinnerTeamId)
                         line = $"<color=#FDA733><b>{line}</b></color>";
                     sb.AppendLine(line);
                 }
@@ -1972,7 +2524,7 @@ namespace AMath.UI
             {
                 string teamSuffix = row.TeamId >= 0 ? $" ({_text.GetText("ui.play.team_badge")} {row.TeamId + 1})" : string.Empty;
                 string line = $"{rank}.  {row.DisplayName}{teamSuffix}   {row.FinalScore}";
-                if (row.PlayerId == result.WinnerPlayerId)
+                if (!result.IsDraw && row.PlayerId == result.WinnerPlayerId)
                     line = $"<color=#FDA733><b>{line}</b></color>";
                 sb.AppendLine(line);
                 rank++;
@@ -1980,7 +2532,7 @@ namespace AMath.UI
 
             _resultBody.text = sb.ToString();
 
-            var rematch = _resultRoot.transform.Find("Rematch")?.GetComponent<Button>();
+            var rematch = _resultRoot.transform.Find("Result Content/Rematch")?.GetComponent<Button>();
             if (rematch != null) rematch.interactable = _resultPresenter.CanRematch;
         }
 
@@ -2000,7 +2552,7 @@ namespace AMath.UI
             _recoveryStatus.horizontalOverflow = HorizontalWrapMode.Wrap;
             UiFactory.SetCenteredRect(_recoveryStatus.rectTransform, new Vector2(0f, 20f), new Vector2(560f, 120f));
 
-            var leaveButton = _ui.CreateAccentButton(card, "Leave", string.Empty, UiPalette.Secondary, UiPalette.SecondaryHighlight, () =>
+            var leaveButton = _ui.CreateAccentButton(card, "Leave", string.Empty, UiPalette.Danger, UiPalette.DangerHighlight, () =>
             {
                 _recoveryPresenter.LeaveRoom();
                 SetBrowserNotice(_text.GetText("ui.play.connection_lost"));
@@ -2053,6 +2605,25 @@ namespace AMath.UI
 
         #endregion
 
+        private static void SetNavigation(
+            Selectable selectable,
+            Selectable up,
+            Selectable down,
+            Selectable left,
+            Selectable right)
+        {
+            if (selectable == null)
+                return;
+
+            var navigation = selectable.navigation;
+            navigation.mode = Navigation.Mode.Explicit;
+            navigation.selectOnUp = up;
+            navigation.selectOnDown = down;
+            navigation.selectOnLeft = left;
+            navigation.selectOnRight = right;
+            selectable.navigation = navigation;
+        }
+
         private GameObject ForestScreen(string name)
         {
             var root = new GameObject(name, typeof(RectTransform));
@@ -2061,6 +2632,73 @@ namespace AMath.UI
             UiFactory.CreateFullScreenBackground(root.transform, "Main Menu Backgrounds", UiPalette.Background);
             root.SetActive(false);
             return root;
+        }
+
+        private static void ConfigureScreenEntrance(GameObject root, params Component[] targets)
+        {
+            var entrance = root.AddComponent<MenuEntranceAnimator>();
+            entrance.SetTargets(targets);
+            entrance.Configure(0.26f, 0.045f, 0f);
+        }
+    }
+
+    /// <summary>
+    /// Draws colour-swatch hover and ownership on the outer ring only, so the
+    /// fill colour never gets washed out.
+    /// </summary>
+    internal sealed class ColorSwatchRingFeedback : MonoBehaviour, IPointerEnterHandler, IPointerExitHandler
+    {
+        private Image _ring;
+        private Color _idle;
+        private Color _hover;
+        private Color _owned;
+        private bool _isOwned;
+        private bool _hovered;
+
+        public void Configure(Image ring, Color idle, Color hover, Color owned)
+        {
+            _ring = ring;
+            _idle = idle;
+            _hover = hover;
+            _owned = owned;
+            Apply();
+        }
+
+        public void SetOwned(bool isOwned)
+        {
+            _isOwned = isOwned;
+            Apply();
+        }
+
+        public void OnPointerEnter(PointerEventData eventData)
+        {
+            _hovered = true;
+            Apply();
+        }
+
+        public void OnPointerExit(PointerEventData eventData)
+        {
+            _hovered = false;
+            Apply();
+        }
+
+        private void OnDisable()
+        {
+            _hovered = false;
+            Apply();
+        }
+
+        private void Apply()
+        {
+            if (_ring == null)
+                return;
+
+            if (_isOwned)
+                _ring.color = _owned;
+            else if (_hovered)
+                _ring.color = _hover;
+            else
+                _ring.color = _idle;
         }
     }
 }

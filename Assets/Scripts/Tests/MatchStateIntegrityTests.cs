@@ -63,6 +63,58 @@ namespace AMath.Tests
         };
 
         [Test]
+        public void RestoreSnapshot_RejectsIncompleteRosterWithoutChangingLiveMatch()
+        {
+            Rig rig = CreateRig(authority: true);
+            rig.Game.StartMatch(TwoPlayerConfig(22));
+            GameStateSnapshot damaged = rig.Game.CaptureSnapshot();
+            damaged.Players = null;
+
+            Assert.Throws<ArgumentException>(() => rig.Game.RestoreSnapshot(damaged));
+            Assert.AreEqual(MatchPhase.Playing, rig.Game.Phase);
+            Assert.AreEqual(2, rig.Players.Players.Count);
+            Assert.AreEqual(1, rig.Turns.TurnNumber);
+        }
+
+        [Test]
+        public void RestoreSnapshot_RejectsDuplicateBoardCellsBeforeMutation()
+        {
+            Rig rig = CreateRig(authority: true);
+            rig.Game.StartMatch(TwoPlayerConfig(23));
+            GameStateSnapshot damaged = rig.Game.CaptureSnapshot();
+            var cell = new TilePlacement { X = 7, Y = 7, TileId = 0 };
+            damaged.BoardCells.Add(cell);
+            damaged.BoardCells.Add(cell);
+
+            Assert.Throws<ArgumentException>(() => rig.Game.RestoreSnapshot(damaged));
+            Assert.AreEqual(0, rig.Game.CaptureSnapshot().BoardCells.Count);
+        }
+
+        [Test]
+        public void RestoreSnapshot_RejectsUnknownTilesBeforeMutation()
+        {
+            Rig rig = CreateRig(authority: true);
+            rig.Game.StartMatch(TwoPlayerConfig(24));
+            GameStateSnapshot damaged = rig.Game.CaptureSnapshot();
+            damaged.BagTiles[0] = byte.MaxValue;
+
+            Assert.Throws<ArgumentException>(() => rig.Game.RestoreSnapshot(damaged));
+            Assert.AreEqual(MatchPhase.Playing, rig.Game.Phase);
+            Assert.AreEqual(1, rig.Turns.TurnNumber);
+
+            damaged = rig.Game.CaptureSnapshot();
+            damaged.BoardCells.Add(new TilePlacement
+            {
+                X = 7,
+                Y = 7,
+                TileId = AMathTileSet.Blank,
+                DeclaredAs = TilePlacement.NoDeclaration
+            });
+            Assert.Throws<ArgumentException>(() => rig.Game.RestoreSnapshot(damaged));
+            Assert.AreEqual(0, rig.Game.CaptureSnapshot().BoardCells.Count);
+        }
+
+        [Test]
         public void ApplyRecord_IgnoresARecordItAlreadyExecuted()
         {
             Rig host = CreateRig(authority: true);
@@ -73,11 +125,15 @@ namespace AMath.Tests
             Assert.IsTrue(host.Game.SubmitCommand(0, new PassTurnCommand(), out TurnRecord record).Success);
             Assert.IsTrue(client.Game.ApplyRecord(record));
 
-            string afterFirstApply = JsonUtility.ToJson(client.Game.CaptureSnapshot());
+            var afterFirstApply = client.Game.CaptureSnapshot();
 
             // A duplicated broadcast must not advance the turn a second time.
             Assert.IsFalse(client.Game.ApplyRecord(record));
-            Assert.AreEqual(afterFirstApply, JsonUtility.ToJson(client.Game.CaptureSnapshot()));
+            var afterDuplicate = client.Game.CaptureSnapshot();
+            Assert.That(afterDuplicate.MatchElapsedSeconds,
+                Is.GreaterThanOrEqualTo(afterFirstApply.MatchElapsedSeconds));
+            afterDuplicate.MatchElapsedSeconds = afterFirstApply.MatchElapsedSeconds;
+            Assert.AreEqual(JsonUtility.ToJson(afterFirstApply), JsonUtility.ToJson(afterDuplicate));
         }
 
         [Test]

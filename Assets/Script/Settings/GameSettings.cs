@@ -1,4 +1,6 @@
 using System;
+using AMath.Core.Identity;
+using AMath.Accounts;
 using UnityEngine;
 
 namespace AMath.Settings
@@ -9,12 +11,12 @@ namespace AMath.Settings
     /// </summary>
     public static class GameSettings
     {
-        private const string PlayerNameKey = "amath.general.playerName";
+        private const string LegacyPlayerNameKey = "amath.general.playerName";
+        private const string PlayerNameKeyPrefix = "amath.general.playerName.profile.";
+        private const string PlayerNameMigrationKey = "amath.general.playerName.profileMigrated";
         private const string LanguageKey = "amath.general.language";
         private const string SoundEffectsKey = "amath.audio.soundEffects";
         private const string MusicKey = "amath.audio.music";
-
-        private const string DefaultPlayerName = "Player";
 
         public static readonly string[] LanguageLabels = { "English", "ไทย" };
 
@@ -22,13 +24,14 @@ namespace AMath.Settings
         private static int _languageIndex;
         private static float _soundEffectsVolume;
         private static float _musicVolume;
+        private static string _playerProfileId;
 
         /// <summary>Raised after any preference on this screen changed.</summary>
         public static event Action Changed;
 
         static GameSettings()
         {
-            _playerName = PlayerPrefs.GetString(PlayerNameKey, DefaultPlayerName);
+            _playerName = string.Empty;
             _languageIndex = Mathf.Clamp(PlayerPrefs.GetInt(LanguageKey, 0), 0, LanguageLabels.Length - 1);
             _soundEffectsVolume = Mathf.Clamp01(PlayerPrefs.GetFloat(SoundEffectsKey, 0.8f));
             _musicVolume = Mathf.Clamp01(PlayerPrefs.GetFloat(MusicKey, 0.6f));
@@ -39,17 +42,77 @@ namespace AMath.Settings
             get => _playerName;
             set
             {
-                var trimmed = string.IsNullOrWhiteSpace(value) ? DefaultPlayerName : value.Trim();
-                if (trimmed == _playerName)
-                {
-                    return;
-                }
-
-                _playerName = trimmed;
-                PlayerPrefs.SetString(PlayerNameKey, _playerName);
-                PlayerPrefs.Save();
-                Changed?.Invoke();
+                TrySetPlayerName(value, out _);
             }
+        }
+
+        public static void UsePlayerProfile(string accountId)
+        {
+            string profileId = accountId?.Trim() ?? string.Empty;
+            if (profileId == _playerProfileId)
+                return;
+
+            _playerProfileId = profileId;
+            _playerName = string.Empty;
+            if (!string.IsNullOrEmpty(profileId))
+            {
+                string stored;
+                if (AccountSession.IsAuthenticated && AccountSession.AccountId == profileId)
+                {
+                    stored = PortableProfile.TryLoad(AccountSession.ProfileRoot, out PortableProfileData profile, out _)
+                        ? profile.PlayerName : string.Empty;
+                }
+                else
+                {
+                    string key = PlayerNameKeyPrefix + profileId;
+                    MigrateLegacyPlayerNameOnce(key);
+                    stored = PlayerPrefs.GetString(key, string.Empty);
+                }
+                if (PlayerNameValidator.TryNormalize(stored, out string normalized, out _))
+                    _playerName = normalized;
+            }
+
+            Changed?.Invoke();
+        }
+
+        public static void ClearPlayerProfile()
+        {
+            if (string.IsNullOrEmpty(_playerProfileId) && string.IsNullOrEmpty(_playerName))
+                return;
+
+            _playerProfileId = null;
+            _playerName = string.Empty;
+            Changed?.Invoke();
+        }
+
+        public static bool TrySetPlayerName(string value, out PlayerNameValidationError error)
+        {
+            if (!PlayerNameValidator.TryNormalize(value, out string normalized, out error))
+                return false;
+            if (string.IsNullOrEmpty(_playerProfileId))
+            {
+                error = PlayerNameValidationError.Required;
+                return false;
+            }
+            if (normalized == _playerName)
+                return true;
+
+            if (AccountSession.IsAuthenticated && AccountSession.AccountId == _playerProfileId)
+            {
+                if (!PortableProfile.TryLoad(AccountSession.ProfileRoot, out PortableProfileData profile, out _))
+                    return false;
+                profile.PlayerName = normalized;
+                if (!PortableProfile.TrySave(AccountSession.ProfileRoot, profile, out _))
+                    return false;
+            }
+            else
+            {
+                PlayerPrefs.SetString(PlayerNameKeyPrefix + _playerProfileId, normalized);
+                PlayerPrefs.Save();
+            }
+            _playerName = normalized;
+            Changed?.Invoke();
+            return true;
         }
 
         public static int LanguageIndex
@@ -89,6 +152,22 @@ namespace AMath.Settings
         /// they only mark the value dirty and rely on this being called when the screen closes.
         /// </summary>
         public static void Flush() => PlayerPrefs.Save();
+
+        private static void MigrateLegacyPlayerNameOnce(string profileKey)
+        {
+            if (PlayerPrefs.GetInt(PlayerNameMigrationKey, 0) != 0)
+                return;
+
+            if (!PlayerPrefs.HasKey(profileKey) && PlayerPrefs.HasKey(LegacyPlayerNameKey))
+            {
+                string legacy = PlayerPrefs.GetString(LegacyPlayerNameKey, string.Empty);
+                if (PlayerNameValidator.TryNormalize(legacy, out string normalized, out _))
+                    PlayerPrefs.SetString(profileKey, normalized);
+            }
+
+            PlayerPrefs.SetInt(PlayerNameMigrationKey, 1);
+            PlayerPrefs.Save();
+        }
 
         private static void SetVolume(ref float field, float value, string key)
         {

@@ -12,6 +12,8 @@ namespace AMath.UI
         private const float DefaultDuration = 0.18f;
 
         private CanvasGroup _group;
+        private RectTransform _content;
+        private Vector3 _contentScale;
         private Coroutine _running;
         private float _duration = DefaultDuration;
 
@@ -33,11 +35,18 @@ namespace AMath.UI
             _duration = Mathf.Max(0.01f, duration);
         }
 
+        public void SetContent(RectTransform content)
+        {
+            _content = content;
+            _contentScale = content != null ? content.localScale : Vector3.one;
+        }
+
         public void ShowInstant()
         {
             Stop();
             EnsureGroup();
             _group.alpha = 1f;
+            SetContentProgress(1f);
             _group.blocksRaycasts = true;
             _group.interactable = true;
             if (!gameObject.activeSelf)
@@ -49,6 +58,7 @@ namespace AMath.UI
             Stop();
             EnsureGroup();
             _group.alpha = 0f;
+            SetContentProgress(1f);
             _group.blocksRaycasts = false;
             _group.interactable = false;
             if (gameObject.activeSelf)
@@ -57,14 +67,19 @@ namespace AMath.UI
 
         public void FadeIn()
         {
-            Stop();
             EnsureGroup();
+            float from = gameObject.activeSelf ? _group.alpha : 0f;
+            if (_running == null && gameObject.activeSelf && from >= 1f)
+                return;
+            Stop();
             if (!gameObject.activeSelf)
                 gameObject.SetActive(true);
-            _group.alpha = 0f;
+            EnsureContent();
+            _group.alpha = from;
+            SetContentProgress(from);
             _group.blocksRaycasts = true;
             _group.interactable = true;
-            _running = StartCoroutine(Animate(0f, 1f, deactivateAtEnd: false));
+            _running = StartCoroutine(Animate(from, 1f, deactivateAtEnd: false));
         }
 
         public void FadeOut()
@@ -73,6 +88,8 @@ namespace AMath.UI
             EnsureGroup();
             if (!gameObject.activeSelf)
                 return;
+            _group.blocksRaycasts = false;
+            _group.interactable = false;
             _running = StartCoroutine(Animate(_group.alpha, 0f, deactivateAtEnd: true));
         }
 
@@ -86,10 +103,12 @@ namespace AMath.UI
                 elapsed += Time.unscaledDeltaTime;
                 float t = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(elapsed / _duration));
                 _group.alpha = Mathf.Lerp(from, to, t);
+                SetContentProgress(_group.alpha);
                 yield return null;
             }
 
             _group.alpha = to;
+            SetContentProgress(deactivateAtEnd ? 1f : to);
             _group.blocksRaycasts = to > 0.5f;
             _group.interactable = to > 0.5f;
             _running = null;
@@ -106,6 +125,19 @@ namespace AMath.UI
                 _group = gameObject.AddComponent<CanvasGroup>();
         }
 
+        private void EnsureContent()
+        {
+            if (_content != null)
+                return;
+            SetContent(transform.Find("Panel") as RectTransform);
+        }
+
+        private void SetContentProgress(float alpha)
+        {
+            if (_content != null)
+                _content.localScale = _contentScale * Mathf.Lerp(0.965f, 1f, Mathf.Clamp01(alpha));
+        }
+
         private void Stop()
         {
             if (_running == null)
@@ -117,6 +149,7 @@ namespace AMath.UI
         private void OnDisable()
         {
             Stop();
+            SetContentProgress(1f);
         }
     }
 }

@@ -8,7 +8,7 @@ namespace AMath.Tutorial.Scripted
     /// <summary>
     /// Lets the player pick and place their own tiles, but only onto the
     /// cells (and with the tiles) named by the current scripted turn.
-    /// Pass and exchange stay disabled for the whole tutorial match.
+    /// Pass and exchange are disabled unless the active tutorial step enables them.
     /// </summary>
     public sealed class ScriptedTurnInputConstraint : ITurnInputConstraint
     {
@@ -21,6 +21,18 @@ namespace AMath.Tutorial.Scripted
 
         /// <summary>False until the tutorial reaches the player's placement step.</summary>
         public bool InputEnabled { get; set; }
+
+        /// <summary>When false, the rack can be used but board placement is blocked.</summary>
+        public bool PlacementEnabled { get; set; } = true;
+
+        /// <summary>When true, the player may pass the turn.</summary>
+        public bool PassEnabled { get; set; }
+
+        /// <summary>When true, the player may exchange rack tiles.</summary>
+        public bool ExchangeEnabled { get; set; }
+
+        /// <summary>When set, exchange must use exactly these rack indices.</summary>
+        public IReadOnlyList<int> ExpectedExchangeIndices { get; set; } = System.Array.Empty<int>();
 
         /// <summary>Required placements for the active player turn, or empty when locked.</summary>
         public IReadOnlyList<TilePlacement> Expected { get; set; } = System.Array.Empty<TilePlacement>();
@@ -37,6 +49,12 @@ namespace AMath.Tutorial.Scripted
             if (!InputEnabled)
             {
                 error = Text("tutorial.error.not_your_step");
+                return false;
+            }
+
+            if (!PlacementEnabled)
+            {
+                error = Text("tutorial.error.select_tile_first");
                 return false;
             }
 
@@ -84,15 +102,46 @@ namespace AMath.Tutorial.Scripted
         /// <inheritdoc />
         public bool AllowsPass(out string error)
         {
-            error = Text("tutorial.error.pass_disabled");
-            return false;
+            if (!PassEnabled)
+            {
+                error = Text("tutorial.error.pass_disabled");
+                return false;
+            }
+
+            error = null;
+            return true;
         }
 
         /// <inheritdoc />
-        public bool AllowsExchange(out string error)
+        public bool AllowsExchange(IReadOnlyList<int> rackIndices, out string error)
         {
-            error = Text("tutorial.error.exchange_disabled");
-            return false;
+            if (!ExchangeEnabled)
+            {
+                error = Text("tutorial.error.exchange_disabled");
+                return false;
+            }
+
+            if (ExpectedExchangeIndices != null && ExpectedExchangeIndices.Count > 0)
+            {
+                if (rackIndices == null || rackIndices.Count != ExpectedExchangeIndices.Count)
+                {
+                    error = Text("tutorial.error.exchange_selection");
+                    return false;
+                }
+
+                var remaining = new List<int>(ExpectedExchangeIndices);
+                for (int i = 0; i < rackIndices.Count; i++)
+                {
+                    if (!remaining.Remove(rackIndices[i]))
+                    {
+                        error = Text("tutorial.error.exchange_selection");
+                        return false;
+                    }
+                }
+            }
+
+            error = null;
+            return true;
         }
 
         private string Text(string key) => _text != null ? _text.GetText(key) : key;

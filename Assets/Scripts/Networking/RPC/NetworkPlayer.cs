@@ -68,6 +68,20 @@ namespace AMath.Networking.RPC
         [SyncVar(hook = nameof(OnLobbyTeamIdChanged))]
         private byte _lobbyTeamId;
 
+        /// <summary>
+        /// Room-wide match format chosen by the host. Only the host player's
+        /// value is authoritative; other copies stay at the default.
+        /// </summary>
+        [SyncVar(hook = nameof(OnLobbyMatchFormatChanged))]
+        private byte _lobbyMatchFormat;
+
+        /// <summary>
+        /// Per-turn limit preset chosen by the host. Only the host player's
+        /// value is authoritative; other copies stay at the default.
+        /// </summary>
+        [SyncVar(hook = nameof(OnLobbyTurnTimePresetChanged))]
+        private byte _lobbyTurnTimePreset;
+
         #endregion
 
         #region Fields
@@ -98,6 +112,15 @@ namespace AMath.Networking.RPC
 
         /// <summary>Lobby team selection (0 or 1). Meaningful in team mode only.</summary>
         public byte LobbyTeamId => _lobbyTeamId;
+
+        /// <summary>Host-selected lobby format. Meaningful on the host player only.</summary>
+        public MatchFormat LobbyMatchFormat => (MatchFormat)_lobbyMatchFormat;
+
+        /// <summary>Host-selected turn-time preset. Meaningful on the host player only.</summary>
+        public TurnTimePreset LobbyTurnTimePreset =>
+            TurnTimePresetExtensions.IsDefined(_lobbyTurnTimePreset)
+                ? (TurnTimePreset)_lobbyTurnTimePreset
+                : GameRules.DefaultTurnTimePreset;
 
         #endregion
 
@@ -225,6 +248,10 @@ namespace AMath.Networking.RPC
 
         private void OnLobbyTeamIdChanged(byte _, byte __) => NotifyRosterChanged();
 
+        private void OnLobbyMatchFormatChanged(byte _, byte __) => NotifyRosterChanged();
+
+        private void OnLobbyTurnTimePresetChanged(byte _, byte __) => NotifyRosterChanged();
+
         private void NotifyRosterChanged()
         {
             ResolveServices();
@@ -267,6 +294,106 @@ namespace AMath.Networking.RPC
             // Mirror skips SyncVar hooks on the machine that assigns the value,
             // so the host refreshes its own lobby list explicitly.
             NotifyRosterChanged();
+        }
+
+        #endregion
+
+        #region Lobby format channel (host -> everyone)
+
+        /// <summary>
+        /// Host-only: publishes the chosen match format so every machine can
+        /// show the team picker and pick a side.
+        /// </summary>
+        public void RequestLobbyMatchFormat(MatchFormat format)
+        {
+            if (!isLocalPlayer || !_isHost) return;
+            if (format != MatchFormat.Individual && format != MatchFormat.Team) return;
+
+            if (isServer)
+                ServerSetLobbyMatchFormat(format);
+            else
+                CmdSetLobbyMatchFormat((byte)format);
+        }
+
+        [Command]
+        private void CmdSetLobbyMatchFormat(byte format)
+        {
+            if (!_isHost) return;
+            ServerSetLobbyMatchFormat((MatchFormat)format);
+        }
+
+        [Server]
+        public void ServerSetLobbyMatchFormat(MatchFormat format)
+        {
+            TrySetLobbyMatchFormat(format);
+        }
+
+        /// <summary>
+        /// Applies a host-selected lobby format once. Kept separate from the
+        /// Mirror entry point so repeated-update behaviour is directly testable.
+        /// </summary>
+        internal bool TrySetLobbyMatchFormat(MatchFormat format)
+        {
+            if (_gameManager != null && _gameManager.Phase != MatchPhase.Lobby) return false;
+            if (format != MatchFormat.Individual && format != MatchFormat.Team) return false;
+
+            byte encoded = (byte)format;
+            if (_lobbyMatchFormat == encoded)
+                return false;
+
+            _lobbyMatchFormat = encoded;
+            NotifyRosterChanged();
+            return true;
+        }
+
+        #endregion
+
+        #region Lobby turn-time channel (host -> everyone)
+
+        /// <summary>
+        /// Host-only: publishes the chosen per-turn limit so every machine can
+        /// show the same Rush → Long selection.
+        /// </summary>
+        public void RequestLobbyTurnTimePreset(TurnTimePreset preset)
+        {
+            if (!isLocalPlayer || !_isHost) return;
+            if (!TurnTimePresetExtensions.IsDefined((byte)preset)) return;
+
+            if (isServer)
+                ServerSetLobbyTurnTimePreset(preset);
+            else
+                CmdSetLobbyTurnTimePreset((byte)preset);
+        }
+
+        [Command]
+        private void CmdSetLobbyTurnTimePreset(byte preset)
+        {
+            if (!_isHost) return;
+            ServerSetLobbyTurnTimePreset((TurnTimePreset)preset);
+        }
+
+        [Server]
+        public void ServerSetLobbyTurnTimePreset(TurnTimePreset preset)
+        {
+            TrySetLobbyTurnTimePreset(preset);
+        }
+
+        /// <summary>
+        /// Applies a host-selected turn-time preset once. Kept separate from the
+        /// Mirror entry point so repeated-update behaviour is directly testable.
+        /// </summary>
+        internal bool TrySetLobbyTurnTimePreset(TurnTimePreset preset)
+        {
+            if (_gameManager != null && _gameManager.Phase != MatchPhase.Lobby) return false;
+            if (!TurnTimePresetExtensions.IsDefined((byte)preset)) return false;
+
+            byte encoded = (byte)preset;
+            if (_lobbyTurnTimePreset == encoded)
+                return false;
+
+            _lobbyTurnTimePreset = encoded;
+            NotifyRosterChanged();
+            return true;
         }
 
         #endregion

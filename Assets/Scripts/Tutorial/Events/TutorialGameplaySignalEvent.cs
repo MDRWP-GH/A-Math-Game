@@ -38,6 +38,9 @@ namespace AMath.Tutorial.Events
         ButtonPressed = 3,
 
         /// <summary>A registered menu or panel was opened.</summary>
-        MenuOpened = 4
+        MenuOpened = 4,
+
+        /// <summary>The local player placed a tile on the board draft.</summary>
+        TilePlacedOnBoard = 5
     }
 }

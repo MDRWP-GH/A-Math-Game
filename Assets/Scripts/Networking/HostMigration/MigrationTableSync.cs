@@ -17,7 +17,7 @@ namespace AMath.Networking.HostMigration
     /// server-observed address (self-reported addresses are never trusted) and
     /// rebuilds the ranked SyncList at most every few seconds.
     /// Client side: mirrors every change into
-    /// <see cref="HostMigrationManager"/>'s local cache, which survives the
+    /// <see cref="HostReconnectManager"/>'s local cache, which survives the
     /// destruction of all networked objects on disconnect.
     /// </summary>
     public sealed class MigrationTableSync : NetworkBehaviour
@@ -35,7 +35,7 @@ namespace AMath.Networking.HostMigration
         private readonly List<MigrationCandidate> _buildBuffer = new();
 
         private IEventBus _eventBus;
-        private HostMigrationManager _migrationManager;
+        private HostReconnectManager _migrationManager;
         private float _nextRebuild;
 
         #endregion
@@ -76,7 +76,7 @@ namespace AMath.Networking.HostMigration
         {
             if (_eventBus != null || NetworkContext.Services == null) return;
             _eventBus = NetworkContext.Services.Resolve<IEventBus>();
-            _migrationManager = NetworkContext.Services.Resolve<HostMigrationManager>();
+            _migrationManager = NetworkContext.Services.Resolve<HostReconnectManager>();
         }
 
         #endregion

@@ -49,7 +49,7 @@ namespace AMath.Gameplay.Interaction
                 PlayerState local = LocalPlayer;
                 if (local == null) return null;
                 int index = _selectedRackIndex.Value;
-                return index >= 0 && index < local.Rack.Count ? local.Rack[index] : null;
+                return index >= 0 && index < local.Rack.Count ? (byte?)local.Rack[index] : null;
             }
         }
 
@@ -174,6 +174,7 @@ namespace AMath.Gameplay.Interaction
 
             _selectedRackIndex = null;
             _pendingDeclaration = null;
+            _eventBus.Publish(new DraftTilePlacedEvent { X = x, Y = y, TileId = tileId });
             RefreshPreview(local.Rack);
             RaiseChanged();
             return true;
@@ -258,7 +259,7 @@ namespace AMath.Gameplay.Interaction
                 return false;
             }
 
-            if (_constraint != null && !_constraint.AllowsExchange(out error))
+            if (_constraint != null && !_constraint.AllowsExchange(rackIndices, out error))
                 return false;
 
             if (rackIndices == null || rackIndices.Count == 0)

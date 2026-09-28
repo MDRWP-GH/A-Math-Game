@@ -9,13 +9,38 @@ namespace AMath.Art
     /// </summary>
     public static class TileIcons
     {
+        private static Sprite _normalizedEquals;
+
         public static Sprite ForTile(byte tileId)
         {
             string name = IconName(tileId);
             if (string.IsNullOrEmpty(name))
                 return null;
 
-            return LoadIcon(name);
+            Sprite sprite = LoadIcon(name);
+            if (tileId != AMathTileSet.EqualsSign || sprite == null)
+                return sprite;
+
+            // The equals artwork has a wider transparent border than the other
+            // 28 tile assets. Crop that border once so every tile face occupies
+            // the same proportion of its rack, board, drag and preview rect.
+            if (_normalizedEquals == null)
+            {
+                Rect source = sprite.rect;
+                const float visibleScale = 0.915f;
+                float width = source.width * visibleScale;
+                float height = source.height * visibleScale;
+                var crop = new Rect(
+                    source.center.x - width * 0.5f,
+                    source.center.y - height * 0.5f,
+                    width,
+                    height);
+                _normalizedEquals = Sprite.Create(
+                    sprite.texture, crop, new Vector2(0.5f, 0.5f),
+                    sprite.pixelsPerUnit, 0, SpriteMeshType.FullRect);
+            }
+
+            return _normalizedEquals;
         }
 
         /// <summary>Bag art (multi-sprite sheet — prefers the large bag_0 slice).</summary>

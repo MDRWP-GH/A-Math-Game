@@ -1,7 +1,9 @@
 {
     "name": "AMath.Settings",
     "rootNamespace": "AMath.Settings",
-    "references": [],
+    "references": [
+        "AMath.Core"
+    ],
     "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": false,

@@ -6,6 +6,9 @@ namespace AMath.Tutorial.Interfaces
     /// </summary>
     public interface ITutorialUiService
     {
+        /// <summary>Sets the learner-facing title of the active milestone.</summary>
+        void SetMilestone(string milestoneText);
+
         /// <summary>Sets the current objective line shown to the player.</summary>
         void SetObjective(string objectiveText);
 

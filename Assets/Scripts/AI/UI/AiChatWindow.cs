@@ -112,6 +112,7 @@ namespace AMath.AI.UI
         public void Configure(AiAssistantController controller)
         {
             _controller = controller ?? throw new ArgumentNullException(nameof(controller));
+            _controller.AttachView(this);
             ApplyModeAvailability();
             SelectMode(FirstAvailableModeIndex(_modeDropdown != null ? _modeDropdown.value : 0));
         }
@@ -180,7 +181,7 @@ namespace AMath.AI.UI
 
         private void OnDestroy()
         {
-            _controller?.CancelRequest();
+            _controller?.DetachView(this);
             _sendButton?.onClick.RemoveListener(SubmitCurrentQuestion);
             _closeButton?.onClick.RemoveListener(Close);
             _ruleModeButton?.onClick.RemoveListener(SelectRuleMode);
@@ -235,7 +236,8 @@ namespace AMath.AI.UI
             string question = _questionInput.text;
             _questionInput.text = string.Empty;
             await _controller.AskAsync(question);
-            _questionInput.ActivateInputField();
+            if (_questionInput != null)
+                _questionInput.ActivateInputField();
         }
 
         private void SelectMode(int index)

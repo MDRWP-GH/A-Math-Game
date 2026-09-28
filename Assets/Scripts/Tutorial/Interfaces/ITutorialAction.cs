@@ -12,7 +12,7 @@ namespace AMath.Tutorial.Interfaces
     {
         /// <summary>
         /// Runs the action. Instant actions call <paramref name="onComplete"/>
-        /// synchronously; actions with a duration (camera pans, voiced
+        /// synchronously; actions with a duration (dialogue panels, camera pans,
         /// dialogue) call it once that duration/animation/audio finishes.
         /// The owning step does not advance until every one of its actions
         /// has completed.

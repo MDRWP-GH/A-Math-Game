@@ -61,6 +61,87 @@ namespace AMath.Networking.Messages
 
         #endregion
 
+        #region MatchResult
+
+        public static void WriteMatchResult(this NetworkWriter writer, MatchResult result)
+        {
+            writer.WriteByte((byte)result.Reason);
+            writer.WriteInt(result.WinnerPlayerId);
+            writer.WriteInt(result.WinnerTeamId);
+            writer.WriteByte((byte)result.Format);
+            writer.WriteBool(result.IsDraw);
+            writer.WriteLong(result.StartedUtcTicks);
+            writer.WriteLong(result.EndedUtcTicks);
+            writer.WriteInt(result.DurationSeconds);
+
+            writer.WriteInt(result.Standings?.Count ?? 0);
+            if (result.Standings != null)
+            {
+                foreach (PlayerResult row in result.Standings)
+                {
+                    writer.WriteInt(row.PlayerId);
+                    writer.WriteString(row.DisplayName);
+                    writer.WriteInt(row.FinalScore);
+                    writer.WriteInt(row.TeamId);
+                }
+            }
+
+            writer.WriteInt(result.TeamStandings?.Count ?? 0);
+            if (result.TeamStandings != null)
+            {
+                foreach (TeamResult team in result.TeamStandings)
+                {
+                    writer.WriteInt(team.TeamId);
+                    writer.WriteInt(team.TotalScore);
+                }
+            }
+        }
+
+        public static MatchResult ReadMatchResult(this NetworkReader reader)
+        {
+            var result = new MatchResult
+            {
+                Reason = (MatchEndReason)reader.ReadByte(),
+                WinnerPlayerId = reader.ReadInt(),
+                WinnerTeamId = reader.ReadInt(),
+                Format = (MatchFormat)reader.ReadByte(),
+                IsDraw = reader.ReadBool(),
+                StartedUtcTicks = reader.ReadLong(),
+                EndedUtcTicks = reader.ReadLong(),
+                DurationSeconds = reader.ReadInt()
+            };
+
+            int playerCount = reader.ReadInt();
+            if (playerCount < 0 || playerCount > GameRules.MaxPlayers)
+                throw new InvalidDataException($"Match result claims {playerCount} players.");
+            for (int i = 0; i < playerCount; i++)
+            {
+                result.Standings.Add(new PlayerResult
+                {
+                    PlayerId = reader.ReadInt(),
+                    DisplayName = reader.ReadString(),
+                    FinalScore = reader.ReadInt(),
+                    TeamId = reader.ReadInt()
+                });
+            }
+
+            int teamCount = reader.ReadInt();
+            if (teamCount < 0 || teamCount > GameRules.TeamCount)
+                throw new InvalidDataException($"Match result claims {teamCount} teams.");
+            for (int i = 0; i < teamCount; i++)
+            {
+                result.TeamStandings.Add(new TeamResult
+                {
+                    TeamId = reader.ReadInt(),
+                    TotalScore = reader.ReadInt()
+                });
+            }
+
+            return result;
+        }
+
+        #endregion
+
         #region MatchConfig
 
         public static void WriteMatchConfig(this NetworkWriter writer, MatchConfig config)

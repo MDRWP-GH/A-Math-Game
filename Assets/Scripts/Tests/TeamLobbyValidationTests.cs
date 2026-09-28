@@ -57,5 +57,21 @@ namespace AMath.Tests
             Assert.IsFalse(GameRules.IsValidHumanRoster(5));
             Assert.AreEqual(GameRules.MaxPlayers, 4);
         }
+
+        [TestCase(TurnTimePreset.Rush, 60)]
+        [TestCase(TurnTimePreset.Short, 90)]
+        [TestCase(TurnTimePreset.Normal, 120)]
+        [TestCase(TurnTimePreset.Long, 180)]
+        public void TurnSecondsFor_MapsLobbyPresets(TurnTimePreset preset, int expectedSeconds)
+        {
+            Assert.AreEqual(expectedSeconds, GameRules.TurnSecondsFor(preset));
+        }
+
+        [Test]
+        public void DefaultTurnTimePreset_MatchesRush()
+        {
+            Assert.AreEqual(TurnTimePreset.Rush, GameRules.DefaultTurnTimePreset);
+            Assert.AreEqual(GameRules.DefaultTurnSeconds, GameRules.TurnSecondsFor(GameRules.DefaultTurnTimePreset));
+        }
     }
 }

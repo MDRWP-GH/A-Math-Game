@@ -11,8 +11,7 @@ namespace AMath.UI
     /// </summary>
     internal sealed class MenuButtonFeedback : MonoBehaviour,
         IPointerEnterHandler, IPointerExitHandler,
-        IPointerDownHandler, IPointerUpHandler,
-        ISelectHandler, IDeselectHandler
+        IPointerDownHandler, IPointerUpHandler
     {
         private const float HoverScale = 1.06f;
         private const float PressScale = 0.97f;
@@ -26,7 +25,6 @@ namespace AMath.UI
         private Color _pressColor = UiPalette.PressedText;
         private bool _hovered;
         private bool _pressed;
-        private bool _selected;
         private float _scale = 1f;
         private Color _color = Color.white;
 
@@ -56,10 +54,10 @@ namespace AMath.UI
 
         private void Update()
         {
-            float targetScale = _pressed ? PressScale : (_hovered || _selected ? HoverScale : 1f);
+            float targetScale = _pressed ? PressScale : (_hovered ? HoverScale : 1f);
             Color targetColor = _pressed
                 ? _pressColor
-                : (_hovered || _selected ? _hoverColor : _normalColor);
+                : (_hovered ? _hoverColor : _normalColor);
 
             float t = 1f - Mathf.Exp(-LerpSpeed * Time.unscaledDeltaTime);
             _scale = Mathf.Lerp(_scale, targetScale, t);
@@ -80,14 +78,11 @@ namespace AMath.UI
 
         public void OnPointerDown(PointerEventData eventData) => _pressed = true;
         public void OnPointerUp(PointerEventData eventData) => _pressed = false;
-        public void OnSelect(BaseEventData eventData) => _selected = true;
-        public void OnDeselect(BaseEventData eventData) => _selected = false;
 
         private void OnDisable()
         {
             _hovered = false;
             _pressed = false;
-            _selected = false;
             _scale = 1f;
             _color = _normalColor;
             if (_rect != null)

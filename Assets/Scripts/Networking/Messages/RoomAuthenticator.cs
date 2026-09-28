@@ -2,6 +2,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Security.Cryptography;
 using AMath.Core.Events;
+using AMath.Core.Identity;
 using AMath.Core.StateMachines;
 using AMath.Gameplay.Players;
 using AMath.Managers;
@@ -37,7 +38,7 @@ namespace AMath.Networking.Messages
         private const int MaxGameVersionLength = 32;
         private const int MaxRoomCodeLength = 16;
         private const int MaxPersistentGuidLength = 64;
-        private const int MaxDisplayNameLength = 32;
+        private const int MaxDisplayNameLength = 64;
         private const int MaxReconnectTokenLength = 64;
 
         #endregion
@@ -138,14 +139,20 @@ namespace AMath.Networking.Messages
             if (message.GameVersion != Application.version)
                 return $"Version mismatch (host {Application.version}, you {message.GameVersion}).";
 
-            if (string.IsNullOrEmpty(message.PersistentGuid) || string.IsNullOrEmpty(message.DisplayName))
+            if (string.IsNullOrEmpty(message.PersistentGuid))
                 return "Invalid identity.";
+
+            if (!PlayerNameValidator.TryNormalize(
+                    message.DisplayName,
+                    out string normalizedDisplayName,
+                    out PlayerNameValidationError nameError))
+                return NameErrorKey(nameError);
 
             if (IsAiSeatGuid(message.PersistentGuid))
                 return "AI seats cannot connect over the network.";
 
             if (!string.Equals(message.RoomCode, _session.RoomCode, System.StringComparison.OrdinalIgnoreCase))
-                return "Wrong room code.";
+                return "ui.play.err_code_not_found";
 
             // The host occupies a seat through its own local connection, which
             // can never be evicted without tearing down the room. Two copies of
@@ -171,7 +178,7 @@ namespace AMath.Networking.Messages
                 // Mid-match, only players who already own a seat may (re)join.
                 PlayerState seat = _playerManager.FindByGuid(message.PersistentGuid);
                 if (seat == null)
-                    return "Match already in progress.";
+                    return "ui.play.err_match_started";
 
                 if (seat.IsAi)
                     return "This seat is controlled by the host AI.";
@@ -187,7 +194,7 @@ namespace AMath.Networking.Messages
                 identity = new AuthenticatedIdentity
                 {
                     PersistentGuid = message.PersistentGuid,
-                    DisplayName = message.DisplayName,
+                    DisplayName = normalizedDisplayName,
                     IsReconnection = true,
                     ExistingPlayerId = seat.PlayerId
                 };
@@ -202,12 +209,12 @@ namespace AMath.Networking.Messages
             // so "full" means the count would EXCEED the seat limit. Connections
             // we just evicted are still listed until the transport removes them.
             if (NetworkServer.connections.Count - evicted > _session.MaxPlayers)
-                return "Room is full.";
+                return "ui.play.err_room_full";
 
             identity = new AuthenticatedIdentity
             {
                 PersistentGuid = message.PersistentGuid,
-                DisplayName = message.DisplayName
+                DisplayName = normalizedDisplayName
             };
             return null;
         }
@@ -244,6 +251,13 @@ namespace AMath.Networking.Messages
 
         private static bool Exceeds(string value, int maxLength) =>
             value != null && value.Length > maxLength;
+
+        private static string NameErrorKey(PlayerNameValidationError error) => error switch
+        {
+            PlayerNameValidationError.Required => "ui.player_name.err_required",
+            PlayerNameValidationError.TooLong => "ui.player_name.err_too_long",
+            _ => "ui.player_name.err_unsupported"
+        };
 
         private static string GenerateReconnectToken()
         {

@@ -203,6 +203,39 @@ namespace AMath.Tests
             Assert.Throws<System.IO.InvalidDataException>(() => reader.ReadMatchConfig());
         }
 
+        [Test]
+        public void MatchResult_RoundTrip_PreservesAuthoritativeDrawAndTiming()
+        {
+            var result = new MatchResult
+            {
+                Reason = MatchEndReason.EndedManually,
+                WinnerPlayerId = -1,
+                WinnerTeamId = -1,
+                Format = MatchFormat.Team,
+                IsDraw = true,
+                StartedUtcTicks = 100,
+                EndedUtcTicks = 200,
+                DurationSeconds = 42
+            };
+            result.Standings.Add(new PlayerResult { PlayerId = 0, DisplayName = "A", FinalScore = 10, TeamId = 0 });
+            result.Standings.Add(new PlayerResult { PlayerId = 1, DisplayName = "B", FinalScore = 10, TeamId = 1 });
+            result.TeamStandings.Add(new TeamResult { TeamId = 0, TotalScore = 10 });
+            result.TeamStandings.Add(new TeamResult { TeamId = 1, TotalScore = 10 });
+
+            var writer = new NetworkWriter();
+            writer.WriteMatchResult(result);
+            var reader = new NetworkReader(writer.ToArray());
+            MatchResult restored = reader.ReadMatchResult();
+
+            Assert.IsTrue(restored.IsDraw);
+            Assert.AreEqual(-1, restored.WinnerPlayerId);
+            Assert.AreEqual(-1, restored.WinnerTeamId);
+            Assert.AreEqual(42, restored.DurationSeconds);
+            Assert.AreEqual(2, restored.Standings.Count);
+            Assert.AreEqual("B", restored.Standings[1].DisplayName);
+            Assert.AreEqual(2, restored.TeamStandings.Count);
+        }
+
         private static MatchConfig RoundTrip(MatchConfig config)
         {
             var writer = new NetworkWriter();

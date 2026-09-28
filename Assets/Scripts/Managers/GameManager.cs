@@ -33,12 +33,16 @@ namespace AMath.Managers
         private readonly BoardManager _boardManager;
         private readonly PlayerManager _playerManager;
         private readonly TurnManager _turnManager;
+        private readonly IMatchClock _clock;
         private readonly TileBag _tileBag = new();
         private readonly List<byte> _dealBuffer = new(GameRules.RackSize);
 
         private CommandProcessor _processor;
         private DeterministicRandom _rng;
         private long _matchStartedUtcTicks;
+        private double _matchStartedMonotonicSeconds;
+        private double _elapsedBeforeCurrentProcessSeconds;
+        private bool _matchFinishedEventPublished;
 
         #endregion
 
@@ -68,13 +72,15 @@ namespace AMath.Managers
             GameStateMachine stateMachine,
             BoardManager boardManager,
             PlayerManager playerManager,
-            TurnManager turnManager)
+            TurnManager turnManager,
+            IMatchClock clock = null)
         {
             _eventBus = eventBus;
             _stateMachine = stateMachine;
             _boardManager = boardManager;
             _playerManager = playerManager;
             _turnManager = turnManager;
+            _clock = clock ?? SystemMatchClock.Shared;
             _processor = new CommandProcessor(boardManager, playerManager, turnManager, _tileBag);
         }
 
@@ -95,16 +101,19 @@ namespace AMath.Managers
         /// </summary>
         public void StartMatch(MatchConfig config, IReadOnlyList<IReadOnlyList<byte>> openingRacks)
         {
-            Config = config ?? throw new ArgumentNullException(nameof(config));
-            Result = null;
-            _matchStartedUtcTicks = DateTime.UtcNow.Ticks;
-
             if (Phase == MatchPhase.Playing || Phase == MatchPhase.Paused)
                 EndMatchManually();
 
             // Rematch path: the machine only allows Finished -> Lobby -> Loading.
             if (Phase == MatchPhase.Finished)
                 _stateMachine.TransitionTo(MatchPhase.Lobby);
+
+            Config = config ?? throw new ArgumentNullException(nameof(config));
+            Result = null;
+            _matchStartedUtcTicks = _clock.UtcNowTicks;
+            _matchStartedMonotonicSeconds = _clock.MonotonicSeconds;
+            _elapsedBeforeCurrentProcessSeconds = 0d;
+            _matchFinishedEventPublished = false;
 
             _rng = new DeterministicRandom(config.RandomSeed);
             _boardManager.Reset();
@@ -229,11 +238,12 @@ namespace AMath.Managers
                 CommandType = (byte)command.Type,
                 CommandPayload = CommandSerializer.Serialize(command),
                 ScoreDelta = outcome.ScoreDelta,
-                TimestampUtcTicks = DateTime.UtcNow.Ticks
+                TimestampUtcTicks = _clock.UtcNowTicks
             };
 
             FinishTurn(record, outcome);
             _eventBus.Publish(new TurnResolvedEvent { Record = record, IsAuthority = true });
+            PublishFinishedMatchAfterTurn(record);
             return outcome;
         }
 
@@ -246,14 +256,40 @@ namespace AMath.Managers
         /// from the host's declared result is reported as a desync so the
         /// client can request a full snapshot resync.
         /// </summary>
-        public bool ApplyRecord(TurnRecord record)
+        public bool ApplyRecord(TurnRecord record) =>
+            ApplyRecord(record, publishFinishedEvent: true, allowReplicatedFinishedPhase: false);
+
+        /// <summary>
+        /// Applies a network record while reserving the final notification for
+        /// the host's authoritative result RPC.
+        /// </summary>
+        public bool ApplyReplicatedRecord(TurnRecord record) =>
+            ApplyRecord(record, publishFinishedEvent: false, allowReplicatedFinishedPhase: true);
+
+        private bool ApplyRecord(
+            TurnRecord record,
+            bool publishFinishedEvent,
+            bool allowReplicatedFinishedPhase)
         {
+            if (record == null)
+            {
+                _eventBus.Publish(new DesyncDetectedEvent { Reason = "Host sent a missing turn record." });
+                return false;
+            }
+
             // A finished match accepts nothing more. The turn that ends a match
             // never advances the turn counter (FinishTurn returns early), so a
             // duplicate of that last record still looks "current" by turn number
             // alone and would otherwise be re-executed and reported as a desync.
-            if (Phase == MatchPhase.Finished)
-                return false;
+            bool phaseArrivedBeforeTerminalTurn = Phase == MatchPhase.Finished;
+            if (phaseArrivedBeforeTerminalTurn)
+            {
+                // A SyncVar phase update can be observed before the reliable
+                // terminal-turn RPC. Temporarily reopen only that one missing
+                // terminal record so replay/autosave still see the final turn.
+                if (!allowReplicatedFinishedPhase || Result != null || !record.EndedMatch)
+                    return false;
+            }
 
             // Turn numbers are the only ordering guarantee we have. A record we
             // already executed must never run twice (it would double the score
@@ -282,24 +318,67 @@ namespace AMath.Managers
                 return false;
             }
 
-            CommandOutcome outcome = _processor.Execute(record.PlayerId, command, _rng);
-            if (!outcome.Success)
-            {
-                _eventBus.Publish(new DesyncDetectedEvent { Reason = $"Record failed locally: {outcome.Error}" });
-                return false;
-            }
+            // Reopen only after the record is known to be current and readable.
+            // If execution still fails, keep the replicated Finished phase while
+            // the desync handler requests an authoritative snapshot.
+            if (phaseArrivedBeforeTerminalTurn)
+                _stateMachine.RestoreTo(MatchPhase.Playing);
 
-            if (outcome.ScoreDelta != record.ScoreDelta)
+            bool applied = false;
+            try
             {
-                _eventBus.Publish(new DesyncDetectedEvent
+                CommandOutcome outcome = _processor.Execute(record.PlayerId, command, _rng);
+                if (!outcome.Success)
                 {
-                    Reason = $"Score mismatch (local {outcome.ScoreDelta}, host {record.ScoreDelta})."
-                });
-                return false;
-            }
+                    _eventBus.Publish(new DesyncDetectedEvent { Reason = $"Record failed locally: {outcome.Error}" });
+                    return false;
+                }
 
-            FinishTurn(record, outcome);
-            _eventBus.Publish(new TurnResolvedEvent { Record = record, IsAuthority = false });
+                if (outcome.ScoreDelta != record.ScoreDelta)
+                {
+                    _eventBus.Publish(new DesyncDetectedEvent
+                    {
+                        Reason = $"Score mismatch (local {outcome.ScoreDelta}, host {record.ScoreDelta})."
+                    });
+                    return false;
+                }
+
+                FinishTurn(record, outcome);
+                _eventBus.Publish(new TurnResolvedEvent { Record = record, IsAuthority = false });
+                if (publishFinishedEvent)
+                    PublishFinishedMatchAfterTurn(record);
+                applied = true;
+                return true;
+            }
+            finally
+            {
+                if (phaseArrivedBeforeTerminalTurn && !applied && Phase != MatchPhase.Finished)
+                    _stateMachine.RestoreTo(MatchPhase.Finished);
+            }
+        }
+
+        /// <summary>
+        /// Replaces a client's provisional result with the host result and
+        /// publishes completion exactly once.
+        /// </summary>
+        public bool ApplyAuthoritativeResult(MatchResult result)
+        {
+            if (result == null)
+                return false;
+
+            Result = result;
+            if (result.Standings != null)
+            {
+                foreach (PlayerResult row in result.Standings)
+                {
+                    PlayerState player = _playerManager.GetById(row.PlayerId);
+                    if (player != null)
+                        player.Score = row.FinalScore;
+                }
+            }
+            if (Phase != MatchPhase.Finished)
+                _stateMachine.RestoreTo(MatchPhase.Finished);
+            PublishMatchFinishedOnce(result);
             return true;
         }
 
@@ -322,9 +401,11 @@ namespace AMath.Managers
             // End condition 1: the actor emptied their rack with an empty bag.
             if (actor.Rack.Count == 0 && _tileBag.Count == 0)
             {
-                record.EndedMatch = true;
-                record.EndReason = MatchEndReason.PlayerFinishedTiles;
-                EndMatch(MatchEndReason.PlayerFinishedTiles, actor.PlayerId);
+                if (EndMatch(MatchEndReason.PlayerFinishedTiles, actor.PlayerId, publishEvent: false))
+                {
+                    record.EndedMatch = true;
+                    record.EndReason = MatchEndReason.PlayerFinishedTiles;
+                }
                 return;
             }
 
@@ -333,13 +414,35 @@ namespace AMath.Managers
             // End condition 2: everyone passed for the configured number of rounds.
             if (_turnManager.ShouldEndByPasses)
             {
-                record.EndedMatch = true;
-                record.EndReason = MatchEndReason.AllPlayersPassed;
-                EndMatch(MatchEndReason.AllPlayersPassed, finisherPlayerId: -1);
+                if (EndMatch(MatchEndReason.AllPlayersPassed, finisherPlayerId: -1, publishEvent: false))
+                {
+                    record.EndedMatch = true;
+                    record.EndReason = MatchEndReason.AllPlayersPassed;
+                }
             }
         }
 
-        private void EndMatch(MatchEndReason reason, int finisherPlayerId)
+        /// <summary>
+        /// Publishes completion only after the terminal TurnResolved event has
+        /// reached replay/autosave subscribers. Manual endings have no terminal
+        /// turn, so they continue to publish directly from EndMatch.
+        /// </summary>
+        private void PublishFinishedMatchAfterTurn(TurnRecord record)
+        {
+            if (record?.EndedMatch == true && Result != null)
+                PublishMatchFinishedOnce(Result);
+        }
+
+        private void PublishMatchFinishedOnce(MatchResult result)
+        {
+            if (_matchFinishedEventPublished || result == null)
+                return;
+
+            _matchFinishedEventPublished = true;
+            _eventBus.Publish(new MatchFinishedEvent { Result = result });
+        }
+
+        private bool EndMatch(MatchEndReason reason, int finisherPlayerId, bool publishEvent = true)
         {
             // Only a live match can end. Scoring from any other phase would
             // mutate racks and announce a winner for a match that was never
@@ -348,7 +451,7 @@ namespace AMath.Managers
             {
                 UnityEngine.Debug.LogWarning(
                     $"[Match] Ignoring end request (reason {reason}) from phase {Phase}.");
-                return;
+                return false;
             }
 
             // Leftover-tile adjustment: everyone loses their remaining tile
@@ -374,13 +477,20 @@ namespace AMath.Managers
                 Reason = reason,
                 Format = Config?.Format ?? MatchFormat.Individual,
                 StartedUtcTicks = _matchStartedUtcTicks,
-                EndedUtcTicks = DateTime.UtcNow.Ticks
+                EndedUtcTicks = _clock.UtcNowTicks
             };
-            result.DurationSeconds = result.StartedUtcTicks > 0
-                ? (int)((result.EndedUtcTicks - result.StartedUtcTicks) / TimeSpan.TicksPerSecond)
-                : 0;
+            double elapsed = CurrentElapsedSeconds();
+            result.DurationSeconds = elapsed >= int.MaxValue ? int.MaxValue : (int)elapsed;
+            if (result.StartedUtcTicks > 0)
+            {
+                long minimumEndTicks = result.StartedUtcTicks
+                    + (long)result.DurationSeconds * TimeSpan.TicksPerSecond;
+                if (result.EndedUtcTicks < minimumEndTicks)
+                    result.EndedUtcTicks = minimumEndTicks;
+            }
 
             int bestScore = int.MinValue;
+            int bestScoreCount = 0;
             foreach (PlayerState player in _playerManager.Players)
             {
                 int teamId = GetTeamId(player.PlayerId);
@@ -396,18 +506,32 @@ namespace AMath.Managers
                 {
                     bestScore = player.Score;
                     result.WinnerPlayerId = player.PlayerId;
+                    bestScoreCount = 1;
+                }
+                else if (result.Format != MatchFormat.Team && player.Score == bestScore)
+                {
+                    bestScoreCount++;
                 }
             }
 
             if (result.Format == MatchFormat.Team)
                 ResolveTeamWinner(result);
             else
+            {
+                if (bestScoreCount > 1)
+                {
+                    result.IsDraw = true;
+                    result.WinnerPlayerId = -1;
+                }
                 result.Standings.Sort((a, b) => b.FinalScore.CompareTo(a.FinalScore));
+            }
 
             Result = result;
 
             _stateMachine.TransitionTo(MatchPhase.Finished);
-            _eventBus.Publish(new MatchFinishedEvent { Result = result });
+            if (publishEvent)
+                PublishMatchFinishedOnce(result);
+            return true;
         }
 
         private int GetTeamId(int playerId)
@@ -448,6 +572,7 @@ namespace AMath.Managers
 
             int bestTeamScore = int.MinValue;
             int winningTeamId = -1;
+            int bestTeamCount = 0;
             foreach (KeyValuePair<int, int> pair in teamScores)
             {
                 result.TeamStandings.Add(new TeamResult { TeamId = pair.Key, TotalScore = pair.Value });
@@ -455,13 +580,19 @@ namespace AMath.Managers
                 {
                     bestTeamScore = pair.Value;
                     winningTeamId = pair.Key;
+                    bestTeamCount = 1;
+                }
+                else if (pair.Value == bestTeamScore)
+                {
+                    bestTeamCount++;
                 }
             }
 
             result.TeamStandings.Sort((a, b) => b.TotalScore.CompareTo(a.TotalScore));
-            result.WinnerTeamId = winningTeamId;
+            result.IsDraw = bestTeamCount > 1;
+            result.WinnerTeamId = result.IsDraw ? -1 : winningTeamId;
 
-            if (winningTeamId >= 0
+            if (!result.IsDraw && winningTeamId >= 0
                 && teamMembers.TryGetValue(winningTeamId, out List<PlayerResult> winners))
             {
                 PlayerResult captain = winners[0];
@@ -480,6 +611,17 @@ namespace AMath.Managers
         #endregion
 
         #region Timer
+
+        private double CurrentElapsedSeconds()
+        {
+            if (_matchStartedUtcTicks <= 0)
+                return 0d;
+
+            double sinceAnchor = _clock.MonotonicSeconds - _matchStartedMonotonicSeconds;
+            if (double.IsNaN(sinceAnchor) || double.IsInfinity(sinceAnchor) || sinceAnchor < 0d)
+                sinceAnchor = 0d;
+            return Math.Max(0d, _elapsedBeforeCurrentProcessSeconds + sinceAnchor);
+        }
 
         /// <inheritdoc />
         public void Tick(float deltaTime)
@@ -510,7 +652,10 @@ namespace AMath.Managers
                 ConsecutivePasses = _turnManager.ConsecutivePasses,
                 BagTiles = _tileBag.ExportContents(),
                 Result = Result,
-                MatchStartedUtcTicks = _matchStartedUtcTicks
+                MatchStartedUtcTicks = _matchStartedUtcTicks,
+                MatchElapsedSeconds = Result != null
+                    ? Math.Max(0, Result.DurationSeconds)
+                    : CurrentElapsedSeconds()
             };
 
             _boardManager.ExportTo(snapshot);
@@ -526,9 +671,17 @@ namespace AMath.Managers
         /// </summary>
         public void RestoreSnapshot(GameStateSnapshot snapshot, MatchPhase? enterPhase = null)
         {
+            string snapshotError = null;
+            if (snapshot == null || !snapshot.TryValidate(out snapshotError))
+                throw new ArgumentException(snapshotError ?? "Snapshot is missing.", nameof(snapshot));
+
             Config = snapshot.Config;
             Result = snapshot.Result;
+            if (Result == null)
+                _matchFinishedEventPublished = false;
             _matchStartedUtcTicks = snapshot.MatchStartedUtcTicks;
+            _elapsedBeforeCurrentProcessSeconds = RestoreElapsedSeconds(snapshot);
+            _matchStartedMonotonicSeconds = _clock.MonotonicSeconds;
             _rng = DeterministicRandom.FromState(snapshot.RandomState);
 
             _boardManager.RestoreFrom(snapshot);
@@ -545,6 +698,23 @@ namespace AMath.Managers
             // listeners that reset themselves per match would discard it.
             _eventBus.Publish(new MatchRestoredEvent { Config = Config });
             _stateMachine.RestoreTo(enterPhase ?? (MatchPhase)snapshot.Phase);
+            if (Result != null && Phase == MatchPhase.Finished)
+                PublishMatchFinishedOnce(Result);
+        }
+
+        private double RestoreElapsedSeconds(GameStateSnapshot snapshot)
+        {
+            if (snapshot.Result != null)
+                return Math.Max(0, snapshot.Result.DurationSeconds);
+            if (snapshot.MatchElapsedSeconds > 0d)
+                return snapshot.MatchElapsedSeconds;
+            if (snapshot.MatchStartedUtcTicks <= 0)
+                return 0d;
+
+            // Compatibility with saves created before MatchElapsedSeconds was added.
+            double utcElapsed = (_clock.UtcNowTicks - snapshot.MatchStartedUtcTicks)
+                / (double)TimeSpan.TicksPerSecond;
+            return Math.Max(0d, utcElapsed);
         }
 
         #endregion

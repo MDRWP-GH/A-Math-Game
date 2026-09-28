@@ -17,6 +17,9 @@ namespace AMath.Tutorial.Interfaces
         /// <summary>Localization key for this step's objective text.</summary>
         string ObjectiveTextKey { get; }
 
+        /// <summary>Zero-based learner-facing milestone that owns this mechanical step.</summary>
+        int MilestoneIndex { get; }
+
         /// <summary>Actions run, in order, when this step becomes active.</summary>
         IReadOnlyList<ITutorialAction> Actions { get; }
 

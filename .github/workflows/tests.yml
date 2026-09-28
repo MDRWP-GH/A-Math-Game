@@ -17,12 +17,14 @@ jobs:
   editmode:
     name: EditMode
     runs-on: ubuntu-latest
+    env:
+      HAS_UNITY_LICENSE: ${{ secrets.UNITY_LICENSE != '' }}
     steps:
       # Must stay first: this remounts the workspace onto a merged LVM volume
       # so the Unity 6 image has somewhere to unpack. Stock runner free space
       # is not enough; docker exit 125 here was "no space left on device".
       - name: Maximize build space
-        if: ${{ secrets.UNITY_LICENSE != '' }}
+        if: ${{ env.HAS_UNITY_LICENSE == 'true' }}
         uses: easimon/maximize-build-space@v10
         with:
           root-reserve-mb: 8192
@@ -34,7 +36,7 @@ jobs:
           remove-docker-images: 'true'
 
       - name: Point Docker at the large volume
-        if: ${{ secrets.UNITY_LICENSE != '' }}
+        if: ${{ env.HAS_UNITY_LICENSE == 'true' }}
         run: |
           sudo systemctl stop docker.socket docker containerd
           sudo mkdir -p "${GITHUB_WORKSPACE}/.docker-data"
@@ -43,22 +45,23 @@ jobs:
           docker info | grep 'Docker Root Dir'
           df -h
 
-      # game-ci cannot start Unity without a license file or serial. Skip
-      # instead of failing red while UNITY_LICENSE is not configured.
+      # This job is a merge gate: a missing license must not look like a
+      # successful test run.
       - name: Unity license secret missing
-        if: ${{ secrets.UNITY_LICENSE == '' }}
+        if: ${{ env.HAS_UNITY_LICENSE != 'true' }}
         run: |
-          echo "::warning::UNITY_LICENSE is not set. EditMode tests were skipped."
+          echo "::error::UNITY_LICENSE is not set. EditMode tests cannot run."
           echo "Add UNITY_LICENSE, UNITY_EMAIL, and UNITY_PASSWORD in Settings > Secrets and variables > Actions."
+          exit 1
 
       - uses: actions/checkout@v4
-        if: ${{ secrets.UNITY_LICENSE != '' }}
+        if: ${{ env.HAS_UNITY_LICENSE == 'true' }}
         with:
           lfs: true
 
       # Unity's import cache; without it every run re-imports the whole project.
       - uses: actions/cache@v4
-        if: ${{ secrets.UNITY_LICENSE != '' }}
+        if: ${{ env.HAS_UNITY_LICENSE == 'true' }}
         with:
           path: Library
           key: Library-${{ hashFiles('Assets/**', 'Packages/**', 'ProjectSettings/**') }}
@@ -68,7 +71,7 @@ jobs:
       # Requires UNITY_LICENSE (contents of a .ulf activation file),
       # UNITY_EMAIL and UNITY_PASSWORD in the repository secrets.
       - uses: game-ci/unity-test-runner@v4
-        if: ${{ secrets.UNITY_LICENSE != '' }}
+        if: ${{ env.HAS_UNITY_LICENSE == 'true' }}
         id: tests
         env:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
@@ -83,7 +86,7 @@ jobs:
           checkName: EditMode results
 
       - uses: actions/upload-artifact@v4
-        if: ${{ always() && secrets.UNITY_LICENSE != '' }}
+        if: ${{ always() && env.HAS_UNITY_LICENSE == 'true' }}
         with:
           name: test-results
           path: test-results

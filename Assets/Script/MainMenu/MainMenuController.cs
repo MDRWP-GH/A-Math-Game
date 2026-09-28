@@ -1,4 +1,8 @@
+using System.Collections;
 using AMath.Art;
+using AMath.Accounts;
+using AMath.Bootstrap;
+using AMath.Settings;
 using AMath.UI.Localization;
 using AMath.UI.Tutorial;
 using UnityEngine;
@@ -26,6 +30,7 @@ namespace AMath.UI
 
         private UiFactory _ui;
         private GameObject _menuCanvas;
+        private CanvasGroup _menuInputGroup;
         private HowToPlayOverlay _helpOverlay;
         private Button _startButton;
         private Button _historyButton;
@@ -37,33 +42,75 @@ namespace AMath.UI
         private MatchHistoryOverlay _historyOverlay;
         private InputAction _cancelAction;
         private MenuEntranceAnimator _entrance;
+        private LocalAccountService _accounts;
+        private AccountGateView _accountGate;
+        private Button _logoutButton;
 
         private void Awake()
         {
             EnsureEventSystem();
+            SceneTransitionController.SetStartupStatus("ui.loading.account");
             _ui = new UiFactory(GameFonts.Jersey25);
+            _accounts = new LocalAccountService();
+            AccountError autoLoginError = AccountError.None;
+            bool authenticated = AccountSession.IsAuthenticated || _accounts.TryAutoLogin(out autoLoginError);
+            if (authenticated)
+                GameSettings.UsePlayerProfile(AccountSession.AccountId);
+            else
+                GameSettings.ClearPlayerProfile();
             BuildMenu();
+            _accountGate = new AccountGateView(_ui, transform, _accounts);
+            _accountGate.Authenticated += OnAuthenticated;
+            if (authenticated)
+                ShowAuthenticatedMenu();
+            else
+                ShowAccountGate(autoLoginError);
+            SceneTransitionController.DestinationRevealStarted += OnDestinationRevealStarted;
             _cancelAction = UiFactory.FindCancelAction();
+        }
+
+        private void OnDestroy()
+        {
+            SceneTransitionController.DestinationRevealStarted -= OnDestinationRevealStarted;
+        }
+
+        private void OnDestinationRevealStarted()
+        {
+            if (!isActiveAndEnabled)
+                return;
+            if (_accountGate != null && _accountGate.IsOpen)
+                _accountGate.ReplayEntrance();
+            else
+                PlayEntranceAnimation();
         }
 
         private void Start()
         {
-            UiFactory.Select(_startButton);
+            // The login gate and its first selectable are ready now. During a real scene
+            // transition the transition controller owns dismissal after activation instead.
+            if (!SceneTransitionController.IsTransitioning)
+                SceneTransitionController.NotifyStartupReady();
         }
 
         private void OnEnable()
         {
-            if (_startButton != null)
+            if (_accountGate == null || !_accountGate.IsOpen)
             {
-                UiFactory.Select(_startButton);
+                PlayEntranceAnimation();
+                UiFactory.SelectFirstInteractable(_startButton);
             }
-
-            PlayEntranceAnimation();
         }
 
         private void Update()
         {
             bool cancelPressed = WasCancelPressed();
+
+            if (_accountGate != null && _accountGate.IsOpen)
+            {
+                if (cancelPressed)
+                    _accountGate.HandleCancel();
+                return;
+            }
 
             // Cancel doubles as "skip the intro" so the menu never feels like it
             // is holding the player up.
@@ -91,6 +138,7 @@ namespace AMath.UI
         {
             var canvas = _ui.CreateCanvas(transform, "Canvas", 100);
             _menuCanvas = canvas.gameObject;
+            _menuInputGroup = _menuCanvas.AddComponent<CanvasGroup>();
 
             UiFactory.CreateFullScreenBackground(
                 canvas.transform,
@@ -115,7 +163,7 @@ namespace AMath.UI
             const float buttonWidth = 520f;
             const float buttonHeight = 64f;
             const float buttonPitch = 70f;
-            const float firstButtonY = 168f;
+            const float firstButtonY = 110f;
             const int buttonFontSize = 44;
 
             _startButton = PlaceMenuButton(canvas.transform, "Start Button", firstButtonY, buttonWidth, buttonHeight, buttonFontSize, StartGame, "ui.menu.start");
@@ -126,6 +174,8 @@ namespace AMath.UI
             _helpButton = PlaceMenuButton(canvas.transform, "How To Play Button", firstButtonY - buttonPitch * 3f, buttonWidth, buttonHeight, buttonFontSize, OpenHelp, "ui.menu.help");
             _settingsButton = PlaceMenuButton(canvas.transform, "Settings Button", firstButtonY - buttonPitch * 4f, buttonWidth, buttonHeight, buttonFontSize, OpenSettings, "ui.menu.settings");
             _quitButton = PlaceMenuButton(canvas.transform, "Exit Button", firstButtonY - buttonPitch * 5f, buttonWidth, buttonHeight, buttonFontSize, QuitGame, "ui.menu.quit");
+
+            BuildAccountFooter(canvas.transform);
 
             ConfigureMenuNavigation();
             BuildEntranceAnimation(title);
@@ -138,6 +188,7 @@ namespace AMath.UI
         {
             PlaySessionController.EnsureExists().OpenFromMainMenu(this);
         }
+
 
         /// <summary>
         /// A tutorial button that loads nothing is worse than no button, so
@@ -161,7 +212,7 @@ namespace AMath.UI
 
         private void OpenTutorial()
         {
-            SceneManager.LoadScene(TutorialSceneBootstrap.SceneName);
+            SceneTransitionController.LoadScene(TutorialSceneBootstrap.SceneName, "ui.loading.tutorial");
         }
 
         private void OpenHelp()
@@ -181,23 +232,23 @@ namespace AMath.UI
 
         private void OpenSettings()
         {
-            // Hiding the menu keeps its buttons out of reach of keyboard and gamepad navigation
-            // while the settings screen is on top.
-            _menuCanvas.SetActive(false);
+            // Keep the painted menu behind the settings fade so no camera-colour
+            // frame appears, while removing its controls from pointer/navigation input.
+            _menuInputGroup.interactable = false;
+            _menuInputGroup.blocksRaycasts = false;
             _settingsMenu.Open();
         }
 
         private void CloseSettings()
         {
-            _menuCanvas.SetActive(true);
+            _menuInputGroup.interactable = true;
+            _menuInputGroup.blocksRaycasts = true;
             UiFactory.Select(_settingsButton);
             // Returning from settings should feel like the menu arriving again,
             // not a hard cut back onto a static list.
             if (_entrance != null)
             {
-                _entrance.Configure(0.22f, 0.05f, 0f);
                 PlayEntranceAnimation();
-                _entrance.Configure(0.34f, 0.08f, 0.05f);
             }
         }
 
@@ -227,6 +278,71 @@ namespace AMath.UI
 #endif
         }
 
+        private void BuildAccountFooter(Transform parent)
+        {
+            _logoutButton = _ui.CreateAccentButton(parent, "Logout Button",
+                UiLocalizationProvider.Shared.GetText("ui.account.logout"), UiPalette.Quit,
+                UiPalette.QuitHighlight, Logout, 20);
+            UiFactory.SetAnchoredRect(_logoutButton.GetComponent<RectTransform>(), Vector2.zero, Vector2.zero,
+                Vector2.zero, new Vector2(88f, 88f), new Vector2(28f, 28f));
+
+            Text account = _ui.CreateText("Signed In Account", parent,
+                string.Format(UiLocalizationProvider.Shared.GetText("ui.account.signed_in"), AccountSession.Username),
+                22, FontStyle.Normal, UiPalette.LightText, TextAnchor.LowerLeft);
+            UiFactory.SetAnchoredRect(account.rectTransform, Vector2.zero, Vector2.zero, Vector2.zero,
+                new Vector2(420f, 42f), new Vector2(132f, 30f));
+
+            Text version = _ui.CreateText("Game Version", parent,
+                string.Format(UiLocalizationProvider.Shared.GetText("ui.account.version"), Application.version),
+                22, FontStyle.Normal, new Color(1f, 1f, 1f, 0.78f), TextAnchor.LowerRight);
+            UiFactory.SetAnchoredRect(version.rectTransform, Vector2.one, Vector2.one, Vector2.one,
+                new Vector2(260f, 40f), new Vector2(-24f, 18f));
+        }
+
+        private void OnAuthenticated()
+        {
+            // Recreate the scene so every save/history presenter is constructed
+            // after the profile becomes active and can never retain another
+            // account's directory in a readonly field.
+            SceneTransitionController.LoadScene(SceneManager.GetActiveScene().buildIndex, "ui.loading.account");
+        }
+
+        private void ShowAuthenticatedMenu()
+        {
+            _accountGate.Close();
+            _menuCanvas.SetActive(true);
+        }
+
+        private void ShowAccountGate(AccountError initialError)
+        {
+            _menuCanvas.SetActive(false);
+            _accountGate.Open(initialError == AccountError.AutoLoginExpired ? AccountError.None : initialError);
+        }
+
+        private void Logout()
+        {
+            if (_logoutButton != null)
+                _logoutButton.interactable = false;
+            StartCoroutine(LogoutAndReload());
+        }
+
+        private IEnumerator LogoutAndReload()
+        {
+            GameSettings.ClearPlayerProfile();
+            _accounts.Logout();
+
+            // These objects survive scene loads and own save services bound to
+            // the old profile. Tear them down before another account can enter.
+            if (NetworkedGameContext.Instance != null)
+                Destroy(NetworkedGameContext.Instance.gameObject);
+            PlaySessionController playSession = FindFirstObjectByType<PlaySessionController>();
+            if (playSession != null)
+                Destroy(playSession.gameObject);
+
+            yield return null;
+            SceneTransitionController.LoadScene(SceneManager.GetActiveScene().buildIndex, "ui.loading.menu");
+        }
+
         private void BuildSettingsMenu()
         {
             _settingsMenu = SettingsMenuController.Create(transform, _ui.Font);
@@ -254,6 +370,7 @@ namespace AMath.UI
                 _helpButton,
                 _settingsButton,
                 _quitButton);
+            _entrance.Configure(0.22f, 0.025f, 0f);
         }
 
         private void PlayEntranceAnimation()

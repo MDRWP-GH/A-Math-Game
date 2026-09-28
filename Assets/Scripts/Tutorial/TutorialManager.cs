@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.IO;
 using AMath.Core;
 using AMath.Core.Assistance;
 using AMath.Core.Events;
@@ -31,6 +33,8 @@ namespace AMath.Tutorial
         private ITutorialSequenceDefinition _sequence;
         private TutorialStep _currentStep;
         private int _stepIndex;
+        private bool _preserveCompletedSave;
+        private bool _saveErrorReported;
 
         /// <summary>Creates the manager with explicit, independently mockable dependencies.</summary>
         public TutorialManager(
@@ -73,6 +77,11 @@ namespace AMath.Tutorial
             StopCurrentStep();
             _runtimeContext.Dialogue.Skip();
             _sequence = sequence;
+            _preserveCompletedSave = _saveStore.TryLoad(
+                sequence.TutorialId,
+                out TutorialProgressData existingProgress)
+                && existingProgress != null
+                && existingProgress.IsCompleted;
             _stepIndex = ResolveStartIndex(sequence, resumeProgress);
 
             TransitionToNotStarted();
@@ -121,7 +130,7 @@ namespace AMath.Tutorial
             _runtimeContext.Dialogue.Skip();
             _runtimeContext.Highlighter.ClearHighlight();
             _stateMachine.TransitionTo(TutorialPhase.Skipped);
-            PersistProgress(isCompleted: true);
+            PersistProgress(isCompleted: false);
             PublishProgress(isActive: false, objectiveText: null);
         }
 
@@ -155,8 +164,19 @@ namespace AMath.Tutorial
 
             _currentStep = new TutorialStep(definition);
             string objectiveText = _textProvider.GetText(_currentStep.ObjectiveTextKey);
+            IReadOnlyList<string> milestones = _sequence.MilestoneTitleKeys;
+            int milestoneCount = milestones != null && milestones.Count > 0
+                ? milestones.Count
+                : _sequence.Steps.Count;
+            int milestoneIndex = milestones != null && milestones.Count > 0
+                ? Clamp(definition.MilestoneIndex, 0, milestoneCount - 1)
+                : _stepIndex;
+            string milestoneText = milestones != null && milestones.Count > 0
+                ? _textProvider.GetText(milestones[milestoneIndex])
+                : objectiveText;
+            _runtimeContext.Ui.SetMilestone(milestoneText);
             _runtimeContext.Ui.SetObjective(objectiveText);
-            _runtimeContext.Ui.SetProgress(_stepIndex + 1, _sequence.Steps.Count);
+            _runtimeContext.Ui.SetProgress(milestoneIndex + 1, milestoneCount);
             PublishProgress(isActive: true, objectiveText, _currentStep.StepId);
             PersistProgress(isCompleted: false);
             _currentStep.Begin(_runtimeContext, AdvanceStep, BeginHintsForCurrentStep);
@@ -209,13 +229,24 @@ namespace AMath.Tutorial
 
         private void PersistProgress(bool isCompleted)
         {
-            _saveStore.Save(_sequence.TutorialId, new TutorialProgressData
+            bool saveAsCompleted = isCompleted || _preserveCompletedSave;
+            try
             {
-                TutorialId = _sequence.TutorialId,
-                StepIndex = isCompleted ? _sequence.Steps.Count : _stepIndex,
-                IsCompleted = isCompleted,
-                TimestampUtcTicks = DateTime.UtcNow.Ticks
-            });
+                _saveStore.Save(_sequence.TutorialId, new TutorialProgressData
+                {
+                    TutorialId = _sequence.TutorialId,
+                    StepIndex = isCompleted ? _sequence.Steps.Count : _stepIndex,
+                    IsCompleted = saveAsCompleted,
+                    TimestampUtcTicks = DateTime.UtcNow.Ticks
+                });
+                _saveErrorReported = false;
+            }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+            {
+                if (_saveErrorReported) return;
+                _saveErrorReported = true;
+                UnityEngine.Debug.LogWarning($"[TutorialSave] Progress was not saved: {ex.Message}");
+            }
         }
 
         private void PublishProgress(bool isActive, string objectiveText, string stepId = null)

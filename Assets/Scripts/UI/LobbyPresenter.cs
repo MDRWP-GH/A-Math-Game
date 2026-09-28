@@ -146,14 +146,68 @@ namespace AMath.UI
             }
         }
 
+        private NetworkPlayer HostMember
+        {
+            get
+            {
+                foreach (NetworkPlayer member in _members)
+                {
+                    if (member != null && member.IsHost) return member;
+                }
+
+                return null;
+            }
+        }
+
         /// <summary>Match format selected by the host in the lobby.</summary>
         public MatchFormat SelectedFormat
         {
-            get => _session?.SelectedFormat ?? MatchFormat.Individual;
+            get
+            {
+                if (IsHost)
+                    return _session?.SelectedFormat ?? MatchFormat.Individual;
+
+                NetworkPlayer host = HostMember;
+                if (host != null)
+                    return host.LobbyMatchFormat;
+
+                return _session?.SelectedFormat ?? MatchFormat.Individual;
+            }
             set
             {
+                if (SelectedFormat == value)
+                    return;
+
                 if (_session != null)
                     _session.SelectedFormat = value;
+
+                LocalMember?.RequestLobbyMatchFormat(value);
+            }
+        }
+
+        /// <summary>Turn-time preset selected by the host in the lobby.</summary>
+        public TurnTimePreset SelectedTurnTimePreset
+        {
+            get
+            {
+                if (IsHost)
+                    return _session?.SelectedTurnTimePreset ?? GameRules.DefaultTurnTimePreset;
+
+                NetworkPlayer host = HostMember;
+                if (host != null)
+                    return host.LobbyTurnTimePreset;
+
+                return _session?.SelectedTurnTimePreset ?? GameRules.DefaultTurnTimePreset;
+            }
+            set
+            {
+                if (SelectedTurnTimePreset == value)
+                    return;
+
+                if (_session != null)
+                    _session.SelectedTurnTimePreset = value;
+
+                LocalMember?.RequestLobbyTurnTimePreset(value);
             }
         }
 
@@ -197,6 +251,8 @@ namespace AMath.UI
         public void RefreshMembers()
         {
             Collect();
+            SyncFormatFromHost();
+            SyncTurnTimeFromHost();
             _rosterSignature = ComputeSignature(_members);
             MembersChanged?.Invoke(_members);
         }
@@ -208,6 +264,8 @@ namespace AMath.UI
         private void RefreshIfRosterChanged()
         {
             Collect();
+            SyncFormatFromHost();
+            SyncTurnTimeFromHost();
             int signature = ComputeSignature(_members);
             if (signature == _rosterSignature) return;
 
@@ -225,7 +283,7 @@ namespace AMath.UI
                 CollectFromClientSpawned(_members);
 
             AppendLocalPlayerIfMissing(_members);
-            _members.RemoveAll(static player => player == null);
+            _members.RemoveAll(player => player == null);
         }
 
         /// <summary>
@@ -245,6 +303,8 @@ namespace AMath.UI
                     hash = (hash * 31) + (player.IsHost ? 1 : 0);
                     hash = (hash * 31) + player.ColorId;
                     hash = (hash * 31) + player.LobbyTeamId;
+                    hash = (hash * 31) + (int)player.LobbyMatchFormat;
+                    hash = (hash * 31) + (int)player.LobbyTurnTimePreset;
                 }
 
                 return hash;
@@ -255,7 +315,7 @@ namespace AMath.UI
         {
             // Same ordering as RoomManager.StartMatch: host first, then join order.
             var ordered = new List<NetworkConnectionToClient>(NetworkServer.connections.Values);
-            ordered.Sort(static (a, b) => a.connectionId.CompareTo(b.connectionId));
+            ordered.Sort((a, b) => a.connectionId.CompareTo(b.connectionId));
 
             if (NetworkServer.localConnection?.identity != null
                 && NetworkServer.localConnection.identity.TryGetComponent(out NetworkPlayer hostPlayer))
@@ -297,6 +357,32 @@ namespace AMath.UI
             }
         }
 
+        /// <summary>
+        /// Copies the host's replicated format onto the local session so
+        /// rematch and other session readers see the same choice clients do.
+        /// </summary>
+        private void SyncFormatFromHost()
+        {
+            NetworkPlayer host = HostMember;
+            if (host == null || _session == null)
+                return;
+
+            _session.SelectedFormat = host.LobbyMatchFormat;
+        }
+
+        /// <summary>
+        /// Copies the host's replicated turn-time preset onto the local session
+        /// so match start and rematch readers see the same choice clients do.
+        /// </summary>
+        private void SyncTurnTimeFromHost()
+        {
+            NetworkPlayer host = HostMember;
+            if (host == null || _session == null)
+                return;
+
+            _session.SelectedTurnTimePreset = host.LobbyTurnTimePreset;
+        }
+
         #endregion
 
         #region Internals
@@ -320,13 +406,8 @@ namespace AMath.UI
 
         #region View commands
 
-        /// <summary>
-        /// Host action: assign seats and start the match.
-        /// <paramref name="extraAiPlayers"/> adds AI opponents beyond the
-        /// automatic fill-to-minimum.
-        /// </summary>
-        public void StartMatch(int extraAiPlayers = 0) =>
-            _roomManager.StartMatch(SelectedFormat, extraAiPlayers);
+        /// <summary>Host action: assign seats and start the match.</summary>
+        public void StartMatch() => _roomManager.StartMatch(SelectedFormat);
 
         /// <summary>Leaves the room (both roles).</summary>
         public void LeaveRoom() => _roomManager.LeaveRoom();

@@ -8,17 +8,37 @@ namespace AMath.UI
     /// </summary>
     internal static class MainMenuBootstrap
     {
-        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
-        private static void CreateMenuForStartupScene()
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
+        private static void RegisterSceneLoadedHandler()
         {
-            if (SceneManager.GetActiveScene().buildIndex != 0 ||
-                Object.FindFirstObjectByType<MainMenuController>() != null)
+            // Runtime initialization can run more than once when entering Play Mode without a
+            // domain reload. Remove first so one scene load can never create duplicate menus.
+            SceneManager.sceneLoaded -= OnSceneLoaded;
+            SceneManager.sceneLoaded += OnSceneLoaded;
+        }
+
+        private static void OnSceneLoaded(Scene scene, LoadSceneMode mode)
+        {
+            EnsureMenuForScene(scene);
+        }
+
+        internal static MainMenuController EnsureMenuForScene(Scene scene)
+        {
+            if (!scene.IsValid() ||
+                !scene.isLoaded ||
+                scene.buildIndex != 0)
             {
-                return;
+                return null;
             }
 
+            MainMenuController existing =
+                Object.FindFirstObjectByType<MainMenuController>(FindObjectsInactive.Include);
+            if (existing != null)
+                return existing;
+
             var menuRoot = new GameObject("Main Menu");
-            menuRoot.AddComponent<MainMenuController>();
+            SceneManager.MoveGameObjectToScene(menuRoot, scene);
+            return menuRoot.AddComponent<MainMenuController>();
         }
     }
 }
