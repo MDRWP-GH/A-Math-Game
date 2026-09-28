@@ -57,6 +57,9 @@ jobs:
       - uses: actions/checkout@v4
         if: ${{ env.HAS_UNITY_LICENSE == 'true' }}
         with:
+          # Docker stores root-owned data here before checkout. The default
+          # git clean tries to remove it and fails with EACCES.
+          clean: false
           lfs: true
 
       # Unity's import cache; without it every run re-imports the whole project.
