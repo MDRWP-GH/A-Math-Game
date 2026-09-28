@@ -27,6 +27,9 @@ jobs:
         if: ${{ env.HAS_UNITY_LICENSE == 'true' }}
         uses: easimon/maximize-build-space@v10
         with:
+          # Mount the parent so checkout and Docker share the large volume,
+          # while Docker's root-owned data stays outside the checkout target.
+          build-mount-path: ${{ runner.workspace }}
           root-reserve-mb: 8192
           swap-size-mb: 2048
           remove-dotnet: 'true'
@@ -39,8 +42,9 @@ jobs:
         if: ${{ env.HAS_UNITY_LICENSE == 'true' }}
         run: |
           sudo systemctl stop docker.socket docker containerd
-          sudo mkdir -p "${GITHUB_WORKSPACE}/.docker-data"
-          printf '%s\n' "{\"data-root\":\"${GITHUB_WORKSPACE}/.docker-data\"}" | sudo tee /etc/docker/daemon.json
+          docker_data_root="$(dirname "$GITHUB_WORKSPACE")/.docker-data"
+          sudo mkdir -p "$docker_data_root"
+          printf '{"data-root":"%s"}\n' "$docker_data_root" | sudo tee /etc/docker/daemon.json
           sudo systemctl start docker
           docker info | grep 'Docker Root Dir'
           df -h
@@ -57,9 +61,6 @@ jobs:
       - uses: actions/checkout@v4
         if: ${{ env.HAS_UNITY_LICENSE == 'true' }}
         with:
-          # Docker stores root-owned data here before checkout. The default
-          # git clean tries to remove it and fails with EACCES.
-          clean: false
           lfs: true
 
       # Unity's import cache; without it every run re-imports the whole project.
